@@ -5,6 +5,8 @@ import { getCurrentSession } from "@/server/auth/session";
 import { NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { getWorld } from "@/server/domain/worlds";
+import { listCharacters } from "@/server/domain/characters/characters";
+import { CharacterList } from "./characters/character-list";
 import { LoginRequired, STATUS_LABEL } from "../ui";
 import { DeleteWorldButton, WorldForm } from "../world-form";
 
@@ -28,9 +30,10 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
   if (!session) return <LoginRequired />;
   const { worldId } = await params;
 
-  let world;
+  const userId = asAuthenticatedUserId(session.user.id);
+  let world, characters;
   try {
-    world = await getWorld(asAuthenticatedUserId(session.user.id), worldId);
+    [world, characters] = await Promise.all([getWorld(userId, worldId), listCharacters(userId, worldId)]);
   } catch (error) {
     if (error instanceof NotFoundError) notFound();
     throw error;
@@ -44,7 +47,11 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
           {STATUS_LABEL[world.runtimeStatus]} · 만든 날 {world.createdAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
         </p>
       </div>
-      <WorldForm initial={{ id: world.id, name: world.name, worldContext: world.worldContext }} />
+      <CharacterList worldId={world.id} characters={characters} />
+      <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
+        <h2 className="text-lg font-semibold">세계관 설정</h2>
+        <WorldForm initial={{ id: world.id, name: world.name, worldContext: world.worldContext }} />
+      </section>
       <section className="flex flex-col gap-2 border-t border-foreground/10 pt-6">
         <h2 className="text-sm font-semibold">위험 구역</h2>
         <div>

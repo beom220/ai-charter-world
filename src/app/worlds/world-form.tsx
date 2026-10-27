@@ -10,7 +10,7 @@ import { button } from "./ui";
 
 type Initial = { id: string; name: string; worldContext: string } | null;
 
-async function send(path: string, method: string, body?: unknown) {
+export async function send(path: string, method: string, body?: unknown) {
   const res = await fetch(path, {
     method,
     headers: body === undefined ? undefined : { "content-type": "application/json" },
@@ -88,6 +88,33 @@ export function WorldForm({ initial }: { initial: Initial }) {
 }
 
 export function DeleteWorldButton({ worldId, worldName }: { worldId: string; worldName: string }) {
+  return (
+    <ConfirmDeleteButton
+      label="세계관 삭제"
+      title="세계관을 삭제할까요?"
+      path={`/api/worlds/${worldId}`}
+      redirectTo="/worlds"
+    >
+      <strong>{worldName}</strong>의 캐릭터, 진행 기록, 모든 세이브 슬롯과 자동저장이 함께 삭제됩니다. 실행 중이면 중지됩니다. 삭제한 뒤에는
+      되돌릴 수 없습니다.
+    </ConfirmDeleteButton>
+  );
+}
+
+/** 삭제 확인 대화상자. 확인을 누를 때만 DELETE 요청을 보낸다 */
+export function ConfirmDeleteButton({
+  label,
+  title,
+  path,
+  redirectTo,
+  children,
+}: {
+  label: string;
+  title: string;
+  path: string;
+  redirectTo: string;
+  children: React.ReactNode;
+}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
@@ -97,10 +124,10 @@ export function DeleteWorldButton({ worldId, worldName }: { worldId: string; wor
     setBusy(true);
     setError(null);
     try {
-      const { ok, json } = await send(`/api/worlds/${worldId}`, "DELETE");
+      const { ok, json } = await send(path, "DELETE");
       if (!ok) return setError(json?.error?.message ?? "삭제하지 못했습니다.");
       dialog.current?.close();
-      router.push("/worlds");
+      router.push(redirectTo);
       router.refresh();
     } catch {
       setError("삭제하지 못했습니다.");
@@ -112,14 +139,11 @@ export function DeleteWorldButton({ worldId, worldName }: { worldId: string; wor
   return (
     <>
       <button type="button" className={`${button} text-red-600`} onClick={() => dialog.current?.showModal()}>
-        세계관 삭제
+        {label}
       </button>
       <dialog ref={dialog} className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-lg bg-background p-6 text-foreground backdrop:bg-black/50">
-        <h2 className="text-lg font-semibold">세계관을 삭제할까요?</h2>
-        <p className="mt-2 text-sm">
-          <strong>{worldName}</strong>의 캐릭터, 진행 기록, 모든 세이브 슬롯과 자동저장이 함께 삭제됩니다. 실행 중이면 중지됩니다. 삭제한 뒤에는
-          되돌릴 수 없습니다.
-        </p>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <p className="mt-2 text-sm">{children}</p>
         {error && (
           <p role="alert" className="mt-2 text-sm text-red-600">
             {error}

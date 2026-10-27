@@ -80,8 +80,8 @@ export async function createWorld(userId: AuthenticatedUserId, input: WorldInput
   return getWorld(userId, worldId);
 }
 
-/** World 행 잠금 (잠금 순서 World → GameState). 타인 소유이면 잠그지 않고 404 */
-async function lockOwnedWorld(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], userId: AuthenticatedUserId, worldId: string) {
+/** World 행 잠금 (잠금 순서 World → GameState). 타인 소유이면 잠그지 않고 404. 세계관 하위 리소스 변경도 이 잠금으로 시작한다 */
+export async function lockOwnedWorld(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], userId: AuthenticatedUserId, worldId: string) {
   const locked = await tx.$queryRaw<{ id: string }[]>`
     SELECT "id" FROM "World" WHERE "id" = ${worldId} AND "ownerId" = ${userId} FOR UPDATE`;
   if (locked.length === 0) throw new NotFoundError();

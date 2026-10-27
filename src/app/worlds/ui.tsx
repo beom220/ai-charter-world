@@ -22,3 +22,18 @@ export const STATUS_LABEL: Record<string, string> = {
   PAUSING: "일시정지 중",
   PAUSED: "일시정지",
 };
+
+export const MOOD_LABEL: Record<string, string> = {
+  NEUTRAL: "평온",
+  HAPPY: "기쁨",
+  EXCITED: "들뜸",
+  CALM: "차분",
+  SAD: "슬픔",
+  ANXIOUS: "불안",
+  ANGRY: "분노",
+  FEARFUL: "두려움",
+  EMBARRASSED: "당황",
+  LONELY: "외로움",
+  HOPEFUL: "기대",
+  TIRED: "지침",
+};

@@ -1,0 +1,62 @@
+import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_ADULT_AGE_RANGE } from "../../../../../config/limits";
+import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
+import { RANDOM_FIELDS, type CharacterDraft, type GenderValue, type RandomField } from "@/lib/schemas/character";
+import { CONTEXT_TEMPLATES, GOAL_TEMPLATES, NAME_POOL } from "./data";
+
+// 규칙 기반 캐릭터 랜덤 생성 (PRD FR-04, architecture.md §13). 런타임 독립 순수 함수.
+
+export type Rng = () => number;
+
+const pick = <T>(items: readonly T[], rng: Rng): T => items[Math.floor(rng() * items.length)]!;
+const intBetween = (min: number, max: number, rng: Rng) => min + Math.floor(rng() * (max - min + 1));
+
+/** 랜덤·자동 성별은 남성·여성·논바이너리 중에서 고른다 */
+export function randomGender(rng: Rng = Math.random): GenderValue {
+  return pick(["MALE", "FEMALE", "NONBINARY"] as const, rng);
+}
+
+export function randomAge(rng: Rng = Math.random): number {
+  return intBetween(RANDOM_ADULT_AGE_RANGE.min, RANDOM_ADULT_AGE_RANGE.max, rng);
+}
+
+function randomName(gender: CharacterDraft["gender"], rng: Rng): string {
+  const pool = gender === "MALE" ? NAME_POOL.MALE : gender === "FEMALE" ? NAME_POOL.FEMALE : [...NAME_POOL.MALE, ...NAME_POOL.FEMALE, ...NAME_POOL.NEUTRAL];
+  return pick(pool, rng);
+}
+
+/** 서로 다른 분류에서 3~5개를 고른다 (상반된 태그가 함께 뽑히지 않게) */
+function randomTags(rng: Rng): string[] {
+  const count = intBetween(PERSONALITY_TAGS_MIN, PERSONALITY_TAGS_MAX, rng);
+  const categories = [...PERSONALITY_CATEGORIES];
+  const tags: string[] = [];
+  while (tags.length < count && categories.length > 0) {
+    const [category] = categories.splice(Math.floor(rng() * categories.length), 1);
+    tags.push(pick(PERSONALITY_TAGS.filter((t) => t.category === category), rng).code);
+  }
+  return tags;
+}
+
+/**
+ * 초안에 랜덤 값을 채운다. fields가 없으면 전체 랜덤, 있으면 그 필드만. 잠긴 필드는 언제나 유지한다.
+ * 성별을 먼저 정해 이름 풀에 반영한다.
+ */
+export function randomizeCharacter(
+  draft: CharacterDraft,
+  options: { lockedFields?: readonly RandomField[]; fields?: readonly RandomField[] } = {},
+  rng: Rng = Math.random,
+): CharacterDraft {
+  const locked = new Set(options.lockedFields ?? []);
+  const targets = new Set((options.fields ?? RANDOM_FIELDS).filter((f) => !locked.has(f)));
+  const next: CharacterDraft = { ...draft };
+
+  if (targets.has("gender")) {
+    next.gender = randomGender(rng);
+    next.genderCustom = null;
+  }
+  if (targets.has("name")) next.name = randomName(next.gender, rng);
+  if (targets.has("age")) next.age = randomAge(rng);
+  if (targets.has("personalityTags")) next.personalityTags = randomTags(rng);
+  if (targets.has("goal")) next.goal = pick(GOAL_TEMPLATES, rng);
+  if (targets.has("characterContext")) next.characterContext = pick(CONTEXT_TEMPLATES, rng);
+  return next;
+}

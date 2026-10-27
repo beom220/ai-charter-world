@@ -56,3 +56,24 @@ export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 
 /** 세계관 이름 최대 길이(코드 포인트). World.name VarChar(100)과 같다 */
 export const WORLD_NAME_MAX_LENGTH = 100;
+
+// ── 캐릭터 (Phase 4-2, PRD FR-04, architecture.md §13) ──
+
+/** 캐릭터 컨텍스트 최대 길이(코드 포인트, Array.from(s).length). Character.characterContext VarChar(300)과 같다 */
+export const CHARACTER_CONTEXT_MAX_LENGTH = 300;
+
+/** 캐릭터 이름 최대 길이(코드 포인트). Character.name VarChar(50) */
+export const CHARACTER_NAME_MAX_LENGTH = 50;
+
+/** 성별 직접 입력 최대 길이. Character.genderCustom VarChar(30) */
+export const CHARACTER_GENDER_CUSTOM_MAX_LENGTH = 30;
+
+/** 성격 태그 선택 개수 (PRD 권장 3~5개) */
+export const PERSONALITY_TAGS_MIN = 3;
+export const PERSONALITY_TAGS_MAX = 5;
+
+/** 나이 입력 범위 (DB CHECK 0~1000, 판타지 종족 고려) */
+export const CHARACTER_AGE_MAX = 1000;
+
+/** 랜덤·자동 나이 범위 (성인 기본, 세계관 템플릿 도입 전 공통값) */
+export const RANDOM_ADULT_AGE_RANGE = { min: 20, max: 59 } as const;

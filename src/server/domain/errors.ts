@@ -46,3 +46,10 @@ export class PayloadTooLargeError extends AppError {
     super(413, "PAYLOAD_TOO_LARGE", "요청 크기가 10MB를 넘었습니다.");
   }
 }
+
+/** 현재 상태와 충돌하는 요청 (409). 예: 세계관당 활성 캐릭터 상한 */
+export class ConflictError extends AppError {
+  constructor(code: string, message: string) {
+    super(409, code, message);
+  }
+}
