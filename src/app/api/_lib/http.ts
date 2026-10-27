@@ -1,3 +1,4 @@
+import { unstable_rethrow } from "next/navigation";
 import { AuthConfigError } from "@/server/auth/env";
 import { CryptoConfigError, DecryptionError } from "@/server/crypto/provider-key-crypto";
 import { AppError } from "@/server/domain/errors";
@@ -17,7 +18,15 @@ function errorBody(code: string, message: string) {
 
 /** 알려진 오류는 상태 코드로, 나머지는 500. 응답·로그에 비밀 값이나 내부 메시지를 담지 않는다. */
 export function errorResponse(scope: string, error: unknown): Response {
-  if (error instanceof AppError) return jsonResponse(errorBody(error.code, error.message), error.status);
+  // Next.js 내부 제어 예외(요청 시점 API 접근 시 프리렌더 중단 등)는 삼키지 않는다
+  unstable_rethrow(error);
+  if (error instanceof AppError) {
+    const res = jsonResponse(errorBody(error.code, error.message), error.status);
+    if ("retryAfterSeconds" in error && typeof error.retryAfterSeconds === "number") {
+      res.headers.set("Retry-After", String(error.retryAfterSeconds));
+    }
+    return res;
+  }
   if (error instanceof AuthConfigError || error instanceof CryptoConfigError) {
     console.error(`[${scope}] ${error.message}`); // 변수 이름만 포함
     return jsonResponse(errorBody("SERVER_NOT_CONFIGURED", "서버 설정이 완료되지 않았습니다."), 500);

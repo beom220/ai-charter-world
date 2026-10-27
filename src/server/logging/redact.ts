@@ -4,7 +4,8 @@ const REDACTED = "[REDACTED]";
 
 // 값을 몰라도 형태로 알 수 있는 비밀: [패턴, 치환]
 const SECRET_PATTERNS: [RegExp, string][] = [
-  [/AIza[0-9A-Za-z_-]{20,}/g, REDACTED], // Google API 키
+  [/AIza[0-9A-Za-z_-]{20,}/g, REDACTED], // Google API 키 (기존 형식)
+  [/\bAQ\.[0-9A-Za-z._-]{20,}/g, REDACTED], // Google API 키 (AQ. 형식)
   [/GOCSPX-[0-9A-Za-z_-]+/g, REDACTED], // Google OAuth 클라이언트 비밀
   [/\b(Bearer)\s+[^\s,;]+/gi, `$1 ${REDACTED}`], // Authorization 헤더
   [/\b([\w.-]*(?:session_token|session_data|state))=[^;,\s]+/gi, `$1=${REDACTED}`], // 인증 쿠키 값
