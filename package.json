@@ -11,9 +11,17 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "prisma generate",
+    "db:up": "docker compose up -d --wait db",
+    "db:down": "docker compose down",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:check": "echo \"SELECT 1;\" | prisma db execute --stdin"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "next": "16.4.3",
     "react": "19.3.1",
     "react-dom": "19.3.1"
@@ -25,6 +33,7 @@
     "@types/react-dom": "19.3.0",
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.3",
+    "prisma": "7.10.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3"
   },

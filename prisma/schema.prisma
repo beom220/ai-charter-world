@@ -1,0 +1,10 @@
+// 데이터 모델은 Phase 2에서 docs/database.md를 기준으로 작성한다.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
