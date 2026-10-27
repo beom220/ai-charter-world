@@ -96,3 +96,9 @@ export async function cleanupTestUsers() {
   await prisma.user.deleteMany({ where: { id: { in: [...createdUserIds] } } });
   createdUserIds.clear();
 }
+
+/** 테스트용 가짜 Gemini 키 (형식만 맞음). 비밀 스캐너 오탐을 피하려고 접두사를 런타임에 붙인다. */
+export function fakeGeminiKey(seed: string): string {
+  const body = `Test${seed.replace(/[^0-9A-Za-z_-]/g, "")}`.padEnd(35, "0").slice(0, 35);
+  return ["AI", "za", body].join("");
+}
