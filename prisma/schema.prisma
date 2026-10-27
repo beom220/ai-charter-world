@@ -29,6 +29,7 @@ model User {
   providerConnection AiProviderConnection?
   worlds             World[]
   apiRequestLogs     ApiRequestLog[]
+  sseConnections     SseConnection[]
 
   @@unique([email])
   @@map("user")
@@ -156,6 +157,7 @@ enum WorldVisibility {
   PRIVATE
   PUBLIC
 }
+
 // MVP: PRIVATE만 허용 (PUBLIC 미노출)
 
 enum Gender {
@@ -186,12 +188,14 @@ enum IntervalPreset {
   NORMAL
   FAST
 }
+
 // 15s / 5s / 1s
 
 enum StrategyMode {
   STORY
   AGENT
 }
+
 // MVP: STORY만 노출
 
 model World {
@@ -217,6 +221,7 @@ model World {
   relationshipBaselines RelationshipBaseline[]
   simulationRuns        SimulationRun[]
   scenes                ConversationScene[]
+  sceneParticipants     SceneParticipant[]
   messages              Message[]
   relationshipStates    RelationshipState[]
   relationshipChanges   RelationshipChange[]
@@ -269,6 +274,7 @@ model Character {
   sceneParticipations SceneParticipant[]
   messages            Message[]
 
+  @@unique([id, worldId]) // 동일 세계관 복합 FK 대상 (database.md §4.3)
   @@index([worldId, deletedAt])
 }
 
@@ -284,8 +290,8 @@ model RelationshipBaseline {
   familiarity     Int    @default(0) // 0..100
 
   world World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  from  Character @relation("BaselineFrom", fields: [fromCharacterId], references: [id], onDelete: Cascade)
-  to    Character @relation("BaselineTo", fields: [toCharacterId], references: [id], onDelete: Cascade)
+  from  Character @relation("BaselineFrom", fields: [fromCharacterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
+  to    Character @relation("BaselineTo", fields: [toCharacterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
 
   @@unique([fromCharacterId, toCharacterId])
   @@index([worldId])
@@ -330,6 +336,7 @@ enum WorldEventKind {
   SCENE_OUTCOME
   USER_INTERVENTION
 }
+
 // USER_INTERVENTION: P2
 
 enum EventVisibility {
@@ -389,17 +396,20 @@ model ConversationScene {
   worldEvents         WorldEvent[]
 
   @@unique([worldId, seq])
+  @@unique([id, worldId]) // 동일 세계관 복합 FK 대상 (database.md §4.3)
   @@index([worldId, createdAt(sort: Desc)])
 }
 
 model SceneParticipant {
   sceneId      String
   characterId  String
+  worldId      String // 동일 세계관 복합 FK용 (database.md §4.3)
   alias        String @db.VarChar(3) // 프롬프트 별칭 C1..C6 (디버깅용)
   nameSnapshot String @db.VarChar(50)
 
-  scene     ConversationScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
-  character Character         @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  scene     ConversationScene @relation(fields: [sceneId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
+  character Character         @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
+  world     World             @relation(fields: [worldId], references: [id], onDelete: Cascade)
 
   @@id([sceneId, characterId])
   @@index([characterId, sceneId]) // "이 캐릭터가 참가한 최근 장면" (단기 기억)
@@ -417,7 +427,7 @@ model Message {
   emotionCue          String?  @db.VarChar(40)
   createdAt           DateTime @default(now()) @db.Timestamptz(3)
 
-  scene   ConversationScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  scene   ConversationScene @relation(fields: [sceneId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   world   World             @relation(fields: [worldId], references: [id], onDelete: Cascade)
   speaker Character?        @relation(fields: [speakerCharacterId], references: [id], onDelete: SetNull)
 
@@ -437,11 +447,12 @@ model RelationshipState {
   updatedAt       DateTime @updatedAt @db.Timestamptz(3)
 
   world   World                @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  from    Character            @relation("RelationshipFrom", fields: [fromCharacterId], references: [id], onDelete: Cascade)
-  to      Character            @relation("RelationshipTo", fields: [toCharacterId], references: [id], onDelete: Cascade)
+  from    Character            @relation("RelationshipFrom", fields: [fromCharacterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
+  to      Character            @relation("RelationshipTo", fields: [toCharacterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   changes RelationshipChange[]
 
   @@unique([fromCharacterId, toCharacterId])
+  @@unique([id, worldId]) // 동일 세계관 복합 FK 대상 (database.md §4.3)
   @@index([worldId])
 }
 
@@ -460,7 +471,7 @@ model RelationshipChange {
   createdAt           DateTime @default(now()) @db.Timestamptz(3)
 
   world        World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  relationship RelationshipState  @relation(fields: [relationshipStateId], references: [id], onDelete: Cascade)
+  relationship RelationshipState  @relation(fields: [relationshipStateId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   scene        ConversationScene? @relation(fields: [sceneId], references: [id], onDelete: SetNull)
 
   @@index([relationshipStateId, createdAt])
@@ -473,9 +484,10 @@ model EmotionState {
   intensity   Int // 0..100
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)
 
-  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  character Character @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   world     World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
 
+  @@unique([characterId, worldId]) // 1:1 복합 FK에 Prisma가 요구 (characterId가 PK라 의미상 중복)
   @@index([worldId])
 }
 
@@ -492,7 +504,7 @@ model EmotionChange {
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
   world     World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  character Character          @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  character Character          @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   scene     ConversationScene? @relation(fields: [sceneId], references: [id], onDelete: SetNull)
 
   @@index([characterId, createdAt])
@@ -512,7 +524,7 @@ model CharacterMemory {
   createdAt        DateTime          @default(now()) @db.Timestamptz(3)
 
   world       World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  owner       Character          @relation("MemoryOwner", fields: [ownerCharacterId], references: [id], onDelete: Cascade)
+  owner       Character          @relation("MemoryOwner", fields: [ownerCharacterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   about       Character?         @relation("MemoryAbout", fields: [aboutCharacterId], references: [id], onDelete: SetNull)
   sourceScene ConversationScene? @relation(fields: [sourceSceneId], references: [id], onDelete: SetNull)
 
@@ -595,8 +607,10 @@ model SseConnection {
   lastSeenAt  DateTime @default(now()) @db.Timestamptz(3) // 10초마다 갱신, 30초 경과 시 비활성 간주
 
   world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([worldId, lastSeenAt])
+  @@index([userId])
 }
 
 model SimulationRun {
