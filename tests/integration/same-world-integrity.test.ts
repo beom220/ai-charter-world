@@ -1,63 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/server/db/client";
-import { characterData, cleanupTestUsers, createTestUser, createTestWorld } from "./helpers";
+import { cleanupTestUsers, createScopeFixture, createTestUser, createTestWorld, type ScopeFixture } from "./helpers";
 
 // database.md §4.3 동일 세계관·동일 사용자 참조 무결성.
 // 사용자 A의 세계관 레코드가 사용자 B의 세계관 레코드를 참조하는 경로를 모두 시도해 거부되는지 확인한다.
 
-type Fixture = Awaited<ReturnType<typeof createFixture>>;
-
-async function createFixture(label: string) {
-  const user = await createTestUser(label);
-  const world = await createTestWorld(user.id, `${label} 세계관`);
-  const c1 = await prisma.character.create({ data: characterData(world.id, `${label}-1`) });
-  const c2 = await prisma.character.create({ data: characterData(world.id, `${label}-2`) });
-  const run = await prisma.simulationRun.create({ data: { worldId: world.id } });
-  const scene = await prisma.conversationScene.create({
-    data: {
-      worldId: world.id,
-      seq: 1,
-      attemptId: randomUUID(),
-      runId: run.id,
-      strategyMode: "STORY",
-      model: "mock",
-      title: "장면",
-      summary: "요약",
-      motiveType: "GOAL",
-      endReason: "RESOLVED",
-    },
-  });
-  const message = await prisma.message.create({
-    data: { sceneId: scene.id, worldId: world.id, turnIndex: 0, speakerCharacterId: c1.id, speakerNameSnapshot: c1.name, dialogue: "x" },
-  });
-  const relationship = await prisma.relationshipState.create({
-    data: { worldId: world.id, fromCharacterId: c1.id, toCharacterId: c2.id, affinity: 0, trust: 0, respect: 0, familiarity: 0 },
-  });
-  const snapshot = await prisma.gameSnapshot.create({
-    data: { worldId: world.id, schemaVersion: 1, payload: { schemaVersion: 1 }, sizeBytes: 17, checksum: "0".repeat(64) },
-  });
-  const connection = await prisma.aiProviderConnection.create({
-    data: {
-      userId: user.id,
-      encryptedKey: Buffer.from("c"),
-      keyIv: Buffer.from("i"),
-      keyAuthTag: Buffer.from("t"),
-      encryptionKeyVersion: 1,
-      keyLast4: "abcd",
-      keyFingerprint: "fp",
-      defaultModel: "mock-model",
-    },
-  });
-  return { user, world, c1, c2, run, scene, message, relationship, snapshot, connection };
-}
-
-let a: Fixture;
-let b: Fixture;
+let a: ScopeFixture;
+let b: ScopeFixture;
 
 beforeAll(async () => {
-  a = await createFixture("A");
-  b = await createFixture("B");
+  a = await createScopeFixture("A");
+  b = await createScopeFixture("B");
 });
 
 afterAll(async () => {

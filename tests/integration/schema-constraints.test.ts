@@ -100,7 +100,7 @@ describe("UNIQUE 제약", () => {
     );
   });
 
-  it("사용자당 Gemini 연결은 1개다", async () => {
+  it("사용자당 Provider별 연결은 1개다 (같은 사용자·같은 Provider 중복 거부)", async () => {
     const user = await createTestUser();
     const conn = {
       userId: user.id,
@@ -113,9 +113,30 @@ describe("UNIQUE 제약", () => {
       defaultModel: "mock-model",
     };
     await prisma.aiProviderConnection.create({ data: conn });
-    await expect(prisma.aiProviderConnection.create({ data: conn })).rejects.toThrow(
-      /AiProviderConnection_userId_key/,
+    await expect(prisma.aiProviderConnection.create({ data: { ...conn, provider: "GEMINI" } })).rejects.toThrow(
+      /AiProviderConnection_userId_provider_key/,
     );
+
+    // User ↔ AiProviderConnection은 1:N 관계다 (Provider 추가 시 행이 늘어난다)
+    const withConnections = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      include: { providerConnections: true },
+    });
+    expect(withConnections.providerConnections.map((c) => c.provider)).toEqual(["GEMINI"]);
+
+    // 다른 사용자는 같은 Provider 연결을 따로 가진다
+    const other = await createTestUser("other");
+    await prisma.aiProviderConnection.create({ data: { ...conn, userId: other.id } });
+  });
+
+  it("(userId, provider) UNIQUE 외에 userId 단독 UNIQUE가 남아 있지 않다", async () => {
+    const rows = await prisma.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'AiProviderConnection' AND indexdef LIKE 'CREATE UNIQUE%'`;
+    expect(rows.map((r) => r.indexdef).sort()).toEqual([
+      expect.stringContaining('"AiProviderConnection_pkey" ON public."AiProviderConnection" USING btree (id)'),
+      expect.stringContaining('("userId", provider)'),
+    ]);
   });
 
   it("세계관당 GameState·AUTO 세이브는 1개다", async () => {
