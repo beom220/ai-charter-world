@@ -23,6 +23,7 @@
     "db:check": "echo \"SELECT 1;\" | prisma db execute --stdin"
   },
   "dependencies": {
+    "@google/genai": "2.31.0",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "better-auth": "1.7.14",

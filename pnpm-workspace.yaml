@@ -1,4 +1,5 @@
 ignoredBuiltDependencies:
+  - "@google/genai" # preinstall은 no-op, prepare는 SDK 자체 개발 빌드(dist 포함 배포)
   - sharp
   - unrs-resolver
 
