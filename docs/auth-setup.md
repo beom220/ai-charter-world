@@ -74,6 +74,17 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "sel
 | `/login`에 "인증 설정이 완료되지 않았습니다" | `.env` 값 누락·형식 오류 또는 dev 서버 재시작 전 |
 | 로그인 후에도 비로그인으로 보임 | `BETTER_AUTH_URL`과 실제 접속 주소가 다름(`localhost` vs `127.0.0.1`) |
 
+### 로그에 남는 정보
+
+- `/api/auth/*` 요청은 dev 요청 로그에서 제외된다(`next.config.ts` → `logging.incomingRequests`). 콜백 URL의 `code`·`state`가 터미널에 찍히지 않게 하기 위해서다.
+- 인증 오류 로그는 `[auth]` 접두사로 남고, 비밀 값·토큰은 마스킹된다.
+
+### 실연동 검증 기록
+
+| 일자 | 결과 |
+|---|---|
+| 2026-10-27 | 로컬(`http://localhost:3000`)에서 실제 Google 계정으로 로그인 성공. `user`·`account(google, password NULL)`·`session(7일)` 생성, 새로고침 후 유지, 로그아웃 후 세션 0건, 비로그인 401, 타인 세계관 404 확인 |
+
 ## 4. 배포 시 주의
 
 - `BETTER_AUTH_URL`은 `https://` 주소로 한다. 이때 세션 쿠키는 `__Secure-better-auth.session_token`(Secure·HttpOnly·SameSite=Lax)이 된다.

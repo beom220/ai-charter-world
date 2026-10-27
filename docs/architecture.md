@@ -756,6 +756,7 @@ export interface EventBus {
 - **쿠키**: HttpOnly, SameSite=Lax, Path=/. `BETTER_AUTH_URL`이 `https://`이면 Secure와 `__Secure-` 접두사가 붙는다(`useSecureCookies`). 로컬 `http://localhost`에서만 Secure가 빠진다.
 - **origin·CSRF 검사 명시**: Better Auth는 `NODE_ENV=test`에서 origin 검사를 기본으로 끈다. `advanced.disableOriginCheck: false`, `disableCSRFCheck: false`로 모든 환경에서 켠다.
 - **로그**: Better Auth 로거는 메시지만 남기고 추가 인자(요청·토큰 객체)는 버린다. 메시지는 `server/logging/redact.ts`로 비밀 값·토큰 형태를 지운다.
+- **dev 요청 로그**: Next.js dev 서버는 요청 URL을 쿼리스트링까지 기록하므로 OAuth 콜백의 `code`·`state`가 남는다(실연동 검증에서 발견). `next.config.ts`의 `logging.incomingRequests.ignore`로 `/api/auth/*`를 제외한다(개발 모드 전용 설정, 운영 빌드 영향 없음).
 - 실연동 절차: `docs/auth-setup.md`
 - 최초 로그인 시 사용자 레코드는 Better Auth가 자동으로 만든다. 사용자 생성 훅에서 앱 기본 데이터를 초기화한다(필요 시).
 - 인증 테이블(User, Session, Account, Verification)은 Better Auth CLI 생성 결과를 기준으로 한다(database.md §3.1).
