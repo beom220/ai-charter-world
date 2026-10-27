@@ -605,6 +605,9 @@ export interface RunnerHost {
   - 타임아웃 **60초**(§6.5 설계값). SDK가 이 값을 `X-Server-Timeout` 헤더로 보내 Google이 서버 쪽 마감으로 쓴다. 처음에 30초로 두었을 때 `gemini-3.8-flash`가 두 번 모두 약 29초에 `DEADLINE_EXCEEDED`로 끝났다
   - 사고 수준: 공식 문서와 SDK 타입으로 지원이 확인된 모델만 지정한다. 현재 `gemini-3.8-flash` → `thinkingConfig.thinkingLevel = LOW`. 그 밖의 모델에는 사고 설정을 보내지 않는다(범용 모델 설정 시스템 아님)
 - **probe 성공 기준**: HTTP 200만으로는 성공이 아니다. 첫 후보의 `finishReason`이 `STOP`이고, 사고 파트를 뺀 텍스트가 비어 있지 않아야 한다. 그렇지 않으면 `INCOMPLETE_RESPONSE`다(출력 예산 부족 `MAX_TOKENS`, 빈 텍스트, 안전 차단 등). 이 경우 `defaultModel`을 저장하지 않고, 응답의 입력·출력·사고 토큰은 `ApiRequestLog`(`outcome = VALIDATION_ERROR`, `httpStatus = 200`)에 기록한다.
+- **실연동 기록 (2026-10-27, 무료 등급 프로젝트, `AQ.` 형식 키)**: 키 검증 성공. 최소 생성 성공 모델은 `gemini-3.5-flash-lite`(1.79초, 입력 2·출력 14토큰) → `defaultModel` 저장.
+  - 실패: `gemini-2.5-flash`·`2.5-pro`는 404(신규 사용자 제한 문구), `gemini-4-argon`은 429(무료 등급 할당량 0), `gemini-pro-latest`는 429, `gemini-3.8-flash`는 504·503(마감 내 미완료, 5회).
+  - 무료 등급에서는 목록에 있는 모델 대부분을 생성에 쓸 수 없을 수 있다.
 - **외부 호출은 사용자가 버튼을 누를 때만** 한다. 화면을 열 때 자동 검증·자동 모델 확인을 하지 않고, 일괄 생성 검사도 하지 않는다.
 - **모델 표시**: Gemini 계열(`gemini-`), `generateContent` 지원, TTS·이미지·오디오·실시간·임베딩 제외 필터를 통과한 모델을 모두 보여 준다. 정식 모델을 먼저, 미리보기를 뒤에 둔다. 목록에 있다고 생성 가능하다고 표시하지 않는다(실연동에서 목록·`models.get`은 성공하고 생성만 404·429인 모델 확인).
 - **모델 검증 결과는 저장하지 않는다**: 모델별 결과 테이블·컬럼은 두지 않고, 연결 상태와 `defaultModel`만 쓴다. 이번 화면에서 실패한 모델은 화면 상태로만 표시한다.
