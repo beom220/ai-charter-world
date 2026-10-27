@@ -118,10 +118,10 @@ flowchart LR
 
 | 구분 | 선택 | 비고 |
 |---|---|---|
-| 프레임워크 | Next.js (App Router), React, TypeScript (strict) | Route Handler·SSE는 `runtime = "nodejs"` |
+| 프레임워크 | Next.js 16.4.3 (App Router), React 19.3.1, TypeScript 6.0.3 (strict) | `cacheComponents` 사용. Route Handler·SSE는 기본 Node.js runtime(segment config `runtime`·`dynamic`은 cacheComponents와 함께 쓸 수 없음, §10.1) |
 | UI | Tailwind CSS, shadcn/ui | 반응형, 접근성 |
 | 클라이언트 상태 | 서버 상태는 fetch + SSE 반영, 시뮬레이션 화면 로컬 상태만 Zustand(필요 시) | |
-| 인증 | Better Auth + Google OAuth만 | Prisma adapter |
+| 인증 | Better Auth 1.7.14 + Google OAuth만 | Prisma adapter, `server-only` 0.0.1(auth 경계만) |
 | DB/ORM | PostgreSQL 16+, Prisma | 일부 잠금은 `$queryRaw` 사용 |
 | LLM | Google Gen AI SDK (`@google/genai`) | BYOK, 서버 측 호출만 |
 | 검증 | Zod | 입력·LLM 출력·세이브 payload 공통 |
@@ -692,7 +692,8 @@ export interface RunnerHost {
 ### 10.1 엔드포인트
 
 - `GET /api/worlds/[worldId]/simulation/stream`
-- 설정: `runtime = "nodejs"`, `dynamic = "force-dynamic"`, `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
+- 설정: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. 기본 Node.js runtime에서 요청 시점에 실행된다.
+  - Phase 2-3 확인: `cacheComponents`가 켜져 있으면 segment config `runtime`은 빌드 오류이고 `dynamic`은 대체 대상이다. 그래서 둘 다 선언하지 않는다(Node.js runtime이 기본이고, 요청 시점 API를 쓰는 Route Handler는 매 요청 실행된다).
 - **연결 시**: 세션·소유권 확인 → `Last-Event-ID` 이후의 outbox 이벤트를 재전송 → 구독 시작.
   - `Last-Event-ID`가 없거나 너무 오래되었으면 `sync.required`를 보낸다. 클라이언트는 REST로 전체 상태를 다시 받는다.
 - **연결 등록**: 연결 시 `SseConnection` INSERT + 보류 해제 시도, 10초마다 `lastSeenAt` 갱신, 종료 시 DELETE + 마지막 연결이면 보류 시작(§7.5).
@@ -737,6 +738,25 @@ export interface EventBus {
 - `server/auth/auth.ts`: `betterAuth({ database: prismaAdapter(prisma, { provider: "postgresql" }), socialProviders: { google: {…} } })`.
 - 이메일·비밀번호 플러그인은 활성화하지 않는다.
 - `app/api/auth/[...all]/route.ts`에서 Better Auth Next.js 핸들러를 쓴다.
+
+**Phase 2-3 구현 (Better Auth 1.7.14)**
+
+| 파일 | 역할 |
+|---|---|
+| `server/auth/env.ts` | `BETTER_AUTH_SECRET`(32자 이상)·`BETTER_AUTH_URL`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET` 검증. 누락 시 `AuthConfigError`(변수 이름만, 값 미포함) |
+| `server/auth/options.ts` | 공통 옵션. 운영 인스턴스와 테스트 인스턴스가 같은 옵션을 쓴다 |
+| `server/auth/auth.ts` | `getAuth()`: 첫 사용 시 생성(환경변수 없이도 빌드·import 가능). 플러그인은 `nextCookies()`만 |
+| `server/auth/session.ts` | `requireUser()`, `getCurrentSession()`과 테스트용 `…FromHeaders(headers)` |
+| `app/api/auth/[...all]/route.ts` | 설정 오류면 `500 AUTH_NOT_CONFIGURED` |
+| `app/login/` | 로그인·로그아웃 확인용 최소 화면. 세션 읽기는 `<Suspense>` 안에서 한다(cacheComponents 규칙) |
+| `lib/auth-client.ts` | 브라우저 클라이언트(`better-auth/react`) |
+
+- **Google 전용**: `emailAndPassword.enabled = false`, `socialProviders`는 `google`만. `/sign-in/email`·`/sign-up/email`은 400, 다른 Provider는 404.
+- **세션 검증**: `session.cookieCache` 비활성. 매 요청 DB 세션을 확인하므로 로그아웃·삭제·만료가 즉시 반영된다. 기본 만료 7일, 갱신 주기 1일(Better Auth 기본값).
+- **쿠키**: HttpOnly, SameSite=Lax, Path=/. `BETTER_AUTH_URL`이 `https://`이면 Secure와 `__Secure-` 접두사가 붙는다(`useSecureCookies`). 로컬 `http://localhost`에서만 Secure가 빠진다.
+- **origin·CSRF 검사 명시**: Better Auth는 `NODE_ENV=test`에서 origin 검사를 기본으로 끈다. `advanced.disableOriginCheck: false`, `disableCSRFCheck: false`로 모든 환경에서 켠다.
+- **로그**: Better Auth 로거는 메시지만 남기고 추가 인자(요청·토큰 객체)는 버린다. 메시지는 `server/logging/redact.ts`로 비밀 값·토큰 형태를 지운다.
+- 실연동 절차: `docs/auth-setup.md`
 - 최초 로그인 시 사용자 레코드는 Better Auth가 자동으로 만든다. 사용자 생성 훅에서 앱 기본 데이터를 초기화한다(필요 시).
 - 인증 테이블(User, Session, Account, Verification)은 Better Auth CLI 생성 결과를 기준으로 한다(database.md §3.1).
 - OAuth state·PKCE·redirect 검증과 세션 쿠키(`HttpOnly`, `Secure`, `SameSite=Lax`)는 라이브러리 기본값을 따른다.
@@ -745,11 +765,15 @@ export interface EventBus {
 
 ```ts
 // server/auth/session.ts
-requireUser(): Promise<{ userId: string }>                    // 없으면 401
-// server/db/scope.ts
-requireOwnedWorld(userId, worldId): Promise<World>            // 없거나 타인 소유면 404
+requireUser(): Promise<{ userId: AuthenticatedUserId }>       // 없거나 만료·무효면 401 (UnauthorizedError)
+// server/db/scope.ts (런타임 독립)
+requireOwnedWorld(userId: AuthenticatedUserId, worldId, db?): Promise<World>   // 없거나 타인 소유면 404 (NotFoundError)
 ownedWorldWhere(userId, worldId) => ({ id: worldId, ownerId: userId })
+ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소스 조건
 ```
+
+- `AuthenticatedUserId`(`server/domain/identity.ts`)는 브랜드 타입이다. 요청 본문·쿼리·헤더의 `string`은 소유권 헬퍼에 넘길 수 없다(타입 검사가 거부). 이 타입은 검증된 세션(`session.ts`)과, 세계관 `ownerId`를 확정한 Runner만 만든다.
+- 오류는 `server/domain/errors.ts`의 `UnauthorizedError`(401)·`NotFoundError`(404)이고, Route Handler가 상태 코드로 바꾼다.
 
 - 모든 Route Handler와 Server Action은 `requireUser()`로 시작한다. 세계관 하위 리소스(캐릭터·세이브·장면·기억·로그)는 `world: { ownerId: userId }` 조건이 포함된 쿼리로만 조회·수정한다.
 - 자식 리소스 ID(`saveId`, `characterId`)는 반드시 `worldId`와 함께 조회한다. 다른 세계관의 ID를 섞어 보내도 매칭되지 않는다.

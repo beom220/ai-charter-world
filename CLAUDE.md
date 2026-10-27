@@ -13,6 +13,7 @@
 | `docs/requirements.md` | PRD. 요구사항과 인수 조건의 최종 기준 |
 | `docs/architecture.md` | 아키텍처, 엔진, 실행 제어, 확정 결정 D1~D9·A1~A17 |
 | `docs/database.md` | Prisma 스키마 초안, 트랜잭션 패턴, 스냅샷, 삭제 정책 |
+| `docs/auth-setup.md` | Google OAuth 환경변수 설정과 실연동 검증 절차 |
 
 - 요구사항을 임의로 바꾸지 않는다. 문서와 다르게 구현해야 할 이유가 생기면, 구현을 멈추고 사용자에게 보고한다.
 - 설계를 바꿀 때는 세 문서를 함께 갱신해 충돌이 없게 한다. PRD를 바꾸면 PRD §13 변경 이력에 기록한다.

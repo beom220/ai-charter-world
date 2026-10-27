@@ -1,6 +1,6 @@
 # AI Character World — 데이터베이스 설계서
 
-> **문서 상태:** v1.2 (2026-10-27 Phase 2-2 반영: §3.2 사용자당 Provider별 연결 1개. v1.1: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
+> **문서 상태:** v1.3 (2026-10-27 Phase 2-3: §3.1 Better Auth CLI 비교 결과. v1.2 Phase 2-2 반영: §3.2 사용자당 Provider별 연결 1개. v1.1: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
@@ -88,6 +88,8 @@ Better Auth CLI(`generate`)가 만드는 모델을 그대로 쓰고, 앱 관계 
 - **timestamptz 유지**: CLI 기본값은 `timestamp(3)`이지만 §1-9 정책대로 `Timestamptz(3)`를 쓴다. 어댑터 동작에는 영향이 없다.
 - **`account.password`는 nullable로 유지**: Better Auth core 스키마 필드다. 이메일·비밀번호 로그인은 활성화하지 않으므로(Google OAuth 전용) 항상 NULL이다.
 - **Phase 2-3 검증 작업(필수)**: Better Auth를 설치한 뒤 CLI `generate` 결과와 `prisma/schema.prisma`의 인증 모델을 비교한다. 필드·타입·nullable·UNIQUE·인덱스·FK가 일치해야 한다. 허용 차이는 timestamptz와 앱 관계 필드뿐이다. 그 밖의 차이는 새 마이그레이션으로 맞추고 이 절에 기록한다.
+  - **결과 (2026-10-27, `better-auth` 1.7.14 / CLI `auth` 1.7.14)**: 임시 디렉터리에 `auth generate --output`으로 생성한 스키마와 비교했다. `@db.Timestamptz(3)`와 User의 앱 관계 필드(`providerConnections`, `worlds`, `apiRequestLogs`, `sseConnections`)를 빼면 4개 모델 모두 **차이 0건**이다. CLI가 추가로 만든 모델도 없다. 스키마 변경·마이그레이션은 필요 없었다. 비교 스크립트는 일부러 만든 차이(nullable 변경, 인덱스 삭제)를 검출하는 것으로 확인했다.
+  - Better Auth 버전을 올릴 때는 같은 비교를 다시 한다.
 
 ```prisma
 model User {
