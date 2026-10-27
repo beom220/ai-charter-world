@@ -39,3 +39,10 @@ export class NotFoundError extends AppError {
     super(404, "NOT_FOUND", "요청한 리소스를 찾을 수 없습니다.");
   }
 }
+
+/** 요청 본문이 한도(10MB)를 넘음 (413, architecture.md §11.3) */
+export class PayloadTooLargeError extends AppError {
+  constructor() {
+    super(413, "PAYLOAD_TOO_LARGE", "요청 크기가 10MB를 넘었습니다.");
+  }
+}

@@ -14,7 +14,7 @@ export function SignInButton() {
   async function signIn() {
     setPending(true);
     setError(null);
-    const { error } = await authClient.signIn.social({ provider: "google", callbackURL: "/login" });
+    const { error } = await authClient.signIn.social({ provider: "google", callbackURL: "/worlds" });
     // 성공하면 Google로 이동하므로 여기 도달하는 것은 실패뿐이다
     if (error) {
       setError("Google 로그인을 시작하지 못했습니다. 잠시 후 다시 시도하세요.");

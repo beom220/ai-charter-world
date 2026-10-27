@@ -48,3 +48,11 @@ export const BREAKER_HALF_OPEN_HOLD_MS = 60_000;
  * 요청 타임아웃(최대 60초)보다 충분히 길게 둔다. 같은 연결의 다음 예약 때 정리한다.
  */
 export const USAGE_PENDING_STALE_MS = 5 * 60 * 1000;
+
+// ── 세계관 (Phase 4-1, PRD FR-03) ──
+
+/** HTTP 요청 본문 최대 크기 (확정, A8). worldContext는 글자 수 제한 없이 이 한도 안에서 저장한다 */
+export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
+
+/** 세계관 이름 최대 길이(코드 포인트). World.name VarChar(100)과 같다 */
+export const WORLD_NAME_MAX_LENGTH = 100;

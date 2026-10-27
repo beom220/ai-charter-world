@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { AuthConfigError } from "@/server/auth/env";
 import { getCurrentSession } from "@/server/auth/session";
@@ -45,6 +46,9 @@ async function SessionStatus() {
       <p className="text-sm">
         <span className="font-medium">{session.user.name}</span> ({session.user.email}) 님으로 로그인되어 있습니다.
       </p>
+      <Link href="/worlds" className="text-sm underline">
+        내 세계관으로 이동
+      </Link>
       <SignOutButton />
     </section>
   );

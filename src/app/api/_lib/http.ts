@@ -1,7 +1,8 @@
 import { unstable_rethrow } from "next/navigation";
 import { AuthConfigError } from "@/server/auth/env";
 import { CryptoConfigError, DecryptionError } from "@/server/crypto/provider-key-crypto";
-import { AppError } from "@/server/domain/errors";
+import { MAX_REQUEST_BODY_BYTES } from "../../../../config/limits";
+import { AppError, PayloadTooLargeError } from "@/server/domain/errors";
 import { logServerError } from "@/server/logging/log";
 
 // Route Handler 공통 응답. 모든 API 응답은 캐시하지 않는다.
@@ -37,6 +38,35 @@ export function errorResponse(scope: string, error: unknown): Response {
   }
   logServerError(scope, error);
   return jsonResponse(errorBody("INTERNAL_ERROR", "요청을 처리하지 못했습니다."), 500);
+}
+
+/**
+ * 크기 제한이 있는 JSON 본문 파싱. 한도를 넘으면 PayloadTooLargeError(413), 형식 오류는 undefined.
+ * Content-Length를 먼저 보고, 없거나 거짓이어도 스트림을 읽으며 누적 바이트로 다시 끊는다.
+ */
+export async function readJsonWithLimit(request: Request, maxBytes = MAX_REQUEST_BODY_BYTES): Promise<unknown> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new PayloadTooLargeError();
+  if (!request.body) return undefined;
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new PayloadTooLargeError();
+    }
+    chunks.push(value);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return undefined;
+  }
 }
 
 /** JSON 본문 파싱. 형식 오류는 400. */
