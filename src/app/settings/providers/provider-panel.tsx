@@ -22,11 +22,12 @@ const FAILED_LABEL: Record<string, string> = {
   GEMINI_MODEL_NOT_SUPPORTED: "대화 생성 미지원",
 };
 
-const STATUS_LABEL: Record<Connection["status"], string> = {
-  UNVERIFIED: "미검증 — 검증이 필요합니다",
-  ACTIVE: "검증됨",
-  INVALID: "사용 불가 — 키를 확인하세요",
-};
+/** ACTIVE는 "키 확인 성공"일 뿐이다. 모델이 선택되어야 Gemini를 쓸 수 있다 */
+function statusLabel(c: Connection): string {
+  if (c.status === "INVALID") return "사용 불가 — 키를 확인하세요";
+  if (c.status === "UNVERIFIED") return "미검증 — 키 검증이 필요합니다";
+  return c.defaultModel ? "사용 가능" : "키 확인됨 — 모델 선택 필요";
+}
 
 const button = "rounded-md border border-foreground/20 px-3 py-1.5 text-sm font-medium hover:bg-foreground/5 disabled:opacity-50";
 
@@ -127,12 +128,20 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
         </p>
       )}
 
+      {connection?.status === "ACTIVE" && !connection.defaultModel && (
+        <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          API 키 확인은 완료됐지만 <strong>기본 모델이 선택되지 않아 아직 Gemini를 사용할 수 없습니다.</strong>{" "}
+          {models.length === 0 ? "\"모델 목록 새로고침\"을 눌러 목록을 불러온 뒤 " : "아래 목록에서 "}
+          모델을 선택하세요. 선택한 모델로 최소 생성 요청이 성공해야 저장됩니다.
+        </p>
+      )}
+
       <section className="flex flex-col gap-2">
         <h2 className="font-medium">연결 상태</h2>
         {connection ? (
           <dl className="grid grid-cols-[8rem_1fr] gap-1 text-sm">
             <dt>상태</dt>
-            <dd>{STATUS_LABEL[connection.status]}</dd>
+            <dd>{statusLabel(connection)}</dd>
             <dt>키</dt>
             <dd>••••{connection.keyLast4}</dd>
             <dt>기본 모델</dt>
