@@ -82,7 +82,7 @@ describe("외래 키", () => {
       prisma.message.create({
         data: { sceneId: "missing", worldId: world.id, turnIndex: 0, speakerNameSnapshot: "x", dialogue: "x" },
       }),
-    ).rejects.toThrow(/Message_sceneId_fkey/);
+    ).rejects.toThrow(/Message_sceneId_worldId_fkey/);
   });
 });
 
@@ -289,7 +289,7 @@ describe("삭제 정책 (database.md §7)", () => {
     const { world, characters } = await createWorldWithCharacters(2);
     const [a, b] = characters as [(typeof characters)[0], (typeof characters)[0]];
     const scene = await prisma.conversationScene.create({ data: sceneData(world.id, 1) });
-    await prisma.sceneParticipant.create({ data: { sceneId: scene.id, characterId: a.id, alias: "C1", nameSnapshot: a.name } });
+    await prisma.sceneParticipant.create({ data: { sceneId: scene.id, worldId: world.id, characterId: a.id, alias: "C1", nameSnapshot: a.name } });
     await prisma.message.create({
       data: { sceneId: scene.id, worldId: world.id, turnIndex: 0, speakerCharacterId: a.id, speakerNameSnapshot: a.name, dialogue: "x" },
     });
