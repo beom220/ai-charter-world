@@ -753,6 +753,7 @@ ownedWorldWhere(userId, worldId) => ({ id: worldId, ownerId: userId })
 
 - 모든 Route Handler와 Server Action은 `requireUser()`로 시작한다. 세계관 하위 리소스(캐릭터·세이브·장면·기억·로그)는 `world: { ownerId: userId }` 조건이 포함된 쿼리로만 조회·수정한다.
 - 자식 리소스 ID(`saveId`, `characterId`)는 반드시 `worldId`와 함께 조회한다. 다른 세계관의 ID를 섞어 보내도 매칭되지 않는다.
+- 쓰기 경로의 2차 방어로, DB가 복합 FK와 범위 트리거로 다른 세계관·다른 사용자 레코드 참조를 거부한다(database.md §4.3).
 - 타인 리소스는 403이 아니라 **404**로 응답한다. 리소스 존재 여부가 노출되지 않는다.
 - 미들웨어(Next.js `proxy`/`middleware`)는 비로그인 사용자를 로그인 페이지로 보내는 낙관적 리다이렉트만 한다. 실제 인가는 서버 데이터 접근 계층에서 한다(PRD §8.1).
 - Runner는 사용자 세션 없이 동작하지만, 세계관 ID로 `ownerId`를 확정한 뒤 그 사용자의 연결만 쓴다.

@@ -1,11 +1,15 @@
 # AI Character World — 데이터베이스 설계서
 
-> **문서 상태:** v1.0 (2026-10-27 최종 승인 반영)
+> **문서 상태:** v1.1 (2026-10-27 Phase 2-1 구현 반영: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
 
-아래 Prisma 스키마는 **설계 초안**이다. 실제 `prisma/schema.prisma`는 Phase 2에서 이 문서를 기준으로 작성한다. Better Auth 테이블은 CLI 생성 결과에 맞춘다. generator·datasource 블록은 설치하는 Prisma 버전의 형식을 따른다.
+아래 Prisma 코드 블록은 **설계 기준**이다. 실제 구현은 `prisma/schema.prisma`와 `prisma/migrations/`에 있다(Phase 2-1). 구현에서 확정된 차이는 다음과 같다.
+
+- 모든 `DateTime`은 `@db.Timestamptz(3)`로 선언한다(§1-9). 코드 블록에서는 생략했다.
+- 세계관 하위 리소스의 참조는 §4.3의 복합 FK·트리거로 같은 세계관·같은 사용자만 가리키게 한다. 코드 블록의 단일 컬럼 `@relation`은 개념 표기다.
+- Prisma로 표현할 수 없는 CHECK 제약(§4.1)과 범위 트리거(§4.3)는 마이그레이션 SQL에 있다.
 
 ---
 
@@ -76,6 +80,14 @@ erDiagram
 ### 3.1 인증 (Better Auth)
 
 Better Auth CLI(`generate`)가 만드는 모델을 그대로 쓰고, 앱 관계 필드만 추가한다. 아래는 개념상 필드이며, 실제 필드명과 타입은 생성 결과를 따른다.
+
+**Phase 2-1 구현 (2026-10-27 승인)**
+- `better-auth` 패키지 설치 전이므로, Better Auth **1.7.14** core의 `getAuthTables` 정의와 공식 CLI(`auth` 1.7.14) Prisma 생성 규칙을 기준으로 직접 작성했다.
+  - 모델 `User`·`Session`·`Account`·`Verification`, 테이블 `@@map("user"|"session"|"account"|"verification")`
+  - `@@unique([email])`, `@@unique([token])`, `Session·Account @@index([userId])`, `Verification @@index([identifier])`, User 삭제 시 Cascade
+- **timestamptz 유지**: CLI 기본값은 `timestamp(3)`이지만 §1-9 정책대로 `Timestamptz(3)`를 쓴다. 어댑터 동작에는 영향이 없다.
+- **`account.password`는 nullable로 유지**: Better Auth core 스키마 필드다. 이메일·비밀번호 로그인은 활성화하지 않으므로(Google OAuth 전용) 항상 NULL이다.
+- **Phase 2-3 검증 작업(필수)**: Better Auth를 설치한 뒤 CLI `generate` 결과와 `prisma/schema.prisma`의 인증 모델을 비교한다. 필드·타입·nullable·UNIQUE·인덱스·FK가 일치해야 한다. 허용 차이는 timestamptz와 앱 관계 필드뿐이다. 그 밖의 차이는 새 마이그레이션으로 맞추고 이 절에 기록한다.
 
 ```prisma
 model User {
@@ -299,6 +311,7 @@ model ConversationScene {
 model SceneParticipant {
   sceneId      String
   characterId  String
+  worldId      String                               // §4.3 복합 FK용 (Phase 2-1 추가)
   alias        String @db.VarChar(3)                // 프롬프트 별칭 C1..C6 (디버깅용)
   nameSnapshot String @db.VarChar(50)
 
@@ -471,8 +484,10 @@ model SseConnection {                                 // 활성 SSE 연결 등�
   lastSeenAt  DateTime @default(now())               // 10초마다 갱신, 30초 경과 시 비활성 간주
 
   world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)   // Phase 2-1: 사용자 삭제 시 고아 행 방지
 
   @@index([worldId, lastSeenAt])
+  @@index([userId])
 }
 
 model SimulationRun {                                 // 구 PRD §7 SimulationSession → SimulationRun (A1)
@@ -626,6 +641,7 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (
 
 - 앱 검증이 1차 방어다. clamp는 앱에서 먼저 적용하므로, CHECK 위반은 곧 버그다. 트랜잭션이 롤백되어 장면 실패로 처리된다.
 - 나이 상한 1000은 판타지 종족을 고려한 기술적 상한이다. 랜덤 생성 범위는 별도(성인 기본)이다.
+- `RelationshipBaseline`에도 같은 범위·자기 참조 금지 CHECK(`baseline_range`, `baseline_not_self`)를 둔다.
 
 ### 4.2 주요 조회와 인덱스
 
@@ -640,6 +656,58 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (
 | 복구 스위퍼 | `SimulationRuntime(status, leaseExpiresAt)` |
 | API 로그 탭 | `ApiRequestLog(worldId, createdAt desc)` |
 | 세이브 목록 | `SaveGame(worldId, kind, updatedAt desc)` |
+
+### 4.3 동일 세계관·동일 사용자 참조 무결성 (Phase 2-1, 2026-10-27 승인)
+
+`worldId` 단일 FK만으로는 세계관 A의 행이 세계관 B(다른 사용자 소유일 수 있음)의 캐릭터·장면·스냅샷을 가리키는 것을 막지 못한다. 그래서 DB에서 세 가지 방법으로 막는다.
+
+**1) 필수 참조 → `(참조 id, worldId)` 복합 FK** (`ON DELETE CASCADE ON UPDATE RESTRICT`)
+
+대상 테이블에 `@@unique([id, worldId])`를 둔다: `Character`, `ConversationScene`, `RelationshipState` (+ `EmotionState`는 1:1이라 `@@unique([characterId, worldId])`).
+
+| 참조하는 쪽 | 컬럼 → 대상 |
+|---|---|
+| RelationshipBaseline | `fromCharacterId`, `toCharacterId` → Character |
+| RelationshipState | `fromCharacterId`, `toCharacterId` → Character |
+| RelationshipChange | `relationshipStateId` → RelationshipState |
+| EmotionState | `characterId` → Character |
+| EmotionChange | `characterId` → Character |
+| SceneParticipant | `sceneId` → ConversationScene, `characterId` → Character (`worldId` 컬럼 추가) |
+| Message | `sceneId` → ConversationScene |
+| CharacterMemory | `ownerCharacterId` → Character |
+
+`ON UPDATE RESTRICT` 때문에 참조되고 있는 캐릭터·장면의 `worldId`를 바꾸면 거부된다(다른 세계관으로 데이터를 옮기는 경로 차단).
+
+**2) nullable·`ON DELETE SET NULL` 참조 → 범위 트리거**
+
+복합 FK에 `SET NULL`을 걸면 NOT NULL인 `worldId`까지 비우려 해서 쓸 수 없다. 그래서 트리거 함수 `enforce_same_scope()`가 INSERT·UPDATE 때 참조 대상의 `worldId`가 자기 `worldId`와 같은지 검사한다(위반 시 SQLSTATE 23514). 단일 FK와 SetNull 동작은 그대로다.
+
+| 트리거 | 참조 |
+|---|---|
+| `message_speaker_same_world` | Message.speakerCharacterId → Character |
+| `memory_about_same_world` | CharacterMemory.aboutCharacterId → Character |
+| `memory_source_scene_same_world` | CharacterMemory.sourceSceneId → ConversationScene |
+| `relationship_change_scene_same_world` | RelationshipChange.sceneId → ConversationScene |
+| `emotion_change_scene_same_world` | EmotionChange.sceneId → ConversationScene |
+| `world_event_source_scene_same_world` | WorldEvent.sourceSceneId → ConversationScene |
+| `scene_run_same_world` | ConversationScene.runId → SimulationRun |
+| `save_snapshot_same_world` | SaveGame.snapshotId → GameSnapshot |
+
+**3) 사용자 범위 참조 → 소유자 일치 트리거** (같은 함수 사용)
+
+| 트리거 | 규칙 |
+|---|---|
+| `sse_connection_world_owner` | SseConnection.userId = World(worldId).ownerId |
+| `api_log_world_owner` | ApiRequestLog.userId = World(worldId).ownerId (worldId가 있을 때) |
+| `api_log_connection_owner` | ApiRequestLog.userId = AiProviderConnection(connectionId).userId (connectionId가 있을 때) |
+
+**앱 계층 책임 (DB가 강제하지 않음)**
+- `worldId`·`World.ownerId`·`AiProviderConnection.userId`는 생성 후 바꾸지 않는다. 트리거는 참조하는 쪽의 INSERT·UPDATE 때만 검사하므로, 참조 대상의 범위 컬럼이 나중에 바뀌는 경우는 잡지 못한다.
+- FK가 없는 참조 컬럼은 앱이 같은 세계관 안의 값만 쓴다: `SimulationRuntime.currentRunId`, `SystemNotice.runId/attemptId`, `ApiRequestLog.runId/attemptId`, `ConversationScene.motiveRef`.
+- 모든 조회는 기존대로 `world.ownerId` 조건이 포함된 쿼리로 한다(CLAUDE.md 절대 규칙 3). DB 제약은 쓰기 경로의 2차 방어다.
+- 스냅샷 적용(§5.2)으로 행을 복원할 때도 이 제약이 그대로 적용된다. `SceneParticipant.worldId`는 스냅샷 payload에 없으므로 적용 시 대상 `worldId`로 채운다(payload 구조 변경 없음, `schemaVersion` 유지).
+
+검증: `tests/integration/same-world-integrity.test.ts` (사용자 A 세계관에서 사용자 B 세계관 레코드를 참조하는 모든 경로가 거부되는지 확인)
 
 ---
 
@@ -818,3 +886,5 @@ await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UP
 
 1. 스냅샷 크기 모니터링 임계값과 초과 시 정책(경고만 / 저장 거부). JSONB 대신 gzip `Bytes`로 바꿀지는 측정 후 판단(Phase 7b).
 2. `Mood` enum 목록과 UI 표시명(Phase 6).
+3. **Phase 2-3**: Better Auth CLI `generate` 결과와 인증 모델 비교 검증(§3.1).
+4. **결정 대기**: `AiProviderConnection`은 현재 `userId @unique`(사용자당 연결 1개)다. 목표 정책 "사용자당 Provider별 1개"는 `@@unique([userId, provider])`이며, Provider가 `GEMINI` 하나뿐인 지금은 두 제약의 효과가 같다. 다중 제공자를 도입할 때(또는 그 전에 미리) 새 마이그레이션으로 바꾼다. 이때 `User.providerConnection`은 목록 관계가 된다.

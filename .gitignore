@@ -48,3 +48,6 @@ next-env.d.ts
 .idea/
 .vscode/
 .claude/settings.local.json
+
+# 작업 보고서 (로컬 보관, 커밋하지 않음)
+/result/
