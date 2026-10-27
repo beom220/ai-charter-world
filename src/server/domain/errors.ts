@@ -1,0 +1,27 @@
+// 서버 계층 공통 오류. Route Handler가 HTTP 상태로 변환한다.
+// 메시지는 사용자에게 보일 수 있으므로 내부 정보(리소스 존재 여부, 비밀 값)를 담지 않는다.
+
+export class AppError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = new.target.name;
+  }
+}
+
+/** 인증되지 않은 요청 (401) */
+export class UnauthorizedError extends AppError {
+  constructor() {
+    super(401, "UNAUTHORIZED", "로그인이 필요합니다.");
+  }
+}
+
+/** 없거나 타인 소유인 리소스 (404). 둘을 구분하지 않아 존재 여부를 노출하지 않는다. */
+export class NotFoundError extends AppError {
+  constructor() {
+    super(404, "NOT_FOUND", "요청한 리소스를 찾을 수 없습니다.");
+  }
+}
