@@ -51,16 +51,23 @@ tests/              unit/ integration/ e2e/
 
 ## 명령어
 
-> Phase 1 프로젝트 초기화 후 실제 명령으로 채운다.
+Node.js 24 이상(`.nvmrc`), pnpm 10.24.0. 처음에는 `cp .env.example .env` 후 값을 채운다.
 
 ```bash
-# 개발 서버        : (TBD)
-# 타입 검사        : (TBD)
-# 린트             : (TBD)
-# 단위·통합 테스트 : (TBD)
-# E2E 테스트       : (TBD)
-# DB 기동          : docker compose up -d db   (TBD)
-# Prisma 마이그레이션: (TBD)
+pnpm install              # 의존성 설치 (postinstall에서 prisma generate 실행)
+pnpm dev                  # 개발 서버 http://localhost:3000
+pnpm typecheck            # next typegen + tsc --noEmit
+pnpm lint                 # ESLint (엔진 경계 규칙 포함)
+pnpm test                 # 단위 테스트 (tests/unit, DB 불필요)
+pnpm test:integration     # 통합 테스트 (tests/integration, DB 필요)
+pnpm test:watch           # 단위 테스트 watch
+# E2E 테스트              : Playwright 도입 시 추가 (TBD)
+
+pnpm db:up                # Docker PostgreSQL 기동 (healthy까지 대기), 호스트 포트 5433
+pnpm db:down              # PostgreSQL 컨테이너 중지·제거 (볼륨 유지)
+pnpm db:check             # Prisma로 DB 연결 확인 (SELECT 1)
+pnpm db:generate          # Prisma Client 생성 → src/generated/prisma (커밋 안 함)
+pnpm db:migrate           # prisma migrate dev (Phase 2부터 사용)
 ```
 
 ## 개발 워크플로

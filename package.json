@@ -12,6 +12,9 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:watch": "vitest --project unit",
     "postinstall": "prisma generate",
     "db:up": "docker compose up -d --wait db",
     "db:down": "docker compose down",
@@ -35,7 +38,8 @@
     "eslint-config-next": "16.4.3",
     "prisma": "7.10.1",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
   },
   "packageManager": "pnpm@10.24.0"
 }
