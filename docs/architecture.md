@@ -598,8 +598,13 @@ export interface RunnerHost {
 |---|---|---|
 | `POST /api/providers/gemini/verify` | `models.list` 1회(페이지가 더 있으면 최대 3회) | 성공 → `ACTIVE`, `lastVerifiedAt`. 기존 `defaultModel`이 목록에 없으면 비우고 `modelReselectRequired: true`. 키 오류(`KEY_INVALID`·`PERMISSION_DENIED`) → `INVALID`. 그 밖의 오류 → 상태 유지, `lastErrorCode`만 기록. 응답 200 `{ verification, connection, models, modelReselectRequired }` |
 | `GET /api/providers/gemini/models` | `models.list` 1회 | `ACTIVE` 연결만. 목록 새로고침 |
-| `PUT /api/providers/gemini/model` `{ model }` | `models.get` 1회 + 최소 `generateContent` 1회 | `ACTIVE` 연결만. 대화 생성 지원 확인 후 최소 생성 요청(`"ping"`, 출력 16토큰 이하)이 **성공했을 때만** `defaultModel`을 저장한다 |
+| `PUT /api/providers/gemini/model` `{ model }` | `models.get` 1회 + 최소 `generateContent` 1회 | `ACTIVE` 연결만. 대화 생성 지원 확인 후 최소 생성 요청(probe)이 **완료되었을 때만** `defaultModel`을 저장한다 |
 
+- **probe 요청 설정** (`server/llm/gemini/client.ts`, `probe-options.ts`):
+  - 입력 `"ping"`, `maxOutputTokens` **128**(사고 토큰 포함), `candidateCount` 1, `automaticContinuation: false`, 자동 함수 호출 비활성, 재시도 없음
+  - 타임아웃 **60초**(§6.5 설계값). SDK가 이 값을 `X-Server-Timeout` 헤더로 보내 Google이 서버 쪽 마감으로 쓴다. 처음에 30초로 두었을 때 `gemini-3.8-flash`가 두 번 모두 약 29초에 `DEADLINE_EXCEEDED`로 끝났다
+  - 사고 수준: 공식 문서와 SDK 타입으로 지원이 확인된 모델만 지정한다. 현재 `gemini-3.8-flash` → `thinkingConfig.thinkingLevel = LOW`. 그 밖의 모델에는 사고 설정을 보내지 않는다(범용 모델 설정 시스템 아님)
+- **probe 성공 기준**: HTTP 200만으로는 성공이 아니다. 첫 후보의 `finishReason`이 `STOP`이고, 사고 파트를 뺀 텍스트가 비어 있지 않아야 한다. 그렇지 않으면 `INCOMPLETE_RESPONSE`다(출력 예산 부족 `MAX_TOKENS`, 빈 텍스트, 안전 차단 등). 이 경우 `defaultModel`을 저장하지 않고, 응답의 입력·출력·사고 토큰은 `ApiRequestLog`(`outcome = VALIDATION_ERROR`, `httpStatus = 200`)에 기록한다.
 - **외부 호출은 사용자가 버튼을 누를 때만** 한다. 화면을 열 때 자동 검증·자동 모델 확인을 하지 않고, 일괄 생성 검사도 하지 않는다.
 - **모델 표시**: Gemini 계열(`gemini-`), `generateContent` 지원, TTS·이미지·오디오·실시간·임베딩 제외 필터를 통과한 모델을 모두 보여 준다. 정식 모델을 먼저, 미리보기를 뒤에 둔다. 목록에 있다고 생성 가능하다고 표시하지 않는다(실연동에서 목록·`models.get`은 성공하고 생성만 404·429인 모델 확인).
 - **모델 검증 결과는 저장하지 않는다**: 모델별 결과 테이블·컬럼은 두지 않고, 연결 상태와 `defaultModel`만 쓴다. 이번 화면에서 실패한 모델은 화면 상태로만 표시한다.
@@ -623,6 +628,7 @@ export interface RunnerHost {
 | `models.get` 404 | `GEMINI_MODEL_NOT_FOUND` (422) | 유지 | 모델을 찾을 수 없음, 목록 새로고침 후 다른 모델 선택 |
 | `models.get` 성공 후 생성 요청 404·403·400 | `GEMINI_MODEL_UNAVAILABLE` (422) | 유지 | 이 모델로 생성 요청을 보낼 수 없었음. 원인을 단정하지 않고 다른 모델 선택 또는 재시도 안내. 구분 근거 = 실패한 단계(조회 vs 생성) |
 | 대화 생성 미지원 모델 | `GEMINI_MODEL_NOT_SUPPORTED` (422) | 유지 | 생성 요청을 보내지 않음 |
+| probe가 200이지만 미완료(STOP 아님·빈 텍스트·차단) | `GEMINI_INCOMPLETE_RESPONSE` (422) | 유지 | 모델이 응답을 끝까지 생성하지 못함, 다른 모델 선택 또는 재시도 안내. `errorMessage`에 `finishReason`·`text=EMPTY`·`blockReason` 토큰 |
 | 5xx | `GEMINI_UPSTREAM_ERROR` (502) | 유지 | 일시적 오류, 잠시 후 재시도 |
 | 네트워크·시간 초과 | `GEMINI_NETWORK_ERROR`·`GEMINI_TIMEOUT` (504) | 유지 | 연결 실패·지연 |
 | 미검증 연결에서 목록·선택 | `GEMINI_NOT_VERIFIED` (409) | — | 먼저 검증 |

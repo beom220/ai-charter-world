@@ -20,6 +20,8 @@ const FAILED_LABEL: Record<string, string> = {
   GEMINI_QUOTA_EXCEEDED: "할당량 제한 — 나중에 다시 시도",
   GEMINI_MODEL_NOT_FOUND: "찾을 수 없음",
   GEMINI_MODEL_NOT_SUPPORTED: "대화 생성 미지원",
+  GEMINI_INCOMPLETE_RESPONSE: "응답 미완료",
+  GEMINI_TIMEOUT: "응답 지연",
 };
 
 /** ACTIVE는 "키 확인 성공"일 뿐이다. 모델이 선택되어야 Gemini를 쓸 수 있다 */
@@ -197,7 +199,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
         <section className="flex flex-col gap-2">
           <h2 className="font-medium">모델 선택</h2>
           <p className="text-xs text-foreground/70">
-            이 키로 조회된 모델 목록입니다. 목록에 있어도 생성 요청이 가능하다는 뜻은 아닙니다. 선택하면 모델 확인과 최소 생성 요청(출력 16토큰
+            이 키로 조회된 모델 목록입니다. 목록에 있어도 생성 요청이 가능하다는 뜻은 아닙니다. 선택하면 모델 확인과 최소 생성 요청(출력 128토큰
             이하)을 1번씩 보내 실제로 쓸 수 있는지 확인하고, 성공한 경우에만 기본 모델로 저장합니다. 소량의 토큰이 사용될 수 있습니다.
           </p>
           <ul className="flex flex-col divide-y divide-foreground/10 text-sm">
