@@ -618,7 +618,7 @@ export interface RunnerHost {
   - 집계 단위는 **Gemini로 실제 전송된 HTTP 요청**이다(엔드포인트 요청 수가 아님). `ApiRequestLog` 중 `worldId`·`runId`가 없는 행(= 연결 관리용 호출)을 센다.
   - `models.list` 페이지 1개 = 1회, `models.get` = 1회, 최소 `generateContent` = 1회. 성공·실패 모두 센다. 로컬에서 거부되어 전송되지 않은 시도(빈 키·헤더 불가 문자)는 세지 않는다.
   - 외부 호출 **전에** 검사한다: 검증·목록은 1회분, 모델 선택은 2회분의 여유가 있어야 진행하고, 없으면 429 `RATE_LIMITED` + `Retry-After`(외부 호출 없음).
-  - 알려진 한계: ① 목록에 다음 페이지가 있으면 사전 검사(1회분)보다 최대 2회 더 쓸 수 있다. ② 같은 사용자의 서로 다른 작업이 동시에 들어오면 둘 다 검사를 통과할 수 있다. ③ single-flight는 프로세스 단위다(Worker·다중 인스턴스에서는 DB 한도만 적용).
+  - **Phase 3-3부터 원자적 예약**: HTTP 요청마다 전송 직전에 UsageGuard(§8.3)가 사용자 행을 `FOR UPDATE`로 잠그고, 진행 중(PENDING) 요청까지 포함해 센 뒤 로그 행을 예약한다. 그래서 Phase 3-2의 알려진 한계가 해결됐다. ① 목록의 다음 페이지도 페이지마다 예약하므로 한도를 넘겨 조회하지 않는다(넘으면 그 페이지에서 `RATE_LIMITED`). ② 같은 사용자의 서로 다른 작업이 동시에 와도 한도를 넘지 않는다. ③ DB 잠금이라 Worker·다중 인스턴스에서도 같다. single-flight(같은 작업 병합)는 계속 프로세스 단위다.
 - **자동 반복 요청 없음**: §6.5. 앱은 실패한 Gemini 호출을 재시도하지 않는다.
 
 **오류 코드와 사용자 메시지** (응답 본문은 저장·반환하지 않는다. `ApiRequestLog.errorMessage`에는 Google 오류의 `status`·`reason` 열거형 토큰만 남긴다)
@@ -636,6 +636,7 @@ export interface RunnerHost {
 | 네트워크·시간 초과 | `GEMINI_NETWORK_ERROR`·`GEMINI_TIMEOUT` (504) | 유지 | 연결 실패·지연 |
 | 미검증 연결에서 목록·선택 | `GEMINI_NOT_VERIFIED` (409) | — | 먼저 검증 |
 | 호출 한도 초과 | `RATE_LIMITED` (429, `Retry-After`) | — | N초 후 다시 시도 |
+| 연결의 일일 요청·토큰 한도 도달 (Phase 3-3, 한도를 설정한 경우만) | `USAGE_LIMIT_REACHED` (429, `Retry-After` = 다음 KST 자정까지) | — | 한도를 올리거나 자정(KST) 이후 다시 시도 |
 
 - `requireUsableGeminiConnection(userId)`: 이후 모든 Gemini 생성 호출의 관문이다. 연결 없음(`GEMINI_NOT_CONNECTED`), 미검증(`GEMINI_NOT_VERIFIED`), 모델 미선택(`GEMINI_MODEL_NOT_SELECTED`)이면 409로 막는다.
 - MockProvider: `LLM_PROVIDER=mock`이고 `NODE_ENV !== "production"`일 때만 쓴다. 프로덕션에서 mock 설정이면 `instrumentation.ts`가 부팅을 실패시킨다.
@@ -665,6 +666,40 @@ export interface RunnerHost {
 - **한도 도달 후 재개**: 사용자가 한도를 올리거나 KST 날짜가 바뀐 뒤 직접 재개한다. 자동으로 재개하지 않는다.
 - **Run별 기록**: `SimulationRun`에 요청 수·성공·실패·입출력·thinking 토큰·예상 비용을 누적한다. 시뮬레이션 화면의 "세션별 사용량" 표시에 쓴다(PRD FR-07).
 - **예상 비용**: `config/gemini-pricing.ts`(모델별 단가, 출처 URL, 기준일)로 계산하고 "예상치"로 표시한다. 실제 청구는 Google 측에서 확인하라고 안내한다. "영구 무료" 같은 문구는 쓰지 않는다(PRD §8.3).
+
+**Phase 3-3 구현** — `server/engine/usage/`: `usage-guard.ts`(DB 예약·정산, `createUsageMeter`), `breaker.ts`(브레이커 상태 전이, 순수 함수), `metering.ts`(결과·사용량 분류), `kst.ts`, `errors.ts`
+
+- **관문**: Gemini HTTP 요청은 모두 `GeminiKeyClient` 메서드에 넘긴 meter(`GeminiRequestMeter`)를 지난다. 클라이언트는 요청 1건마다 전송 **직전에** `meter(request)`(예약)를 기다리고, 끝나면 반환된 함수(정산)를 호출한다. 예약이 throw하면 요청을 보내지 않는다. 목록의 다음 페이지도 각각 예약한다.
+- **호출 목적(`UsagePurpose`)**
+
+  | 목적 | 대상 | 한도 | 서킷 브레이커 |
+  |---|---|---|---|
+  | `MANAGEMENT` | 키 검증·모델 목록·모델 확인(probe) (§8.2) | 사용자당 10분 10회 + 연결 일일 한도 | 적용·갱신하지 않음(사용자가 직접 누른 요청, 기존 응답 계약 유지) |
+  | `SIMULATION` | 시뮬레이션 엔진 호출(Phase 4 이후). `worldId` 필수, `runId`·`attemptId`·`callIndex` 기록 | 연결 일일 한도 | 적용. 연결 `ACTIVE` 필수 |
+
+- **예약(한 트랜잭션)**: [`MANAGEMENT`면 `user` 행 잠금] → `AiProviderConnection` 행 `FOR UPDATE` → 키 지문 확인(다르면 `KEY_CHANGED`, 요청 안 함) → 결과 유실 정리 → [`SIMULATION`: `ACTIVE` 확인, 브레이커 판정] / [`MANAGEMENT`: 10분 10회, PENDING 포함] → 일일 한도 → `ApiUsageDaily.requestCount + 1` → `ApiRequestLog(PENDING)` INSERT.
+  - 행 잠금이라 다중 Next.js 인스턴스·Worker에서도 같은 연결의 예약은 직렬화된다. 요청 한도는 동시 요청에도 정확히 지켜진다(통합 테스트: 한도 5에 동시 20건 → 정확히 5건 전송).
+  - 요청 한도: 오늘(KST) `requestCount ≥ dailyRequestLimit`면 거부. 모든 외부 요청(관리용 포함)을 센다.
+  - 토큰 한도: 오늘 `입력 + 출력 + 사고 토큰 ≥ dailyTokenLimit`면 **생성 요청**만 거부한다(모델 목록·조회는 토큰을 쓰지 않음). 토큰은 응답 후에야 알 수 있으므로 **진행 중이던 요청만큼** 한도를 넘을 수 있다(동시 요청이 없으면 1건만큼). 한도 도달 안내 문구에 이 점을 적는다.
+  - 한도는 `null`이면 없음(기본값). 한도를 바꾸는 API·화면은 이번 범위가 아니다(현재는 DB 값만 적용). 한도를 임의로 정하지 않는다.
+- **정산(한 트랜잭션)**: 연결 행 잠금 → 로그 확정(`outcome`, `httpStatus`, 토큰, `usageStatus`, 안전한 진단 토큰) → 같은 KST 날짜(예약 때 정한 날짜)의 일일 토큰·`unmeteredRequestCount` 누적 → `SIMULATION`이고 `runId`가 있으면 `SimulationRun` 카운터(요청·성공·실패·토큰) → 브레이커·키 상태. 정산이 실패해도 호출 결과는 그대로 돌려주고, 남은 PENDING 행은 결과 유실로 정리된다.
+  - 자정 직전에 예약한 요청은 응답이 자정 뒤에 와도 예약한 날짜에 정산한다(database.md §3.2 "한 요청 안에서 같은 날짜").
+- **사용량 상태**: 응답에 `usageMetadata`가 없으면 토큰을 0으로 단정하지 않고 `MISSING`, 생성 요청이 5xx·시간 초과·네트워크로 끝나면 `UNKNOWN`으로 기록하고 일일 `unmeteredRequestCount`에 센다(database.md §3.2).
+- **오류 분류와 브레이커 정책** (`config/limits.ts`)
+
+  | 분류 | 오류 | 처리 |
+  |---|---|---|
+  | `RATE_LIMIT` | 429 | 첫 실패부터 지수 백오프 5s → 10s → 20s … 최대 5분(`BREAKER_BACKOFF_*`). 응답의 `RetryInfo.retryDelay`가 있으면 우선(최대 1시간, `BREAKER_RETRY_AFTER_MAX_MS`). 이미 열린 동안 도착한 다른 요청의 429는 단계를 올리지 않는다 |
+  | `TRANSIENT` | 5xx, 시간 초과, 네트워크 | 연속 3회(`BREAKER_TRANSIENT_FAILURE_THRESHOLD`)부터 지수 백오프 |
+  | `KEY` (영구) | 키 무효(400 `API_KEY_INVALID`, 401) | 연결 `INVALID` + `lastErrorCode`. 키를 교체할 때까지 시뮬레이션 호출 차단. 브레이커 카운터는 바꾸지 않음 |
+  | `REQUEST` | 403, 404, 그 밖 400, 미완료 응답 | 요청 단위 문제. 브레이커에 반영하지 않음(호출자가 판단) |
+  | `NONE` | 성공 | 연속 실패·백오프 단계·`blockedUntil` 초기화(닫힘) |
+
+  - 열림(`blockedUntil > now`): 요청을 보내지 않고 `CircuitOpenError`(503 `GEMINI_BACKOFF`, `until`, `reason`)를 던진다. 시뮬레이션은 `RUNNING`을 유지하고 `until`까지 기다린다(A3).
+  - 반열림: 백오프가 끝났지만 단계가 남아 있으면 **1건만** 시험 요청을 보내고(`blockReason = HALF_OPEN`, 최대 `BREAKER_HALF_OPEN_HOLD_MS` 60초) 그동안 다른 요청은 기다린다. 시험이 성공하면 닫히고, 429·일시 오류면 한 단계 더 긴 백오프로 다시 열린다.
+  - 브레이커 갱신은 예약 때의 키 지문과 같을 때만 한다. 키를 교체하면 브레이커만 초기화되고(§8.1, D8) 이전 키의 늦은 결과는 새 키의 브레이커에 반영되지 않는다. 한도와 사용량 집계는 유지된다.
+  - **자동 재시도 없음**: 브레이커는 다음 "새" 요청을 언제 보낼 수 있는지만 정한다. 실패한 요청을 다시 보내지 않는다(통합 테스트에서 실패마다 외부 호출 1회 확인).
+- **아직 하지 않은 것**: 예상 비용 계산(`config/gemini-pricing.ts` 미구현 → `estimatedCostMicros`는 0/NULL), 한도 설정 API·화면, `usage.updated`·`breaker.updated` 이벤트(Phase 4 이후 엔진·SSE와 함께).
 
 ---
 

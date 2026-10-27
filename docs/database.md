@@ -160,6 +160,7 @@ model ApiUsageDaily {
   inputTokens         Int      @default(0)
   outputTokens        Int      @default(0)
   thoughtTokens       Int      @default(0)
+  unmeteredRequestCount Int    @default(0)                    // 토큰 사용량을 확인할 수 없는 요청 수 (MISSING·UNKNOWN). 토큰 합계에 포함되지 않음 (Phase 3-3)
   estimatedCostMicros BigInt   @default(0)                    // 예상 비용, 1e-6 USD 단위
 
   connection AiProviderConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
@@ -182,6 +183,15 @@ model ApiUsageDaily {
 - **API 응답 시 제외할 필드**: `encryptedKey`, `keyIv`, `keyAuthTag`, `keyFingerprint`. 응답 DTO에서 화이트리스트 방식으로만 필드를 고른다.
 - **키 교체**(D8): 같은 행에서 암호문·`keyLast4`·`keyFingerprint`를 갱신하고 서킷 브레이커 필드(`consecutiveFailures`, `backoffLevel`, `blockedUntil`, `blockReason`)만 초기화한다. 사용자가 설정한 `dailyRequestLimit`·`dailyTokenLimit`과 `ApiUsageDaily` 집계는 유지한다.
 - **KST 날짜 계산**: 앱에서 `Intl` 또는 SQL `(now() AT TIME ZONE 'Asia/Seoul')::date`로 계산한다. 한 요청 안에서 예약과 누적에 같은 날짜 값을 쓴다.
+  - **Phase 3-3 구현**: `src/server/engine/usage/kst.ts`가 UTC+9 고정 오프셋으로 계산한다(KST는 서머타임 없음). `kstDate(now)`는 `@db.Date`에 넣을 값(그 KST 날짜의 UTC 자정 Date)을 돌려준다. 저장 시각(`createdAt`, `startedAt` 등 `timestamptz`)은 UTC 그대로다.
+- **사용량 계측 (Phase 3-3, 마이그레이션 `20261027130000_usage_metering`)**
+  - 추가: `ApiOutcome.PENDING`, `ApiUsageStatus` enum, `ApiRequestLog.usageStatus`, `ApiUsageDaily.unmeteredRequestCount`. 기존 데이터는 지우지 않고 backfill했다(기존 로그로 상태와 일별 집계를 채움).
+  - 예약: Gemini로 HTTP 요청 1건을 보내기 **직전에** 한 트랜잭션에서 `ApiUsageDaily.requestCount + 1`과 `ApiRequestLog(outcome = PENDING)` INSERT를 한다. 정산: 응답 후 한 트랜잭션에서 로그를 확정하고 일일 토큰·미계측 수를 누적한다(architecture.md §8.3).
+  - **정합성 불변식**: 연결·KST 날짜별로 `requestCount` = 그 날짜(`createdAt`의 KST 날짜)의 로그 행 수, 토큰 합 = 로그 토큰 합, `unmeteredRequestCount` = `usageStatus IN (MISSING, UNKNOWN)` 행 수. 로그의 `createdAt`은 예약 시각이며 집계 날짜와 같은 시각 값을 쓴다. 통합 테스트 `tests/integration/usage-guard.test.ts`가 검증한다.
+  - `usageStatus`: `REPORTED`(응답에 usageMetadata 있음), `MISSING`(생성 응답 200인데 usageMetadata 없음), `UNKNOWN`(생성 요청이 5xx·시간 초과·네트워크로 끝나 생성·과금 여부 불명, 또는 결과 유실), `NOT_APPLICABLE`(모델 목록·조회, 생성 전에 거부된 4xx). 생성 요청의 PENDING 행은 NULL이다.
+  - 결과 유실: 예약 후 `USAGE_PENDING_STALE_MS`(5분) 넘게 정산되지 않은 행은 같은 연결의 다음 예약 때 `outcome = ABORTED`, `errorCode = RESULT_LOST`로 확정한다(생성 요청이면 `UNKNOWN`, 미계측 +1). 요청 수는 이미 집계되어 있으므로 바꾸지 않는다.
+  - 로컬에서 거부되어 전송되지 않은 시도(헤더로 보낼 수 없는 키)는 예약을 되돌린다(로그 행 삭제, `requestCount − 1`).
+  - 일일 한도 확인과 증가는 연결 행 `FOR UPDATE` 잠금 안에서 한다. 잠금 순서는 `user → AiProviderConnection`(키 등록·교체와 같음).
 - **키 삭제**: 행을 삭제한다. 진행 중인 세계관은 다음 호출 전 검사에서 차단된다.
 
 ### 3.3 설정 계층
@@ -470,7 +480,8 @@ model WorldEvent {
 ```prisma
 enum RuntimeStatus { IDLE RUNNING PAUSING PAUSED }
 enum StatusReason  { USER CLIENT_DISCONNECTED USAGE_LIMIT KEY_INVALID LOADED RESET SERVER_RECOVERY }
-enum ApiOutcome    { SUCCESS HTTP_ERROR NETWORK_ERROR VALIDATION_ERROR ABORTED }
+enum ApiOutcome    { SUCCESS HTTP_ERROR NETWORK_ERROR VALIDATION_ERROR ABORTED PENDING }   // PENDING: 예약됨·응답 대기 (Phase 3-3)
+enum ApiUsageStatus { REPORTED MISSING UNKNOWN NOT_APPLICABLE }                           // 토큰 사용량 상태 (Phase 3-3)
 
 model SimulationRuntime {
   worldId           String        @id
@@ -543,8 +554,9 @@ model ApiRequestLog {
   inputTokens         Int?
   outputTokens        Int?
   thoughtTokens       Int?
+  usageStatus         ApiUsageStatus?                 // Phase 3-3. 사용량이 없을 때 0으로 단정하지 않는다
   estimatedCostMicros BigInt?
-  createdAt           DateTime   @default(now())
+  createdAt           DateTime   @default(now())      // 예약 시각. 일일 집계 날짜(KST)의 기준
   // 금지: API 키, Authorization 헤더, 프롬프트·컨텍스트 원문, 응답 원문
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
