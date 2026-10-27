@@ -154,8 +154,8 @@ src/
         saves/autosave/restore/route.ts                 # POST 최신 자동저장 복원
         reset/route.ts                                  # POST 진행 초기화
         history/route.ts                                # GET 조회, DELETE 기록 삭제
-  server/                          # 모든 파일 상단 import "server-only"
-    auth/                          # auth.ts(Better Auth), session.ts(requireUser)
+  server/                          # 서버 전용. server-only는 auth/에만 (§5.1)
+    auth/                          # Next.js 전용 어댑터: auth.ts(Better Auth), session.ts(requireUser)
     db/                            # prisma client, 소유권 스코프 헬퍼, 잠금 헬퍼
     domain/
       worlds/  characters/  relationships/  saves/  reset/  history/  providers/
@@ -180,6 +180,22 @@ tests/
 ```
 
 **경계 규칙**: `server/engine`, `server/llm`, `server/events`는 `next/*`, `app/*`를 import하지 않는다. Phase 1에서 ESLint `no-restricted-imports`로 강제한다.
+
+### 5.1 server-only 적용 정책과 경계 (2026-10-27 확정)
+
+`server-only` 패키지는 React Server 환경 밖(독립 Worker 프로세스, Vitest)에서 import하면 예외를 던진다. 그래서 Worker에서도 쓰는 모듈에는 넣을 수 없다. 서버 모듈을 두 종류로 나눈다.
+
+| 구분 | 위치 | `server-only` | Next.js(`next/*`) 의존 |
+|---|---|---|---|
+| Next.js 전용 서버 어댑터 | `server/auth/` (Better Auth, `requireUser`의 `next/headers` 등) | **적용**(파일 상단 import) | 허용 |
+| 런타임 독립 모듈 | `server/engine`, `llm`, `events`, `db`, `domain`, `crypto`, `logging` | **적용하지 않음** | 금지 |
+
+- 런타임 독립 모듈은 `server-only`·`client-only`·`next/*`·`app/*`·`server/auth`를 import하지 않는다. 환경 값은 `process.env`에서 읽고, 세션이 필요하면 호출자(Route Handler·Server Action)가 `requireUser()` 결과의 `userId`를 인자로 넘긴다.
+- `server-only`가 없다고 브라우저 import를 허용하는 것은 아니다. **클라이언트 코드**(`"use client"` 지시어가 있는 파일, 공용 `lib/`)는 `server/*`, 생성된 Prisma Client(`generated/*`), `server-only`를 import할 수 없다. 정적·동적 import와 re-export, 상대 경로 모두 대상이다.
+- 강제 수단:
+  - ESLint `no-restricted-imports`(런타임 독립 경계)와 로컬 규칙 `boundary/no-server-import-in-client`(클라이언트 경계) — `eslint.config.mjs`
+  - 단위 테스트 `tests/unit/engine-boundary.test.ts`, `tests/unit/server-boundary.test.ts`(ESLint API로 허용·금지 사례를 검증)
+- Next.js 전용 어댑터를 새로 만들 때는 `server/auth/`처럼 디렉터리 단위로 두고, `eslint.config.mjs`의 `nextAdapterFiles`와 이 표를 함께 갱신한다.
 
 ---
 

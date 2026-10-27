@@ -28,9 +28,9 @@ describe("엔진 경계 린트 규칙", () => {
     }
   }
 
-  it("경계 밖(src/server/domain)에서는 next/* import를 막지 않는다", async () => {
+  it("Next.js 전용 어댑터(src/server/auth)에서는 next/* import를 막지 않는다", async () => {
     const errors = await restrictedImportErrors(
-      "src/server/domain/probe.ts",
+      "src/server/auth/probe.ts",
       'import { headers } from "next/headers";\n',
     );
     expect(errors).toHaveLength(0);

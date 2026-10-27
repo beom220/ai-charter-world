@@ -28,6 +28,8 @@
 7. **실패한 장면은 자동 재시도하지 않는다.** 실패는 건너뛰고 실행을 유지한다. 반복 실패는 키 단위 서킷 브레이커로 억제한다.
 8. **세계관당 활성 캐릭터는 최대 6명**, 캐릭터 컨텍스트는 **300 코드 포인트**까지다. 클라이언트와 서버 양쪽에서 검증한다.
 9. **엔진 경계를 지킨다.** `src/server/engine`, `src/server/llm`, `src/server/events`는 `next/*`·`src/app/*`를 import하지 않는다. Worker로 분리할 수 있어야 한다.
+   - `server-only`는 **Next.js 전용 서버 어댑터(`src/server/auth/`)에만** 쓴다. engine·llm·events·db·domain·crypto·logging은 실행 환경에 독립적으로 두고 `server-only`·`next/*`·`src/server/auth`를 import하지 않는다(architecture.md §5.1).
+   - `server-only`가 없다고 브라우저 import가 허용되는 것은 아니다. `"use client"` 파일과 `src/lib`는 `src/server`·Prisma Client·`server-only`를 import할 수 없다. ESLint 경계 규칙과 `tests/unit/*-boundary.test.ts`로 강제한다.
 10. **세이브 스냅샷 구조를 바꾸면** `schemaVersion`을 올리고, 마이그레이터와 이전 버전 픽스처 테스트를 함께 추가한다.
 
 ## 기술 스택
@@ -41,7 +43,7 @@ Next.js(App Router) · React · TypeScript(strict) · Tailwind CSS · shadcn/ui 
 
 ```
 src/app/            페이지, Route Handler (api/), SSE 엔드포인트
-src/server/         서버 전용 (import "server-only")
+src/server/         서버 전용. server-only는 auth/(Next.js 어댑터)에만, 나머지는 런타임 독립
   auth/ db/ domain/ engine/ llm/ events/ crypto/ logging/
 src/lib/            클라이언트·서버 공용 Zod 스키마, 상수, 타입
 config/             limits, pricing, personality-map

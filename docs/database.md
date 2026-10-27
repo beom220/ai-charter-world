@@ -737,6 +737,8 @@ type SnapshotV1 = {
 
 ## 6. 트랜잭션 패턴
 
+Prisma Client(`src/server/db/client.ts`, 생성 코드는 `src/generated/prisma`)와 트랜잭션·잠금 헬퍼는 웹 서버와 Worker가 함께 쓰는 **런타임 독립 모듈**이다. `server-only`와 `next/*`를 import하지 않으며, 클라이언트 코드에서 import하는 것은 ESLint 경계 규칙으로 막는다(architecture.md §5.1).
+
 모든 패턴은 `prisma.$transaction(async (tx) => …)` 인터랙티브 트랜잭션을 쓴다. 첫 문장은 잠금이다.
 
 ```ts
