@@ -143,7 +143,7 @@ src/
       settings/providers/
     api/
       auth/[...all]/route.ts       # Better Auth 핸들러
-      providers/gemini/...         # 키 등록·테스트·삭제·설정
+      providers/gemini/route.ts    # GET 상태, PUT 등록·교체, DELETE 삭제 (Phase 3-1). 키 검증·모델 설정은 Phase 3-2
       worlds/[worldId]/
         simulation/{start,pause,resume,stop}/route.ts   # POST
         simulation/state/route.ts                       # GET
@@ -562,7 +562,33 @@ export interface RunnerHost {
 - **키 조회 경로**: 항상 `(userId = world.ownerId, provider)`로 연결을 조회한다. 다른 계정의 키가 쓰일 경로가 없다(PRD FR-02 인수 조건).
 - **폴백 금지**: 운영자 키는 존재하지 않는다. MockProvider는 `NODE_ENV !== "production"`이고 `LLM_PROVIDER=mock`일 때만 활성화된다. 프로덕션에서 mock 설정이 감지되면 부팅을 실패시킨다.
 
+**Phase 3-1 구현**
+
+| 항목 | 내용 |
+|---|---|
+| 암호화 | `server/crypto/provider-key-crypto.ts`(런타임 독립). AES-256-GCM, IV 12바이트를 `randomBytes`로 매번 새로 생성, 인증 태그 16바이트, AAD `userId:connectionId`. 태그·IV 길이, 키 버전, AAD가 하나라도 맞지 않으면 `DecryptionError`(원인을 구분하지 않음) |
+| 환경변수 | `PROVIDER_KEY_ENCRYPTION_KEY`(엄격한 base64, 디코딩하면 정확히 32바이트), `KEY_FINGERPRINT_SECRET`(32자 이상). 첫 사용 시 검증하며, 누락·형식 오류는 `CryptoConfigError`(변수 이름만) |
+| 서비스 | `server/domain/providers/gemini-connection.ts`: `getGeminiConnection`, `saveGeminiApiKey`(등록·교체), `deleteGeminiConnection`, `decryptGeminiApiKey`(LLM 호출 직전 전용) |
+| 반환 DTO | `provider, status, keyLast4, defaultModel, lastVerifiedAt, lastErrorCode, dailyRequestLimit, dailyTokenLimit, blockedUntil, createdAt, updatedAt`만 Prisma `select`로 고른다 |
+| 입력 검증 | `lib/schemas/provider.ts`(Zod): `apiKey`는 `AIza` + 35자, 앞뒤 공백 제거, 다른 필드는 버림. 오류 메시지에 입력값 미포함 |
+| CSRF | PUT·DELETE는 `Origin`이 `BETTER_AUTH_URL`의 origin과 같아야 한다(`server/auth/request.ts`). 아니면 403 |
+| 오류·로그 | `app/api/_lib/http.ts`가 오류를 상태 코드로 바꾼다(400/401/403/500). 모든 응답은 `Cache-Control: no-store`. 예상하지 못한 오류는 이름·코드만 기록한다(`server/logging/log.ts`) |
+
+**API (`/api/providers/gemini`)**
+
+| 메서드 | 요청 | 응답 |
+|---|---|---|
+| GET | — | 200 `{ connection: DTO \| null }` |
+| PUT | `{ "apiKey": "AIza…" }` | 201 `{ connection, created: true }` 등록 / 200 `{ connection, created: false }` 교체 |
+| DELETE | — | 200 `{ deleted: boolean }` (멱등) |
+| 오류 | | 400 `INVALID_REQUEST`, 401 `UNAUTHORIZED`, 403 `FORBIDDEN`, 500 `SERVER_NOT_CONFIGURED` / `INTERNAL_ERROR` |
+
+- 사용자는 항상 Better Auth 세션으로 정한다. 본문·쿼리의 `userId`는 무시한다.
+- 키 교체 시 이전 암호문은 행에서 덮어쓰여 앱 경로로는 더 이상 쓸 수 없다. 이전 키 자체를 무효화하려면 사용자가 Google AI Studio에서 폐기해야 한다(가이드 페이지에서 안내, Phase 3-2).
+
 ### 8.2 키 검증
+
+> Phase 3-1에서는 외부 검증 호출을 하지 않는다. 등록·교체된 연결은 `UNVERIFIED`이고, 아래 검증은 Phase 3-2에서 구현한다.
 
 - 등록·교체 시 가벼운 호출(모델 목록 조회 등, Phase 3 확정)로 검증한다.
 - 결과를 `ACTIVE` / `INVALID`로 저장하고, 오류를 사용자가 이해할 수 있는 메시지로 바꾼다:

@@ -1,6 +1,6 @@
 # AI Character World — 데이터베이스 설계서
 
-> **문서 상태:** v1.3 (2026-10-27 Phase 2-3: §3.1 Better Auth CLI 비교 결과. v1.2 Phase 2-2 반영: §3.2 사용자당 Provider별 연결 1개. v1.1: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
+> **문서 상태:** v1.4 (2026-10-27 Phase 3-1: §3.2 `defaultModel` nullable, 키 저장 구현. v1.3 Phase 2-3: §3.1 Better Auth CLI 비교 결과. v1.2 Phase 2-2 반영: §3.2 사용자당 Provider별 연결 1개. v1.1: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
@@ -129,7 +129,7 @@ model AiProviderConnection {
   keyLast4             String           @db.VarChar(4)
   keyFingerprint       String                                 // HMAC-SHA256, 교체 감지용
 
-  defaultModel         String
+  defaultModel         String?                                // null = 미선택 (Phase 3-1 결정, 아래 참고)
   status               ConnectionStatus @default(UNVERIFIED)
   lastVerifiedAt       DateTime?
   lastErrorCode        String?
@@ -168,6 +168,12 @@ model ApiUsageDaily {
 }
 ```
 
+- **`defaultModel` nullable (Phase 3-1 결정, 마이그레이션 `20261027120000_default_model_nullable`)**: 최초 키 등록 시 NULL로 저장하고 임의의 모델명을 넣지 않는다(A17). Phase 3-2에서 실제 Gemini 모델 목록을 확인해 사용자가 고른다. **`defaultModel`이 NULL인 연결은 Gemini 호출·시뮬레이션 실행 대상으로 쓰지 않는다**(Phase 3-2 이후 실행 전 검사에서 거부). 키 교체 시 기존 값은 유지한다.
+- **키 저장 구현 (Phase 3-1)**: `src/server/crypto/provider-key-crypto.ts`(AES-256-GCM)와 `src/server/domain/providers/gemini-connection.ts`.
+  - 연결 id는 암호화 AAD(`userId:id`)에 쓰이므로 앱이 먼저 만든다(UUID). 교체 시 같은 행·같은 id를 유지한다.
+  - `keyLast4` = 원문 끝 4자, `encryptionKeyVersion` = 1.
+  - 등록·교체는 `user` 행 `FOR UPDATE`로 같은 사용자의 요청을 직렬화한다. `(userId, provider)` UNIQUE가 2차 방어다.
+  - 등록·교체 직후 상태는 `UNVERIFIED`이고 `lastVerifiedAt`·`lastErrorCode`는 비운다. 실제 키 검증(ACTIVE/INVALID 전환)은 Phase 3-2에서 한다.
 - **연결 단위 (Phase 2-2 확정)**: 사용자당 **Provider별** 연결 1개다(`@@unique([userId, provider])`). `User` ↔ `AiProviderConnection`은 1:N이다. 현재 Provider는 `GEMINI`만 있으므로 실제로는 사용자당 Gemini 연결 1개다. 다른 Provider는 PRD 후속 확장이며 enum 값과 구현을 함께 추가할 때까지 만들지 않는다.
 - **키 조회**: 연결은 항상 `(userId = world.ownerId, provider)`로 찾는다. `userId`만으로 하나를 고르는 코드를 쓰지 않는다.
 - **사용량·로그는 연결 단위**: `ApiUsageDaily(connectionId, usageDate)`, `ApiRequestLog.connectionId`는 연결(=사용자·Provider)을 가리키므로 연결 수 가정이 없다. 한도·서킷 브레이커도 연결 행의 컬럼이라 Provider별로 독립이다(D8).
