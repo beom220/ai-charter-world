@@ -199,6 +199,27 @@ describe("모델 선택", () => {
     });
   }
 
+  it("생성 응답이 완료되지 않으면(INCOMPLETE_RESPONSE) 모델을 저장하지 않고, 쓰인 토큰은 VALIDATION_ERROR로 기록한다", async () => {
+    const { user, uid, deps } = await setup("select-incomplete");
+    await verifyGeminiConnection(uid, deps);
+    const mock = createMockGeminiClient({ failProbe: { "gemini-mock-flash": "INCOMPLETE_RESPONSE" } });
+    const error = await selectGeminiModel(uid, "gemini-mock-flash", { ...deps, client: mock.client }).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ status: 422, code: "GEMINI_INCOMPLETE_RESPONSE" });
+    expect(mock.calls).toHaveLength(2); // models.get + generateContent 1회, 재시도 없음
+    expect(await row(uid)).toMatchObject({ defaultModel: null, status: "ACTIVE" });
+    const probe = (await logs(user.id)).at(-1)!;
+    expect(probe).toMatchObject({
+      model: "gemini-mock-flash",
+      outcome: "VALIDATION_ERROR",
+      httpStatus: 200,
+      errorCode: "INCOMPLETE_RESPONSE",
+      errorMessage: "finishReason=MAX_TOKENS; text=EMPTY",
+      inputTokens: 1,
+      outputTokens: 1,
+    });
+  });
+
   it("models.get 자체가 404면 GEMINI_MODEL_NOT_FOUND (생성 요청 없음)", async () => {
     const { uid, deps } = await setup("select-get404");
     await verifyGeminiConnection(uid, deps);

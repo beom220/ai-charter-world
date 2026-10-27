@@ -148,9 +148,11 @@ describe("SDK 자동 반복 요청 차단 (@google/genai 2.31.0)", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("probe는 automaticContinuation을 꺼서 continuationToken이 와도 요청 1회로 끝난다", async () => {
+  it("probe는 automaticContinuation을 꺼서 continuationToken이 와도 요청 1회로 끝난다 (완료되지 않은 응답은 실패)", async () => {
     const { fn, calls } = fakeFetch([continuing, final]);
-    await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", noop);
+    await expect(createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", noop)).rejects.toMatchObject({
+      kind: "INCOMPLETE_RESPONSE",
+    });
     expect(calls).toHaveLength(1);
   });
 
@@ -271,6 +273,63 @@ describe("오류 응답에서 안전한 정보만 꺼낸다", () => {
     const { fn } = fakeFetch([odd]);
     const error = await createGeminiSdkClient({ fetch: fn }).getModel(FAKE_KEY, "gemini-x", noop).catch((e: unknown) => e);
     expect(error).toMatchObject({ kind: "MODEL_NOT_FOUND", upstreamDetail: null });
+  });
+});
+
+describe("probe 요청 설정 (Phase 3-2 승인)", () => {
+  const ok = json({
+    candidates: [{ content: { parts: [{ text: "pong" }], role: "model" }, finishReason: "STOP" }],
+    usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2, thoughtsTokenCount: 40 },
+  });
+
+  it("타임아웃 60초를 X-Server-Timeout 헤더로 보내고, 출력 상한은 128", async () => {
+    const { fn, calls } = fakeFetch([ok]);
+    await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", noop);
+    expect(calls[0]!.headers.get("x-server-timeout")).toBe("60");
+    expect(JSON.parse(calls[0]!.body!).generationConfig.maxOutputTokens).toBe(128);
+  });
+
+  it("gemini-3.8-flash에만 thinkingLevel=LOW를 보내고, 다른 모델에는 사고 설정을 보내지 않는다", async () => {
+    const a = fakeFetch([ok]);
+    await createGeminiSdkClient({ fetch: a.fn }).probeModel(FAKE_KEY, "gemini-3.8-flash", noop);
+    expect(JSON.parse(a.calls[0]!.body!).generationConfig.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+
+    for (const other of ["gemini-3.8-flash-lite", "gemini-3.6-flash", "gemini-test-flash"]) {
+      const b = fakeFetch([ok]);
+      await createGeminiSdkClient({ fetch: b.fn }).probeModel(FAKE_KEY, other, noop);
+      expect(JSON.parse(b.calls[0]!.body!).generationConfig.thinkingConfig, other).toBeUndefined();
+    }
+  });
+});
+
+describe("probe 성공 기준: 완료 상태 STOP + 비어 있지 않은 텍스트", () => {
+  const usageMetadata = { promptTokenCount: 3, candidatesTokenCount: 0, thoughtsTokenCount: 125 };
+  const cases: [string, unknown, string][] = [
+    ["출력 예산 부족(MAX_TOKENS)", { candidates: [{ content: { parts: [{ text: "" }], role: "model" }, finishReason: "MAX_TOKENS" }], usageMetadata }, "finishReason=MAX_TOKENS; text=EMPTY"],
+    ["STOP이지만 빈 텍스트", { candidates: [{ content: { parts: [{ text: "  " }], role: "model" }, finishReason: "STOP" }], usageMetadata }, "finishReason=STOP; text=EMPTY"],
+    ["사고 파트만 있음", { candidates: [{ content: { parts: [{ text: "thinking...", thought: true }], role: "model" }, finishReason: "STOP" }], usageMetadata }, "finishReason=STOP; text=EMPTY"],
+    ["텍스트는 있지만 MAX_TOKENS", { candidates: [{ content: { parts: [{ text: "po" }], role: "model" }, finishReason: "MAX_TOKENS" }], usageMetadata }, "finishReason=MAX_TOKENS"],
+    ["안전 차단(후보 없음)", { promptFeedback: { blockReason: "SAFETY" }, usageMetadata }, "finishReason=NONE; text=EMPTY; blockReason=SAFETY"],
+  ];
+
+  for (const [label, body, detail] of cases) {
+    it(`${label} → INCOMPLETE_RESPONSE, 사용량은 기록`, async () => {
+      const { fn, calls } = fakeFetch([json(body)]);
+      const records: GeminiCallRecord[] = [];
+      const error = await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", (r) => records.push(r)).catch((e: unknown) => e);
+      expect(error).toMatchObject({ kind: "INCOMPLETE_RESPONSE", httpStatus: 200, upstreamDetail: detail });
+      expect(calls).toHaveLength(1);
+      expect(records).toMatchObject([
+        { errorKind: "INCOMPLETE_RESPONSE", httpStatus: 200, sent: true, usage: { inputTokens: 3, outputTokens: 0, thoughtTokens: 125 } },
+      ]);
+    });
+  }
+
+  it("STOP + 텍스트가 있으면 성공하고 입력·출력·사고 토큰을 돌려준다", async () => {
+    const { fn } = fakeFetch([
+      json({ candidates: [{ content: { parts: [{ text: "pong" }], role: "model" }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2, thoughtsTokenCount: 40 } }),
+    ]);
+    await expect(createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", noop)).resolves.toEqual({ inputTokens: 3, outputTokens: 2, thoughtTokens: 40 });
   });
 });
 

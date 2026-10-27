@@ -11,9 +11,13 @@ export const PROVIDER_CHECK_RATE_LIMIT = { maxCalls: 10, windowMs: 10 * 60 * 100
 /** 키 검증·모델 조회 요청 타임아웃 */
 export const GEMINI_METADATA_TIMEOUT_MS = 15_000;
 
-/** 모델 사용 가능 확인(최소 생성 요청) 타임아웃과 출력 토큰 상한 */
-export const GEMINI_PROBE_TIMEOUT_MS = 30_000;
-export const GEMINI_PROBE_MAX_OUTPUT_TOKENS = 16;
+/**
+ * 모델 사용 가능 확인(최소 생성 요청) 타임아웃과 출력 토큰 상한.
+ * 타임아웃은 architecture.md §6.5 설계값(60초). SDK가 X-Server-Timeout 헤더로 Google에 전달한다.
+ * 출력 상한은 사고 토큰을 포함하므로(공식 thinking 문서) 응답이 완료될 수 있게 128로 둔다.
+ */
+export const GEMINI_PROBE_TIMEOUT_MS = 60_000;
+export const GEMINI_PROBE_MAX_OUTPUT_TOKENS = 128;
 
 /** 모델 목록 페이지 크기와 최대 페이지 수 (보통 1회 호출로 끝난다) */
 export const GEMINI_MODEL_LIST_PAGE_SIZE = 1000;

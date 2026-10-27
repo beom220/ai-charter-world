@@ -1,5 +1,6 @@
-import { ApiError, GoogleGenAI, type Model } from "@google/genai";
+import { ApiError, FinishReason, GoogleGenAI, type GenerateContentResponse, type Model } from "@google/genai";
 import { isAcceptableGeminiApiKey } from "@/lib/schemas/provider";
+import { probeThinkingConfig } from "./probe-options";
 import {
   GEMINI_METADATA_TIMEOUT_MS,
   GEMINI_MODEL_LIST_MAX_PAGES,
@@ -54,7 +55,9 @@ export type GeminiErrorKind =
   | "BAD_REQUEST"
   | "UPSTREAM_ERROR"
   | "TIMEOUT"
-  | "NETWORK_ERROR";
+  | "NETWORK_ERROR"
+  /** HTTP 200이지만 생성이 완료되지 않음 (완료 상태가 STOP이 아니거나 텍스트가 비어 있음) */
+  | "INCOMPLETE_RESPONSE";
 
 export class GeminiCallError extends Error {
   constructor(
@@ -63,6 +66,8 @@ export class GeminiCallError extends Error {
     readonly upstreamDetail: string | null = null,
     /** 요청 전에 로컬에서 거부됨 (외부 호출 아님) */
     readonly local = false,
+    /** 응답은 받았지만 실패로 판정된 경우의 사용량 (INCOMPLETE_RESPONSE) */
+    readonly usage: GeminiUsage | null = null,
   ) {
     super(`Gemini 호출 실패: ${kind}`);
     this.name = "GeminiCallError";
@@ -173,6 +178,31 @@ export function classifyGeminiError(error: unknown): GeminiCallError {
   return new GeminiCallError("NETWORK_ERROR", null);
 }
 
+/**
+ * 모델 확인 성공 기준: HTTP 200만으로는 부족하다. 완료 상태가 STOP이고 비어 있지 않은 텍스트가 있어야 한다.
+ * 출력 예산 부족(MAX_TOKENS), 안전 차단, 빈 텍스트는 INCOMPLETE_RESPONSE (사용량은 기록한다).
+ */
+function assertCompletedGeneration(res: GenerateContentResponse, usage: GeminiUsage): void {
+  const candidate = res.candidates?.[0];
+  const finishReason = candidate?.finishReason;
+  const text = (candidate?.content?.parts ?? [])
+    .filter((p) => !p.thought && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("");
+  if (finishReason === FinishReason.STOP && text.trim().length > 0) return;
+
+  const detail = [
+    `finishReason=${typeof finishReason === "string" && /^[A-Z_]{1,40}$/.test(finishReason) ? finishReason : "NONE"}`,
+    text.trim().length === 0 ? "text=EMPTY" : null,
+    typeof res.promptFeedback?.blockReason === "string" && /^[A-Z_]{1,40}$/.test(res.promptFeedback.blockReason)
+      ? `blockReason=${res.promptFeedback.blockReason}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  throw new GeminiCallError("INCOMPLETE_RESPONSE", 200, detail, false, usage);
+}
+
 export function toModelInfo(model: Model): GeminiModelInfo | null {
   if (!model.name) return null;
   return {
@@ -219,7 +249,7 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
         httpStatus: classified.httpStatus,
         errorKind: classified.kind,
         upstreamDetail: classified.upstreamDetail,
-        usage: null,
+        usage: classified.usage,
         sent: !classified.local,
       });
       throw classified;
@@ -267,6 +297,7 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
             candidateCount: 1,
             automaticContinuation: false, // SDK 기본값(true)이면 continuationToken마다 요청을 반복한다
             automaticFunctionCalling: { disable: true },
+            ...probeThinkingConfig(modelId), // 지원이 확인된 모델에만 사고 수준을 지정한다
           },
         });
         const usage: GeminiUsage = {
@@ -274,6 +305,7 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
           outputTokens: res.usageMetadata?.candidatesTokenCount ?? null,
           thoughtTokens: res.usageMetadata?.thoughtsTokenCount ?? null,
         };
+        assertCompletedGeneration(res, usage);
         return { value: usage, usage };
       });
     },

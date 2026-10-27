@@ -31,6 +31,7 @@ export const GEMINI_ERROR_MESSAGES: Record<GeminiErrorKind | "KEY_CHANGED", stri
   UPSTREAM_ERROR: "Gemini API에 일시적인 오류가 있습니다. 잠시 후 다시 시도하세요.",
   TIMEOUT: "Gemini API 응답이 지연되었습니다. 잠시 후 다시 시도하세요.",
   NETWORK_ERROR: "Gemini API에 연결하지 못했습니다. 네트워크 상태를 확인하세요.",
+  INCOMPLETE_RESPONSE: "모델이 응답을 끝까지 생성하지 못했습니다(빈 응답·출력 한도 도달·차단 등). 다른 모델을 선택하거나 나중에 다시 시도하세요.",
   KEY_CHANGED: "검증하는 동안 API 키가 교체되었습니다. 새 키로 다시 검증하세요.",
 };
 
@@ -46,6 +47,7 @@ const GEMINI_HTTP_STATUS: Record<GeminiErrorKind, number> = {
   UPSTREAM_ERROR: 502,
   TIMEOUT: 504,
   NETWORK_ERROR: 504,
+  INCOMPLETE_RESPONSE: 422,
 };
 
 export class GeminiRequestError extends AppError {
@@ -116,8 +118,15 @@ async function writeCallLogs(userId: string, connectionId: string, records: Gemi
       startedAt: r.startedAt,
       latencyMs: r.latencyMs,
       httpStatus: r.httpStatus,
+      // HTTP 200이지만 완료되지 않은 생성은 VALIDATION_ERROR (architecture.md §12)
       outcome:
-        r.errorKind === null ? "SUCCESS" : r.errorKind === "NETWORK_ERROR" || (r.errorKind === "TIMEOUT" && r.httpStatus === null) ? "NETWORK_ERROR" : "HTTP_ERROR",
+        r.errorKind === null
+          ? "SUCCESS"
+          : r.errorKind === "INCOMPLETE_RESPONSE"
+            ? "VALIDATION_ERROR"
+            : r.errorKind === "NETWORK_ERROR" || (r.errorKind === "TIMEOUT" && r.httpStatus === null)
+              ? "NETWORK_ERROR"
+              : "HTTP_ERROR",
       errorCode: r.errorKind,
       errorMessage: r.upstreamDetail, // 안전한 열거형 토큰만 (safeUpstreamDetail)
       inputTokens: r.usage?.inputTokens ?? null,

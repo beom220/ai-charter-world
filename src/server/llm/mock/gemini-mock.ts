@@ -31,6 +31,7 @@ const HTTP_STATUS: Record<GeminiErrorKind, number | null> = {
   UPSTREAM_ERROR: 503,
   TIMEOUT: null,
   NETWORK_ERROR: null,
+  INCOMPLETE_RESPONSE: 200,
 };
 
 const UPSTREAM_DETAIL: Partial<Record<GeminiErrorKind, string>> = {
@@ -40,6 +41,7 @@ const UPSTREAM_DETAIL: Partial<Record<GeminiErrorKind, string>> = {
   MODEL_NOT_FOUND: "status=NOT_FOUND",
   BAD_REQUEST: "status=INVALID_ARGUMENT",
   UPSTREAM_ERROR: "status=UNAVAILABLE",
+  INCOMPLETE_RESPONSE: "finishReason=MAX_TOKENS; text=EMPTY",
 };
 
 export function createMockGeminiClient(script: MockGeminiScript = {}) {
@@ -67,12 +69,13 @@ export function createMockGeminiClient(script: MockGeminiScript = {}) {
       httpStatus: kind ? HTTP_STATUS[kind] : 200,
       errorKind: kind ?? null,
       upstreamDetail: kind ? (UPSTREAM_DETAIL[kind] ?? null) : null,
-      usage: kind ? null : usage,
+      // 응답을 받은 뒤 실패로 판정된 경우(INCOMPLETE_RESPONSE)는 토큰이 쓰였으므로 사용량을 남긴다
+      usage: kind && kind !== "INCOMPLETE_RESPONSE" ? null : usage,
       sent: true,
     };
     calls.push(record);
     onCall(record);
-    if (kind) throw new GeminiCallError(kind, HTTP_STATUS[kind], record.upstreamDetail);
+    if (kind) throw new GeminiCallError(kind, HTTP_STATUS[kind], record.upstreamDetail, false, record.usage);
     return value();
   }
 
