@@ -1,0 +1,818 @@
+# AI Character World — 데이터베이스 설계서
+
+> **문서 상태:** v1.0 (2026-10-27 최종 승인 반영)
+> **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
+> **DBMS / ORM:** PostgreSQL 16+ / Prisma
+> **작성일:** 2026-10-27
+
+아래 Prisma 스키마는 **설계 초안**이다. 실제 `prisma/schema.prisma`는 Phase 2에서 이 문서를 기준으로 작성한다. Better Auth 테이블은 CLI 생성 결과에 맞춘다. generator·datasource 블록은 설치하는 Prisma 버전의 형식을 따른다.
+
+---
+
+## 1. 설계 원칙
+
+1. **세 계층 분리**: 설정(사용자 편집) / 활성 진행 상태(장면마다 커밋) / 스냅샷(세이브).
+2. **세계관 단위 소유권**: 세계관에 속한 모든 리소스는 `worldId`를 직접 가진다. 그래서 하위 테이블도 `world.ownerId` 조건 하나로 소유권을 검증할 수 있다(비정규화 허용).
+3. **세계관 단위 직렬화 지점**: `GameState` 행 1개다. 장면 커밋·저장·불러오기·초기화·기록 삭제는 모두 이 행을 `FOR UPDATE`로 잠근다.
+4. **방향성 관계**: `(fromCharacterId, toCharacterId)` 유일. A→B와 B→A는 서로 다른 행이다.
+5. **기억은 소유자 1명**: 공유된 사건도 목격자마다 별도 행을 만든다(`shareGroupId`로 묶음). 컨텍스트 조회가 `ownerCharacterId = ?`만으로 정보 비대칭을 보장한다.
+6. **소프트 삭제는 Character에만**: 과거 대사 보존을 위해서다(PRD FR-04). 나머지는 실제 삭제한다.
+7. **스냅샷은 독립 JSONB**: 활성 테이블과 외래 키로 엮지 않는다. 그래서 기록 삭제·초기화·세계관 편집이 세이브에 영향을 주지 않는다(D9).
+8. **ID**: 문자열 ID(cuid 계열). outbox만 순서 보장을 위해 `BigInt` autoincrement를 쓴다.
+9. **시간**: 모든 `DateTime`은 UTC(`timestamptz`)로 저장한다. 예외로 일일 사용량의 날짜(`ApiUsageDaily.usageDate`)만 Asia/Seoul(KST) 기준 날짜로 계산해 저장한다(A9).
+
+---
+
+## 2. ERD (요약)
+
+```mermaid
+erDiagram
+    User ||--o{ Session : has
+    User ||--o{ Account : has
+    User ||--o| AiProviderConnection : owns
+    AiProviderConnection ||--o{ ApiUsageDaily : aggregates
+    User ||--o{ World : owns
+
+    World ||--|| GameState : "진행 상태(1:1)"
+    World ||--|| SimulationRuntime : "실행 제어(1:1)"
+    World ||--o{ Character : has
+    World ||--o{ RelationshipBaseline : "초기 관계(설정)"
+    World ||--o{ SimulationRun : "실행 기록"
+    World ||--o{ ConversationScene : "진행 이력(D1)"
+    World ||--o{ RelationshipState : "현재 관계"
+    World ||--o{ CharacterMemory : has
+    World ||--o{ WorldEvent : has
+    World ||--o{ SaveGame : has
+    World ||--o{ GameSnapshot : has
+    World ||--o{ SystemNotice : has
+    World ||--o{ SimulationEvent : outbox
+    World ||--o{ SseConnection : "활성 SSE 연결"
+    World ||--o{ ApiRequestLog : logs
+
+    Character ||--o| EmotionState : "현재 감정"
+    Character ||--o{ EmotionChange : history
+    Character ||--o{ CharacterMemory : "소유 기억"
+    ConversationScene ||--o{ SceneParticipant : has
+    ConversationScene ||--o{ Message : has
+    RelationshipState ||--o{ RelationshipChange : history
+    SaveGame |o--o| GameSnapshot : references
+```
+
+계층별 분류:
+
+| 계층 | 테이블 |
+|---|---|
+| 인증 | User, Session, Account, Verification |
+| BYOK·사용량 | AiProviderConnection, ApiUsageDaily |
+| 설정 | World, Character, RelationshipBaseline (+ GameState의 실행 설정 컬럼) |
+| 활성 진행 상태 | GameState, ConversationScene, SceneParticipant, Message, RelationshipState, RelationshipChange, EmotionState, EmotionChange, CharacterMemory, WorldEvent |
+| 실행·관찰 | SimulationRuntime, SseConnection, SimulationRun, ApiRequestLog, SystemNotice, SimulationEvent |
+| 세이브 | SaveGame, GameSnapshot |
+
+---
+
+## 3. 모델 상세 (Prisma 초안)
+
+### 3.1 인증 (Better Auth)
+
+Better Auth CLI(`generate`)가 만드는 모델을 그대로 쓰고, 앱 관계 필드만 추가한다. 아래는 개념상 필드이며, 실제 필드명과 타입은 생성 결과를 따른다.
+
+```prisma
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean
+  image         String?
+  createdAt     DateTime
+  updatedAt     DateTime
+
+  sessions           Session[]
+  accounts           Account[]            // providerId = "google" 만 사용
+  providerConnection AiProviderConnection?
+  worlds             World[]
+  apiRequestLogs     ApiRequestLog[]
+}
+// Session, Account, Verification: Better Auth 생성 스키마 그대로 (User 삭제 시 Cascade)
+```
+
+### 3.2 BYOK·사용량
+
+```prisma
+enum AiProvider        { GEMINI }
+enum ConnectionStatus  { UNVERIFIED ACTIVE INVALID }
+
+model AiProviderConnection {
+  id                   String           @id @default(cuid())
+  userId               String           @unique              // 사용자당 1개 (Gemini)
+  provider             AiProvider       @default(GEMINI)
+
+  // 암호화된 키 (AES-256-GCM, AAD = userId:id)
+  encryptedKey         Bytes
+  keyIv                Bytes
+  keyAuthTag           Bytes
+  encryptionKeyVersion Int
+  keyLast4             String           @db.VarChar(4)
+  keyFingerprint       String                                 // HMAC-SHA256, 교체 감지용
+
+  defaultModel         String
+  status               ConnectionStatus @default(UNVERIFIED)
+  lastVerifiedAt       DateTime?
+  lastErrorCode        String?
+
+  // 사용자 설정 한도 (D8: 키 연결 단위). null = 한도 없음
+  dailyRequestLimit    Int?
+  dailyTokenLimit      Int?
+
+  // 서킷 브레이커 (키 연결 단위, 여러 세계관이 공유)
+  consecutiveFailures  Int              @default(0)
+  backoffLevel         Int              @default(0)
+  blockedUntil         DateTime?
+  blockReason          String?
+
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageDaily ApiUsageDaily[]
+}
+
+model ApiUsageDaily {
+  connectionId        String
+  usageDate           DateTime @db.Date                       // Asia/Seoul(KST) 기준 날짜 (A9)
+  requestCount        Int      @default(0)
+  inputTokens         Int      @default(0)
+  outputTokens        Int      @default(0)
+  thoughtTokens       Int      @default(0)
+  estimatedCostMicros BigInt   @default(0)                    // 예상 비용, 1e-6 USD 단위
+
+  connection AiProviderConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@id([connectionId, usageDate])
+}
+```
+
+- **API 응답 시 제외할 필드**: `encryptedKey`, `keyIv`, `keyAuthTag`, `keyFingerprint`. 응답 DTO에서 화이트리스트 방식으로만 필드를 고른다.
+- **키 교체**(D8): 같은 행에서 암호문·`keyLast4`·`keyFingerprint`를 갱신하고 서킷 브레이커 필드(`consecutiveFailures`, `backoffLevel`, `blockedUntil`, `blockReason`)만 초기화한다. 사용자가 설정한 `dailyRequestLimit`·`dailyTokenLimit`과 `ApiUsageDaily` 집계는 유지한다.
+- **KST 날짜 계산**: 앱에서 `Intl` 또는 SQL `(now() AT TIME ZONE 'Asia/Seoul')::date`로 계산한다. 한 요청 안에서 예약과 누적에 같은 날짜 값을 쓴다.
+- **키 삭제**: 행을 삭제한다. 진행 중인 세계관은 다음 호출 전 검사에서 차단된다.
+
+### 3.3 설정 계층
+
+```prisma
+enum WorldVisibility { PRIVATE PUBLIC }           // MVP: PRIVATE만 허용 (PUBLIC 미노출)
+enum Gender          { MALE FEMALE NONBINARY CUSTOM UNSPECIFIED }
+enum Mood            { NEUTRAL HAPPY EXCITED CALM SAD ANXIOUS ANGRY FEARFUL EMBARRASSED LONELY HOPEFUL TIRED }
+enum IntervalPreset  { SLOW NORMAL FAST }         // 15s / 5s / 1s
+enum StrategyMode    { STORY AGENT }              // MVP: STORY만 노출
+
+model World {
+  id               String          @id @default(cuid())
+  ownerId          String
+  name             String          @db.VarChar(100)
+  summary          String?         @db.Text
+  eraAndPlace      String?         @db.Text          // 시대/장소
+  worldRules       String?         @db.Text
+  currentSituation String?         @db.Text          // 선택
+  worldContext     String          @default("") @db.Text   // 글자 수 제한 없음 (D6)
+  visibility       WorldVisibility @default(PRIVATE)
+  templateKey      String?                           // 생성 시 사용한 템플릿 (참고용)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  owner                 User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  gameState             GameState?
+  runtime               SimulationRuntime?
+  characters            Character[]
+  relationshipBaselines RelationshipBaseline[]
+  // … 하위 관계 생략 (모두 onDelete: Cascade)
+
+  @@index([ownerId, updatedAt(sort: Desc)])
+}
+
+model Character {
+  id                   String    @id @default(cuid())
+  worldId              String
+  name                 String    @db.VarChar(50)
+  gender               Gender    @default(UNSPECIFIED)
+  genderCustom         String?   @db.VarChar(30)    // gender = CUSTOM 일 때
+  age                  Int?                          // 비우면 저장 시 자동 설정
+  personalityTags      String[]                      // 태그 코드 (config 분류표), 권장 3~5개
+  extraversion         Int                           // 0..100
+  agreeableness        Int
+  conscientiousness    Int
+  emotionalStability   Int
+  openness             Int
+  goal                 String?   @db.Text
+  characterContext     String    @default("") @db.VarChar(300)   // 코드 포인트 300자
+  initialMood          Mood      @default(NEUTRAL)   // 감정 초기화 기준값
+  initialMoodIntensity Int       @default(50)        // 0..100
+  sortOrder            Int       @default(0)
+  deletedAt            DateTime?                     // 소프트 삭제
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, deletedAt])
+}
+
+model RelationshipBaseline {                         // 사용자가 지정한 초기 관계 (설정)
+  id              String @id @default(cuid())
+  worldId         String
+  fromCharacterId String
+  toCharacterId   String
+  affinity        Int    @default(0)                 // -100..100
+  trust           Int    @default(0)                 // -100..100
+  respect         Int    @default(0)                 // -100..100
+  familiarity     Int    @default(0)                 // 0..100
+
+  world World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  from  Character @relation("BaselineFrom", fields: [fromCharacterId], references: [id], onDelete: Cascade)
+  to    Character @relation("BaselineTo",   fields: [toCharacterId],   references: [id], onDelete: Cascade)
+
+  @@unique([fromCharacterId, toCharacterId])
+  @@index([worldId])
+}
+```
+
+- **6명 상한**은 앱에서 강제한다(§6.6). 대상은 `deletedAt IS NULL`인 캐릭터다.
+- **Baseline이 없는 쌍**은 기본값(전부 0)으로 시작한다.
+- 성격 태그를 `String[]`로 두는 이유: 분류표가 코드 설정(`config`)에 있고, 태그 단위 조회가 필요 없기 때문이다.
+
+### 3.4 활성 진행 상태 (D1: GameState의 진행 이력)
+
+```prisma
+enum MotiveType      { WORLD_EVENT RELATIONSHIP GOAL MIXED }
+enum SceneEndReason  { RESOLVED INTERRUPTED STALEMATE TURN_LIMIT }
+enum MemoryKind      { EVENT PROMISE CONFESSION CONFLICT SECRET IMPRESSION OTHER }
+enum MemoryAcquisition { WITNESSED TOLD OBSERVED }
+enum WorldEventKind  { INITIAL_SITUATION SCENE_OUTCOME USER_INTERVENTION }   // USER_INTERVENTION: P2
+enum EventVisibility { PUBLIC PARTICIPANTS }
+enum EventStatus     { ACTIVE RESOLVED }
+
+model GameState {
+  worldId          String         @id
+  stateVersion     Int            @default(0)      // 펜싱 토큰: 장면 커밋·종료·불러오기·초기화 시 +1
+  changeSeq        Int            @default(0)      // 게임 상태 변경 카운터: 장면 커밋·설정 수정·기록 삭제·불러오기·초기화 시 +1 (복구 지점 판정, A13)
+  nextSceneSeq     Int            @default(1)      // 기록 삭제와 무관하게 단조 증가
+
+  // 실행 설정 (설정 계층이지만 1:1이므로 여기 둠; 스냅샷에 포함)
+  strategyMode     StrategyMode   @default(STORY)
+  intervalPreset   IntervalPreset @default(NORMAL)
+  maxTurnsPerScene Int            @default(6)      // 3..6
+  participantsMin  Int            @default(2)
+  participantsMax  Int            @default(3)
+  modelOverride    String?                         // null이면 연결의 defaultModel
+
+  lastCommittedAt  DateTime?
+  updatedAt        DateTime       @updatedAt
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+}
+
+model ConversationScene {
+  id               String         @id @default(cuid())
+  worldId          String
+  seq              Int                              // 세계관 내 장면 번호
+  attemptId        String         @unique           // 멱등성 키
+  runId            String?                          // 생성된 Run (통계용, 소유 관계 아님)
+  strategyMode     StrategyMode
+  model            String
+  title            String         @db.VarChar(100)
+  summary          String         @db.Text
+  motiveType       MotiveType
+  motiveRef        String?                          // WorldEvent id 등
+  endReason        SceneEndReason
+  contextTruncated Boolean        @default(false)   // D6 안내 근거
+  createdAt        DateTime       @default(now())
+
+  world        World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  run          SimulationRun?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  participants SceneParticipant[]
+  messages     Message[]
+
+  @@unique([worldId, seq])
+  @@index([worldId, createdAt(sort: Desc)])
+}
+
+model SceneParticipant {
+  sceneId      String
+  characterId  String
+  alias        String @db.VarChar(3)                // 프롬프트 별칭 C1..C6 (디버깅용)
+  nameSnapshot String @db.VarChar(50)
+
+  scene     ConversationScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  character Character         @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@id([sceneId, characterId])
+  @@index([characterId, sceneId])                   // "이 캐릭터가 참가한 최근 장면" (단기 기억)
+}
+
+model Message {
+  id                  String  @id @default(cuid())
+  sceneId             String
+  worldId             String
+  turnIndex           Int
+  speakerCharacterId  String?                       // 캐릭터 실제 삭제 시 null
+  speakerNameSnapshot String  @db.VarChar(50)       // 삭제된 캐릭터도 표시 유지
+  dialogue            String  @db.Text
+  actionIntent        String? @db.Text              // Level 2 행동 의도
+  emotionCue          String? @db.VarChar(40)
+  createdAt           DateTime @default(now())
+
+  scene   ConversationScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  speaker Character?        @relation(fields: [speakerCharacterId], references: [id], onDelete: SetNull)
+
+  @@unique([sceneId, turnIndex])
+  @@index([worldId, createdAt])
+}
+
+model RelationshipState {
+  id              String   @id @default(cuid())
+  worldId         String
+  fromCharacterId String
+  toCharacterId   String
+  affinity        Int                               // -100..100
+  trust           Int                               // -100..100
+  respect         Int                               // -100..100
+  familiarity     Int                               // 0..100
+  updatedAt       DateTime @updatedAt
+
+  changes RelationshipChange[]
+  // world/from/to 관계: onDelete Cascade
+
+  @@unique([fromCharacterId, toCharacterId])
+  @@index([worldId])
+}
+
+model RelationshipChange {
+  id                  String   @id @default(cuid())
+  worldId             String
+  relationshipStateId String
+  sceneId             String?                       // 기록 삭제 시 SetNull (D9)
+  dAffinity           Int                           // 적용된(clamp 후) 변화량
+  dTrust              Int
+  dRespect            Int
+  dFamiliarity        Int
+  proposed            Json                          // LLM 원 제안값 (clamp 전, 디버깅·밸런스용)
+  clamped             Boolean  @default(false)
+  reason              String?  @db.Text
+  createdAt           DateTime @default(now())
+
+  relationship RelationshipState  @relation(fields: [relationshipStateId], references: [id], onDelete: Cascade)
+  scene        ConversationScene? @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+
+  @@index([relationshipStateId, createdAt])
+}
+
+model EmotionState {
+  characterId  String   @id
+  worldId      String
+  mood         Mood
+  intensity    Int                                  // 0..100
+  updatedAt    DateTime @updatedAt
+  // character: onDelete Cascade
+  @@index([worldId])
+}
+
+model EmotionChange {
+  id             String   @id @default(cuid())
+  worldId        String
+  characterId    String
+  sceneId        String?                            // SetNull (D9)
+  fromMood       Mood
+  toMood         Mood
+  dIntensity     Int
+  proposedDelta  Int
+  clamped        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([characterId, createdAt])
+}
+
+model CharacterMemory {
+  id               String            @id @default(cuid())
+  worldId          String
+  ownerCharacterId String                           // 이 기억을 "아는" 단 한 명
+  aboutCharacterId String?                          // 인물 기억 대상 (SetNull)
+  kind             MemoryKind
+  acquisition      MemoryAcquisition @default(WITNESSED)
+  content          String            @db.Text       // ≤ 300자 (앱 검증)
+  importance       Int                              // 1..5
+  sourceSceneId    String?                          // 출처 장면, 기록 삭제 시 SetNull (D9)
+  shareGroupId     String?                          // 같은 사건을 공유한 목격자들의 기억 묶음
+  createdAt        DateTime          @default(now())
+
+  owner Character @relation("MemoryOwner", fields: [ownerCharacterId], references: [id], onDelete: Cascade)
+  about Character? @relation("MemoryAbout", fields: [aboutCharacterId], references: [id], onDelete: SetNull)
+
+  @@index([ownerCharacterId, importance(sort: Desc), createdAt(sort: Desc)])
+  @@index([worldId])
+}
+
+model WorldEvent {
+  id            String          @id @default(cuid())
+  worldId       String
+  kind          WorldEventKind
+  title         String          @db.VarChar(100)
+  description   String          @db.Text
+  visibility    EventVisibility @default(PUBLIC)
+  status        EventStatus     @default(ACTIVE)
+  sourceSceneId String?                             // SetNull
+  createdAt     DateTime        @default(now())
+  resolvedAt    DateTime?
+
+  @@index([worldId, status])
+}
+```
+
+**PRD 기억 분류와의 대응**
+
+| PRD 분류 | 저장 위치 |
+|---|---|
+| 단기 기억 | 별도 테이블 없음. `SceneParticipant(characterId)` → 최근 장면 → `Message`로 조회한다(그 캐릭터가 참가한 장면만) |
+| 장기 기억 | `CharacterMemory`, kind = EVENT·PROMISE·CONFESSION·CONFLICT·SECRET·OTHER |
+| 인물 기억 | `CharacterMemory`, `aboutCharacterId` 지정(주로 IMPRESSION) |
+
+**pgvector**: 규모가 커지면 `CharacterMemory`에 임베딩 컬럼을 추가하는 방향으로 검토한다(PRD FR-08). MVP에서는 명시적 조회 규칙만 쓴다.
+
+### 3.5 실행·관찰
+
+```prisma
+enum RuntimeStatus { IDLE RUNNING PAUSING PAUSED }
+enum StatusReason  { USER CLIENT_DISCONNECTED USAGE_LIMIT KEY_INVALID LOADED RESET SERVER_RECOVERY }
+enum ApiOutcome    { SUCCESS HTTP_ERROR NETWORK_ERROR VALIDATION_ERROR ABORTED }
+
+model SimulationRuntime {
+  worldId           String        @id
+  status            RuntimeStatus @default(IDLE)
+  statusReason      StatusReason?
+  currentRunId      String?
+  leaseOwner        String?                          // hostname:pid:bootId
+  leaseExpiresAt    DateTime?
+  inFlightAttemptId String?
+  inFlightStartedAt DateTime?
+  clientHoldSince   DateTime?                        // 활성 SSE 연결 0 → 신규 호출 보류 시작 시각 (D4)
+  nextSceneAt       DateTime?                        // 다음 장면 예정 시각 (UI 표시)
+  updatedAt         DateTime      @updatedAt
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([status, leaseExpiresAt])                  // 복구 스위퍼
+}
+
+model SseConnection {                                 // 활성 SSE 연결 등록부 (A12)
+  id          String   @id @default(cuid())
+  worldId     String
+  userId      String
+  instanceId  String                                 // 웹 인스턴스 (hostname:pid:bootId)
+  connectedAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())               // 10초마다 갱신, 30초 경과 시 비활성 간주
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, lastSeenAt])
+}
+
+model SimulationRun {                                 // 구 PRD §7 SimulationSession → SimulationRun (A1)
+  id                  String    @id @default(cuid())
+  worldId             String
+  startedAt           DateTime  @default(now())
+  endedAt             DateTime?
+  endReason           String?
+  requestCount        Int       @default(0)
+  successCount        Int       @default(0)
+  failureCount        Int       @default(0)
+  inputTokens         Int       @default(0)
+  outputTokens        Int       @default(0)
+  thoughtTokens       Int       @default(0)
+  estimatedCostMicros BigInt    @default(0)
+
+  world  World               @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  scenes ConversationScene[]
+
+  @@index([worldId, startedAt(sort: Desc)])
+}
+
+model ApiRequestLog {
+  id                  String     @id @default(cuid())
+  userId              String
+  connectionId        String?                        // 연결 삭제 시 SetNull
+  worldId             String?
+  runId               String?
+  attemptId           String?
+  callIndex           Int        @default(0)          // AgentMode: 장면 내 n번째 호출
+  model               String
+  startedAt           DateTime
+  latencyMs           Int?
+  httpStatus          Int?                            // NETWORK_ERROR면 null
+  outcome             ApiOutcome
+  errorCode           String?                         // RESOURCE_EXHAUSTED, TIMEOUT, SCHEMA_INVALID …
+  errorMessage        String?    @db.VarChar(500)     // 마스킹 후 저장
+  inputTokens         Int?
+  outputTokens        Int?
+  thoughtTokens       Int?
+  estimatedCostMicros BigInt?
+  createdAt           DateTime   @default(now())
+  // 금지: API 키, Authorization 헤더, 프롬프트·컨텍스트 원문, 응답 원문
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  world World? @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, createdAt(sort: Desc)])
+  @@index([createdAt])                                // 보관 기간 정리
+}
+
+model SystemNotice {                                  // 대화창의 시스템 메시지 (A4, 세이브 제외)
+  id        String   @id @default(cuid())
+  worldId   String
+  runId     String?
+  attemptId String?
+  code      String                                    // NETWORK_ERROR / HTTP_ERROR / VALIDATION_ERROR / USAGE_LIMIT …
+  message   String   @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  @@index([worldId, createdAt])
+}
+
+model SimulationEvent {                               // SSE outbox (A6)
+  id        BigInt   @id @default(autoincrement())     // SSE id / Last-Event-ID
+  worldId   String
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([worldId, id])
+  @@index([createdAt])
+}
+```
+
+### 3.6 세이브
+
+```prisma
+enum SaveKind { MANUAL AUTO }
+
+model SaveGame {
+  id                 String   @id @default(cuid())
+  worldId            String
+  kind               SaveKind
+  autoForWorldId     String?  @unique                // AUTO일 때만 = worldId → 세계관당 AUTO 1개 보장
+  name               String   @db.VarChar(60)        // AUTO는 "자동저장"
+  snapshotId         String?  @unique                // AUTO + null = LIVE 모드 (§5)
+  sceneCount         Int                              // 표시용 메타데이터
+  characterCount     Int
+  worldNameSnapshot  String   @db.VarChar(100)
+  stateVersionAtSave Int
+  replacedAtChangeSeq Int?                           // AUTO 전용: 직전 불러오기·초기화 적용 직후의 GameState.changeSeq (A13)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  world    World         @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  snapshot GameSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+
+  @@index([worldId, kind, updatedAt(sort: Desc)])
+}
+
+model GameSnapshot {
+  id            String   @id @default(cuid())
+  worldId       String
+  schemaVersion Int                                   // §5.3
+  payload       Json                                  // jsonb, TOAST 자동 압축
+  sizeBytes     Int
+  checksum      String   @db.VarChar(64)              // SHA-256 hex
+  createdAt     DateTime @default(now())
+
+  world World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  save  SaveGame?
+
+  @@index([worldId])
+}
+```
+
+- **`autoForWorldId` 기법**: PostgreSQL의 UNIQUE는 NULL을 여러 개 허용한다. MANUAL 행은 NULL, AUTO 행만 `worldId` 값을 가지므로, 부분 인덱스 없이 "세계관당 AUTO 1개"를 보장한다.
+- **AUTO 행 생성 시점**: 세계관을 만들 때 GameState·SimulationRuntime과 함께 만든다.
+- **MANUAL 행**은 `snapshotId`가 항상 NOT NULL이다(앱에서 보장, CHECK 제약 추가).
+
+---
+
+## 4. 제약 조건과 인덱스
+
+### 4.1 Prisma 스키마 밖에서 추가할 CHECK 제약 (마이그레이션 SQL)
+
+Prisma는 CHECK를 스키마로 표현하지 않는다. 그래서 `prisma migrate dev --create-only` 후 SQL을 직접 추가한다.
+
+```sql
+ALTER TABLE "Character" ADD CONSTRAINT character_bigfive_range CHECK (
+  extraversion BETWEEN 0 AND 100 AND agreeableness BETWEEN 0 AND 100 AND
+  conscientiousness BETWEEN 0 AND 100 AND "emotionalStability" BETWEEN 0 AND 100 AND
+  openness BETWEEN 0 AND 100 AND "initialMoodIntensity" BETWEEN 0 AND 100);
+ALTER TABLE "Character" ADD CONSTRAINT character_age_range CHECK (age IS NULL OR age BETWEEN 0 AND 1000);
+
+ALTER TABLE "RelationshipState" ADD CONSTRAINT rel_range CHECK (
+  affinity BETWEEN -100 AND 100 AND trust BETWEEN -100 AND 100 AND
+  respect BETWEEN -100 AND 100 AND familiarity BETWEEN 0 AND 100);
+ALTER TABLE "RelationshipState" ADD CONSTRAINT rel_not_self CHECK ("fromCharacterId" <> "toCharacterId");
+-- RelationshipBaseline 에도 동일
+
+ALTER TABLE "EmotionState"     ADD CONSTRAINT emotion_range CHECK (intensity BETWEEN 0 AND 100);
+ALTER TABLE "CharacterMemory"  ADD CONSTRAINT memory_importance CHECK (importance BETWEEN 1 AND 5);
+ALTER TABLE "GameState"        ADD CONSTRAINT gs_turns CHECK ("maxTurnsPerScene" BETWEEN 3 AND 6
+                                 AND "participantsMin" >= 2 AND "participantsMax" BETWEEN "participantsMin" AND 6);
+ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (
+  (kind = 'MANUAL' AND "autoForWorldId" IS NULL AND "snapshotId" IS NOT NULL) OR
+  (kind = 'AUTO'   AND "autoForWorldId" = "worldId"));
+```
+
+- 앱 검증이 1차 방어다. clamp는 앱에서 먼저 적용하므로, CHECK 위반은 곧 버그다. 트랜잭션이 롤백되어 장면 실패로 처리된다.
+- 나이 상한 1000은 판타지 종족을 고려한 기술적 상한이다. 랜덤 생성 범위는 별도(성인 기본)이다.
+
+### 4.2 주요 조회와 인덱스
+
+| 조회 | 인덱스 |
+|---|---|
+| 내 세계관 목록 | `World(ownerId, updatedAt desc)` |
+| 활성 캐릭터 | `Character(worldId, deletedAt)` |
+| 대화 기록 페이지네이션 | `ConversationScene(worldId, seq)` UNIQUE (역순 스캔) |
+| 캐릭터별 최근 참가 장면 (단기 기억) | `SceneParticipant(characterId, sceneId)` |
+| 캐릭터 기억 선별 | `CharacterMemory(ownerCharacterId, importance desc, createdAt desc)` |
+| SSE 재전송 | `SimulationEvent(worldId, id)` |
+| 복구 스위퍼 | `SimulationRuntime(status, leaseExpiresAt)` |
+| API 로그 탭 | `ApiRequestLog(worldId, createdAt desc)` |
+| 세이브 목록 | `SaveGame(worldId, kind, updatedAt desc)` |
+
+---
+
+## 5. 세이브 스냅샷
+
+### 5.1 payload v1 구조
+
+```ts
+// lib/snapshot/v1.ts (Zod 스키마로 정의, 아래는 형태 요약)
+type SnapshotV1 = {
+  schemaVersion: 1;
+  capturedAt: string;                // ISO
+  stateVersion: number;
+  world: {                           // World 설정 필드 전부 (id, ownerId, 타임스탬프 제외)
+    name; summary; eraAndPlace; worldRules; currentSituation; worldContext; visibility; templateKey;
+  };
+  runSettings: { strategyMode; intervalPreset; maxTurnsPerScene; participantsMin; participantsMax; modelOverride };
+  characters: Array<{                // 삭제된 캐릭터 포함 (deletedAt 유지)
+    id; name; gender; genderCustom; age; personalityTags; bigFive: {…};
+    goal; characterContext; initialMood; initialMoodIntensity; sortOrder; deletedAt;
+  }>;
+  relationshipBaselines: Array<{ fromCharacterId; toCharacterId; affinity; trust; respect; familiarity }>;
+  progress: {
+    nextSceneSeq: number;
+    scenes: Array<{
+      id; seq; attemptId; strategyMode; model; title; summary; motiveType; motiveRef; endReason;
+      contextTruncated; createdAt;
+      participants: Array<{ characterId; alias; nameSnapshot }>;
+      messages: Array<{ id; turnIndex; speakerCharacterId; speakerNameSnapshot; dialogue; actionIntent; emotionCue; createdAt }>;
+    }>;
+    relationships: Array<{ id; fromCharacterId; toCharacterId; affinity; trust; respect; familiarity;
+                           changes: Array<{ sceneId; d…; proposed; clamped; reason; createdAt }> }>;
+    emotions: Array<{ characterId; mood; intensity }>;
+    emotionChanges: Array<{ characterId; sceneId; fromMood; toMood; dIntensity; proposedDelta; clamped; createdAt }>;
+    memories: Array<{ id; ownerCharacterId; aboutCharacterId; kind; acquisition; content; importance;
+                      sourceSceneId; shareGroupId; createdAt }>;
+    worldEvents: Array<{ id; kind; title; description; visibility; status; sourceSceneId; createdAt; resolvedAt }>;
+  };
+};
+```
+
+**제외 대상**(D7): User·Session·Account, AiProviderConnection(키·한도·브레이커), ApiUsageDaily, ApiRequestLog, SimulationRun, SimulationRuntime, SystemNotice, SimulationEvent, SaveGame 목록.
+
+`runId`는 Run이 실행 기록일 뿐이므로 스냅샷에 넣지 않는다. 복원한 장면은 `runId = null`이다.
+
+### 5.2 캡처와 적용
+
+**캡처** `captureActiveState(tx, worldId)`:
+- `REPEATABLE READ` 트랜잭션 안에서 GameState를 `FOR UPDATE`로 잠근 뒤, 위 구조를 조회한다.
+- 수동 저장, 덮어쓰기, 자동저장 실체화가 모두 이 함수를 공유한다.
+
+**적용** `applySnapshot(tx, worldId, snapshot)`:
+1. 진행 상태 삭제:
+   ```
+   DELETE ConversationScene(→ Participant·Message Cascade), RelationshipState(→ Change), EmotionChange,
+          EmotionState, CharacterMemory, WorldEvent, RelationshipBaseline   (worldId 기준)
+   ```
+2. World 설정 필드 UPDATE, GameState 실행 설정·`nextSceneSeq` UPDATE.
+3. 캐릭터:
+   - 스냅샷의 캐릭터는 **원래 ID로 UPSERT**한다(`deletedAt` 포함).
+   - 스냅샷에 없는 현재 캐릭터는 **실제 DELETE**한다. 직전 상태는 자동저장 실체화로 보존되어 있다.
+4. Baseline, 장면·참가자·메시지, 관계·변화, 감정·변화, 기억, 이벤트를 원래 ID로 INSERT한다(`createMany`).
+5. `stateVersion += 1`, Runtime → `IDLE`(사유 `LOADED`), outbox에 `state.replaced`를 기록한다.
+
+- **ID 재사용이 안전한 이유**: 1단계에서 같은 세계관의 활성 행을 먼저 지우고, 다른 세계관과는 ID가 겹칠 수 없다(cuid). 스냅샷은 그 세계관의 것만 적용할 수 있다(`snapshot.worldId = worldId` 검사).
+- **트랜잭션 timeout**: 이력이 길면 오래 걸릴 수 있으므로 저장·불러오기 트랜잭션의 Prisma timeout을 넉넉히(예: 60초) 설정한다. 대량 INSERT는 `createMany`로 묶는다.
+
+### 5.3 schemaVersion 정책
+
+- **현재 버전**: `CURRENT_SNAPSHOT_VERSION = 1` (`lib/snapshot/index.ts`).
+- **읽기 경로**: `parse(raw) → migrations[v→v+1]… → SnapshotCurrent.parse()`. 원본 행은 수정하지 않는다.
+- **버전을 올리는 경우**: 스냅샷 대상 테이블에 필드 추가·삭제·의미 변경이 있을 때 반드시 버전을 올린다.
+- 각 마이그레이터에 이전 버전 픽스처 기반 테스트를 붙인다.
+- **필드 추가(기본값 있음)**도 버전을 올리고, 마이그레이터에서 기본값을 채운다. 암묵적 호환에 의존하지 않는다.
+- `schemaVersion > CURRENT`인 스냅샷은 불러오기를 거부한다.
+- **무결성 검증**: 불러올 때 `checksum`(정규화된 JSON 문자열의 SHA-256)이 일치하지 않으면 거부한다.
+
+### 5.4 자동저장 모드 전이 (D2)
+
+| 시점 | AUTO 행 처리 |
+|---|---|
+| 세계관 생성 | AUTO 행 생성(`snapshotId = null`, LIVE) |
+| 장면 커밋 | MATERIALIZED였다면 스냅샷 삭제 → `snapshotId = null`. `sceneCount`, `stateVersionAtSave`, `updatedAt` 갱신 |
+| 불러오기·초기화 직전 (D7, A13) | ① LIVE → `captureActiveState` → GameSnapshot 생성 → `snapshotId` 연결(MATERIALIZED)<br>② MATERIALIZED이고 `GameState.changeSeq == replacedAtChangeSeq` → **기존 복구 지점 유지**<br>③ MATERIALIZED이고 `changeSeq > replacedAtChangeSeq` → 새로 캡처 → 새 스냅샷으로 교체, 이전 스냅샷 삭제 |
+| 불러오기·초기화 적용 직후 | `changeSeq += 1` 후 그 값을 `replacedAtChangeSeq`에 기록 |
+| 최신 자동저장 복원 | LIVE면 적용할 내용 없음. MATERIALIZED면 다시 캡처하지 않고 `applySnapshot` → 스냅샷 삭제 → LIVE, `replacedAtChangeSeq = null`. 교체 이후 변경이 있었다면 UI가 "불러온 뒤의 변경 사항은 사라집니다"라고 확인한다 |
+| 기록 삭제 | 변경 없음. LIVE 자동저장에는 삭제가 자연스럽게 반영된다 |
+
+**규칙의 근거 (A13, 최종 승인)**:
+- 교체 이후 아무 변경이 없으면, 현재 활성 상태는 방금 불러온 슬롯이나 초기화 결과와 같다. 그래서 원래 진행 상태(최초 복구 지점)를 보존한다.
+- 교체 이후 사용자가 설정을 수정하거나 기록을 삭제했다면, 그 상태는 어디에도 없는 새 상태다. 그래서 다음 불러오기 전에 복구 지점으로 보존한다.
+- 장면 커밋이 일어나면 LIVE로 돌아가므로 ①이 적용된다.
+
+---
+
+## 6. 트랜잭션 패턴
+
+모든 패턴은 `prisma.$transaction(async (tx) => …)` 인터랙티브 트랜잭션을 쓴다. 첫 문장은 잠금이다.
+
+```ts
+await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UPDATE`;
+```
+
+| # | 작업 | 잠금 | 핵심 단계 | stateVersion | changeSeq |
+|---|---|---|---|---|---|
+| 6.1 | 장면 커밋 | GameState | 펜싱 검사 → INSERT 장면(UNIQUE attemptId) → 관계·감정·기억 → AUTO LIVE → outbox | +1 | +1 |
+| 6.2 | 제어 명령(stop) | GameState | Runtime 조건부 UPDATE → Run 종료 | +1 | — |
+| 6.3 | 수동 저장 / 덮어쓰기 | GameState (REPEATABLE READ) | 슬롯 수 확인 → 캡처 → Snapshot·SaveGame | — | — |
+| 6.4 | 불러오기 / 자동저장 복원 | GameState | 실행 정리 → 복구 지점 규칙(§5.4) → applySnapshot → AUTO `replacedAtChangeSeq` 기록 | +1 (실행 정리 시 추가 +1 가능) | +1 |
+| 6.5 | 진행 초기화 | GameState | 상태 확인(IDLE/PAUSED만, RUNNING·PAUSING 거부) → 복구 지점 규칙(§5.4) → 선택 항목 삭제·복원 → AUTO `replacedAtChangeSeq` 기록 | +1 | +1 |
+| 6.6 | 캐릭터 생성 | World 행 `FOR UPDATE` → GameState | 활성 수 < 6 확인 → INSERT Character + EmotionState(초기값) | — | +1 |
+| 6.7 | 캐릭터 수정·삭제, 세계관·Baseline·실행 설정 수정 | World 행 → GameState | 수정 저장 / 삭제는 `deletedAt = now()` (관계·기억 행 유지, 이후 선정·컨텍스트에서 제외) | — | +1 |
+| 6.8 | 대화 기록 삭제 | GameState | 장면 DELETE (Message Cascade, 기억·변화 이력 SetNull) | — | +1 |
+| 6.9 | 세계관 삭제 | — | Runtime IDLE + 취소 신호 → World DELETE (전체 Cascade) | — | — |
+| 6.10 | SSE 연결 종료 | — | `SseConnection` DELETE → 활성 연결 0이면 `UPDATE SimulationRuntime SET clientHoldSince = now() WHERE status = 'RUNNING' AND clientHoldSince IS NULL` | — | — |
+| 6.11 | SSE 재연결 | — | `SseConnection` INSERT → `UPDATE … SET clientHoldSince = NULL WHERE status = 'RUNNING'` | — | — |
+| 6.12 | 보류 60초 초과 | — | `UPDATE … SET status = 'PAUSED', statusReason = 'CLIENT_DISCONNECTED', clientHoldSince = NULL, leaseOwner = NULL WHERE status = 'RUNNING' AND clientHoldSince < now() - interval '60 seconds'` (진행 중 장면이 있으면 완료 후) | — | — |
+
+- **잠금 순서**: World 행과 GameState 행을 함께 잠글 때는 항상 **World → GameState** 순서로 잡아 교착을 피한다.
+- **`changeSeq` 증가**: 설정 수정은 `UPDATE "GameState" SET "changeSeq" = "changeSeq" + 1`을 같은 트랜잭션에서 실행한다. 이 UPDATE가 GameState 행 잠금 역할도 한다.
+
+- **6.1 펜싱과 6.2/6.4/6.5의 관계**: 커밋 트랜잭션은 같은 행을 잠그므로, 종료·불러오기·초기화가 먼저 커밋되면 반드시 버전 불일치를 보게 된다. 반대로 장면 커밋이 먼저 끝나면, 뒤이은 불러오기·초기화는 그 장면까지 포함된 상태를 기준으로 동작한다. 일시정지는 버전을 바꾸지 않으므로 진행 중 장면이 정상 커밋된다(D5).
+- **6.6 동시 생성**: 두 요청이 동시에 와도 World 행 잠금으로 직렬화되어 7번째 생성은 거부된다(PRD 승인 시나리오 4).
+- **6.9 세계관 삭제**: 진행 중인 Runner의 커밋은 GameState 행이 없어지므로 실패하고 폐기된다.
+- **GameState·SimulationRuntime 행이 없는 세계관**은 존재하지 않는다(세계관 생성 트랜잭션에서 함께 생성).
+
+---
+
+## 7. 삭제·보존 정책
+
+| 대상 | 정책 |
+|---|---|
+| **계정 삭제** | User → Session·Account·AiProviderConnection(→ ApiUsageDaily)·World(→ 하위 전체)·ApiRequestLog 연쇄 삭제 |
+| **세계관 삭제** (D9) | 캐릭터·진행 상태·세이브·스냅샷·Run·로그·알림·outbox 전부 연쇄 삭제. UI에서 세이브 슬롯과 진행 기록까지 삭제된다고 경고하고 재확인한다(PRD FR-03) |
+| **캐릭터 삭제** | 소프트 삭제. 메시지·참가 기록·관계·기억 보존. 화면에 "삭제된 캐릭터"로 표시. 불러오기로 해당 캐릭터가 스냅샷에 없는 경우에만 실제 삭제(Message는 SetNull + 이름 스냅샷) |
+| **대화 기록 삭제** (D9) | 현재 게임(활성 진행 상태)의 장면·메시지만 삭제. 기억·관계·감정과 변화 이력의 값은 유지(scene 참조만 NULL). 수동 세이브·MATERIALIZED 자동저장은 영향 없음. 확인창에서 "기존 세이브에는 기록이 남아 있을 수 있음" 안내 |
+| **세이브 삭제** | SaveGame + GameSnapshot 삭제. 다른 슬롯·활성 상태 영향 없음 |
+| **API 키 삭제** | 연결 행 삭제(사용량 집계 연쇄 삭제). ApiRequestLog의 `connectionId`는 SetNull |
+| **ApiRequestLog** | 30일 후 배치 삭제(확정, A11). 사용자 직접 삭제 가능 |
+| **SseConnection** | 정상 종료 시 즉시 삭제. `lastSeenAt` 기준 5분 넘은 행은 정리 작업이 삭제 |
+| **SimulationEvent** | 24시간 보관 후 정리(확정, A16) |
+| **SystemNotice** | 90일 보관 후 정리(확정, A16). 대화 기록 "전체 삭제" 시 함께 삭제 |
+
+---
+
+## 8. 기본 수치
+
+"확정"은 2026-10-27 결정이다. 나머지는 초기값이며 밸런스 테스트 후 조정한다.
+
+| 항목 | 기본값 | 위치 |
+|---|---|---|
+| 관계 축 범위 (확정) | 호감·신뢰·존경 −100..100, 친밀 0..100 | CHECK + `config/limits.ts` |
+| 일일 사용량 기준 (확정) | Asia/Seoul(KST) 날짜 | `ApiUsageDaily.usageDate` |
+| 한도 도달 시 상태 (확정) | `PAUSED` (`USAGE_LIMIT`) | SimulationRuntime |
+| API 로그 보관 (확정) | 30일 | 배치 정리 |
+| HTTP 요청 본문 (확정) | 최대 10MB (worldContext 글자 수 무제한) | 앱 설정 |
+| SSE 보류 → PAUSED (확정) | 60초 | `clientHoldSince` |
+| SSE 연결 비활성 판정 | `lastSeenAt` 30초 경과 | SseConnection |
+| 초기 관계 | 전부 0 (Baseline 미지정 시) | |
+| 장면당 관계 변화 상한 (확정) | 축마다 ±5 | clamp |
+| 감정 강도 (확정) | 0..100, 장면당 변화 상한 ±20 | clamp |
+| 보관 기간 (확정) | SimulationEvent 24시간, SystemNotice 90일 | 배치 정리 |
+| 기억 중요도 | 1..5 | clamp |
+| 캐릭터 수 | 활성 최대 6 | 앱 + 잠금 |
+| 캐릭터 컨텍스트 | 300 코드 포인트 | VARCHAR(300) + Zod |
+| 장면 턴 | 3..6 | Zod + CHECK |
+| 수동 세이브 슬롯 (확정) | 세계관당 20 | 앱 (A7) |
+
+---
+
+## 9. 구현 단계에서 확정할 값
+
+설계상 미결 사항은 없다. 아래는 구현 중 측정해서 정한다.
+
+1. 스냅샷 크기 모니터링 임계값과 초과 시 정책(경고만 / 저장 거부). JSONB 대신 gzip `Bytes`로 바꿀지는 측정 후 판단(Phase 7b).
+2. `Mood` enum 목록과 UI 표시명(Phase 6).
