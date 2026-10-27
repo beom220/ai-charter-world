@@ -161,12 +161,14 @@ describe("등록·교체·조회·삭제", () => {
     expect(r.json.connection).toMatchObject({ status: "UNVERIFIED", keyLast4: secondKey.slice(-4) });
   });
 
-  it("형식이 틀린 키·JSON 오류 → 400, 응답에 입력값을 되돌려 주지 않는다", async () => {
-    const wrong = `${secondKey}XYZ`;
+  it("빈 값·공백만·4096자 초과 키와 JSON 오류 → 400, 응답에 입력값을 되돌려 주지 않는다", async () => {
+    const wrong = `AQ.${"w".repeat(4100)}`;
+    expect((await sendTracked("PUT", { cookie, body: { apiKey: "   " } })).status).toBe(400);
+    expect((await sendTracked("PUT", { cookie, body: { apiKey: "" } })).status).toBe(400);
     const bad = await sendTracked("PUT", { cookie, body: { apiKey: wrong } });
     expect(bad.status).toBe(400);
     expect(bad.json.error.code).toBe("INVALID_REQUEST");
-    expect(bad.text).not.toContain(wrong);
+    expect(bad.text).not.toContain(wrong.slice(0, 40));
     const broken = await sendTracked("PUT", { cookie, rawBody: "{not json" });
     expect(broken.status).toBe(400);
     expect((await prisma.aiProviderConnection.findFirstOrThrow({ where: { userId } })).keyLast4).toBe(secondKey.slice(-4));

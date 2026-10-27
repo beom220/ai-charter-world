@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { geminiApiKeyInputSchema } from "@/lib/schemas/provider";
+import { geminiApiKeyInputSchema, isAcceptableGeminiApiKey } from "@/lib/schemas/provider";
 import {
   connectionAad,
   CryptoConfigError,
@@ -134,21 +134,39 @@ describe("암호화 환경변수 검증", () => {
   });
 });
 
-describe("Gemini API 키 입력 스키마", () => {
-  it("형식에 맞는 키를 받고 앞뒤 공백을 지운다", () => {
-    expect(geminiApiKeyInputSchema.parse({ apiKey: `  ${FAKE_GEMINI_KEY}\n` })).toEqual({ apiKey: FAKE_GEMINI_KEY });
-  });
+describe("Gemini API 키 입력 정책 (형식을 앱이 정의하지 않음)", () => {
+  // 실제 키가 아닌 가짜 값들. 접두사는 런타임에 조립한다.
+  const variants = [
+    FAKE_GEMINI_KEY, // AIza…
+    ["AQ", "Ab8FakeNewFormatKey_0123456789-abcdef"].join("."), // AQ.…
+    "sk-some-other-prefix-123", // 다른 접두사
+    "short", // 짧은 값
+    "key/with+base64=chars", // 이전 허용 문자 집합 밖
+    "키값-유니코드-포함", // 비ASCII
+    "  leading-and-trailing-spaces  ", // 앞뒤 공백 (보정하지 않음)
+    "inner space key", // 내부 공백
+    "x".repeat(4096), // 최대 길이
+  ];
+
+  for (const apiKey of variants) {
+    it(`그대로 받는다: ${JSON.stringify(apiKey.slice(0, 24))}${apiKey.length > 24 ? "…" : ""}`, () => {
+      expect(geminiApiKeyInputSchema.parse({ apiKey })).toEqual({ apiKey });
+      expect(isAcceptableGeminiApiKey(apiKey)).toBe(true);
+    });
+  }
 
   it("userId 같은 다른 필드는 버린다", () => {
     expect(geminiApiKeyInputSchema.parse({ apiKey: FAKE_GEMINI_KEY, userId: "victim" })).toEqual({ apiKey: FAKE_GEMINI_KEY });
   });
 
-  it("형식이 틀린 키는 거부하고, 오류에 입력값을 담지 않는다", () => {
-    const wrong = `${FAKE_GEMINI_KEY}EXTRA`;
-    for (const input of [{ apiKey: wrong }, { apiKey: "sk-not-google" }, { apiKey: 123 }, {}, null]) {
+  it("비어 있거나 공백만 있는 값, 4096자 초과, 문자열이 아닌 값은 거부하고 오류에 입력값을 담지 않는다", () => {
+    const tooLong = `AQ.${"y".repeat(4094)}`;
+    const inputs = [{ apiKey: "" }, { apiKey: " " }, { apiKey: "\t\n  \r" }, { apiKey: tooLong }, { apiKey: 123 }, { apiKey: null }, {}, null];
+    for (const input of inputs) {
       const result = geminiApiKeyInputSchema.safeParse(input);
       expect(result.success).toBe(false);
-      expect(JSON.stringify(result.error?.issues)).not.toContain(wrong);
+      expect(JSON.stringify(result.error?.issues)).not.toContain(tooLong.slice(0, 50));
     }
+    expect(isAcceptableGeminiApiKey(tooLong)).toBe(false);
   });
 });

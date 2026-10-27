@@ -62,6 +62,7 @@ describe("로그 마스킹", () => {
     expect(line).not.toContain(SECRET);
     expect(line).not.toContain("GOCSPX-");
     expect(line).not.toContain("AIzaSy");
+    expect(redactSecrets(`key ${["AQ", "Ab8FakeTokenForMaskTest_0123456789"].join(".")} end`)).toBe("key [REDACTED] end");
     expect(line).not.toContain("abc.def=");
     expect(line).not.toContain("tok.sig");
     expect(line).not.toContain("xyz");
