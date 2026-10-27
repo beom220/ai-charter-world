@@ -195,6 +195,77 @@ describe("오류 응답에서 안전한 정보만 꺼낸다", () => {
     expect(JSON.stringify([error, records])).not.toContain(FAKE_KEY);
   });
 
+  it("429 할당량 응답: quotaId·quotaMetric·quotaValue·모델·retryDelay·힌트만 남기고 프로젝트·링크·메시지는 버린다", async () => {
+    const body = {
+      error: {
+        code: 429,
+        message: `You exceeded your current quota, please check your plan and billing details. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-test-pro. key=${FAKE_KEY}`,
+        status: "RESOURCE_EXHAUSTED",
+        details: [
+          {
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            violations: [
+              {
+                quotaMetric: "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+                quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                quotaDimensions: { location: "global", model: "gemini-test-pro" },
+                quotaValue: "0",
+              },
+            ],
+          },
+          { "@type": "type.googleapis.com/google.rpc.Help", links: [{ description: "Learn more", url: "https://ai.google.dev/gemini-api/docs/rate-limits" }] },
+          { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "37s" },
+          { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "RATE_LIMIT_EXCEEDED", metadata: { consumer: "projects/123456789012", service: "generativelanguage.googleapis.com" } },
+        ],
+      },
+    };
+    const { fn } = fakeFetch([json(body, 429)]);
+    const error = (await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-pro", noop).catch((e: unknown) => e)) as GeminiCallError;
+
+    expect(error.kind).toBe("QUOTA_EXCEEDED");
+    expect(error.upstreamDetail).toBe(
+      "status=RESOURCE_EXHAUSTED; reason=RATE_LIMIT_EXCEEDED; quotaId=GenerateRequestsPerDayPerProjectPerModel-FreeTier; " +
+        "quotaMetric=generativelanguage.googleapis.com/generate_content_free_tier_requests; quotaValue=0; quotaModel=gemini-test-pro; " +
+        "retryDelay=37s; hint=QUOTA_LIMIT_ZERO,FREE_TIER,BILLING",
+    );
+    for (const leaked of [FAKE_KEY, "123456789012", "projects/", "ai.google.dev", "You exceeded"]) {
+      expect(error.upstreamDetail).not.toContain(leaked);
+    }
+  });
+
+  it("404 응답: 신규 사용자 제한 문구는 힌트 토큰으로만 남는다", async () => {
+    const body = {
+      error: { code: 404, message: "This model models/gemini-test-old is no longer available to new users. Please update your code to use a newer model.", status: "NOT_FOUND" },
+    };
+    const { fn } = fakeFetch([json(body, 404)]);
+    const error = (await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-old", noop).catch((e: unknown) => e)) as GeminiCallError;
+    expect(error).toMatchObject({ kind: "MODEL_NOT_FOUND", upstreamDetail: "status=NOT_FOUND; hint=MODEL_RESTRICTED_FOR_NEW_USERS" });
+  });
+
+  it("404 응답: 생성 미지원·API 버전 문구 힌트", async () => {
+    const body = { error: { code: 404, message: "models/gemini-x is not found for API version v1beta, or is not supported for generateContent.", status: "NOT_FOUND" } };
+    const { fn } = fakeFetch([json(body, 404)]);
+    const error = (await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-x", noop).catch((e: unknown) => e)) as GeminiCallError;
+    expect(error.upstreamDetail).toBe("status=NOT_FOUND; hint=NOT_SUPPORTED_FOR_GENERATE_CONTENT,NOT_FOUND_FOR_API_VERSION");
+  });
+
+  it("형태가 다른 값(경로 주입, 비정상 지연값)은 버린다", async () => {
+    const body = {
+      error: {
+        code: 429,
+        message: "x",
+        status: "RESOURCE_EXHAUSTED",
+        details: [
+          { violations: [{ quotaId: "id with space; injected=1", quotaMetric: "not a metric", quotaValue: "-1", quotaDimensions: { model: "../etc" } }] },
+          { retryDelay: "soon" },
+        ],
+      },
+    };
+    const { fn } = fakeFetch([json(body, 429)]);
+    const error = (await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, noop).catch((e: unknown) => e)) as GeminiCallError;
+    expect(error.upstreamDetail).toBe("status=RESOURCE_EXHAUSTED");
+  });
+
   it("열거형 토큰이 아닌 값은 버린다", async () => {
     const odd = json({ error: { code: 404, message: "x", status: "not a token; injected=1", details: [{ reason: "lower_case" }] } }, 404);
     const { fn } = fakeFetch([odd]);

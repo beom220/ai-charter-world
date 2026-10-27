@@ -81,27 +81,72 @@ function errorText(error: ApiError): string {
   return error.message ?? "";
 }
 
-const SAFE_TOKEN = /^[A-Z][A-Z0-9_]{0,63}$/;
+// ── 진단용 안전 필드 (허용 목록) ─────────────────────────────
+// Google 오류 본문에서 원인 진단에 필요한 구조화 필드만 꺼낸다. 각 값은 정해진 형태일 때만 쓴다.
+// 버리는 것: error.message 원문, ErrorInfo.metadata(프로젝트 번호 등), Help 링크, 그 밖의 모든 필드.
+// message는 저장하지 않고, 알려진 문구가 있는지만 검사해 고정 토큰(hint)으로 바꾼다.
+
+const ENUM_TOKEN = /^[A-Z][A-Z0-9_]{0,63}$/; // status, reason
+const QUOTA_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/; // 예: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+const QUOTA_METRIC = /^[a-z0-9.-]+\/[a-z0-9_/-]{1,127}$/; // 예: generativelanguage.googleapis.com/generate_content_free_tier_requests
+const QUOTA_VALUE = /^\d{1,12}$/;
+const RETRY_DELAY = /^\d{1,6}(?:\.\d{1,9})?s$/;
+const MODEL_ID = /^[a-z0-9][a-z0-9.-]{0,99}$/;
+
+/** 메시지에서 감지할 알려진 문구 → 고정 토큰. 메시지 자체는 저장하지 않는다 */
+const MESSAGE_HINTS: [RegExp, string][] = [
+  [/no longer available to new users|available to users who have (?:actively )?used/i, "MODEL_RESTRICTED_FOR_NEW_USERS"],
+  [/not supported for generateContent/i, "NOT_SUPPORTED_FOR_GENERATE_CONTENT"],
+  [/is not found for API version/i, "NOT_FOUND_FOR_API_VERSION"],
+  [/\blimit:\s*0\b/i, "QUOTA_LIMIT_ZERO"],
+  [/free[ _]tier/i, "FREE_TIER"],
+  [/billing/i, "BILLING"],
+];
+
+type ErrorDetail = {
+  "@type"?: unknown;
+  reason?: unknown;
+  violations?: { quotaId?: unknown; quotaMetric?: unknown; quotaValue?: unknown; quotaDimensions?: { model?: unknown } }[];
+  retryDelay?: unknown;
+};
+
+const pick = (value: unknown, pattern: RegExp) => (typeof value === "string" && pattern.test(value) ? value : null);
 
 /**
- * Google 오류 본문에서 error.status와 ErrorInfo.reason만 꺼낸다. 둘 다 대문자 열거형 토큰일 때만 쓰고,
- * message 등 자유 문자열은 버린다 (요청 값·키가 섞일 수 있으므로).
+ * 예: "status=RESOURCE_EXHAUSTED; quotaId=GenerateRequestsPerDayPerProjectPerModel-FreeTier; quotaValue=0; quotaModel=gemini-x; retryDelay=37s; hint=QUOTA_LIMIT_ZERO,FREE_TIER"
+ * ApiRequestLog.errorMessage(500자)에 저장한다. 클라이언트로는 보내지 않는다.
  */
 export function safeUpstreamDetail(error: ApiError): string | null {
   const text = errorText(error);
   const start = text.indexOf("{");
   if (start < 0) return null;
+  let body: { error?: { status?: unknown; message?: unknown; details?: ErrorDetail[] } };
   try {
-    const body = JSON.parse(text.slice(start)) as { error?: { status?: unknown; details?: { reason?: unknown }[] } };
-    const parts: string[] = [];
-    const status = body.error?.status;
-    if (typeof status === "string" && SAFE_TOKEN.test(status)) parts.push(`status=${status}`);
-    const reason = body.error?.details?.find((d) => typeof d?.reason === "string")?.reason;
-    if (typeof reason === "string" && SAFE_TOKEN.test(reason)) parts.push(`reason=${reason}`);
-    return parts.length > 0 ? parts.join("; ") : null;
+    body = JSON.parse(text.slice(start));
   } catch {
     return null;
   }
+  const err = body.error;
+  if (!err) return null;
+  const details = Array.isArray(err.details) ? err.details : [];
+  const parts: string[] = [];
+  const add = (name: string, value: string | null) => value !== null && parts.push(`${name}=${value}`);
+
+  add("status", pick(err.status, ENUM_TOKEN));
+  add("reason", pick(details.find((d) => typeof d?.reason === "string")?.reason, ENUM_TOKEN));
+  const violation = details.flatMap((d) => (Array.isArray(d?.violations) ? d.violations : []))[0];
+  if (violation) {
+    add("quotaId", pick(violation.quotaId, QUOTA_ID));
+    add("quotaMetric", pick(violation.quotaMetric, QUOTA_METRIC));
+    add("quotaValue", pick(violation.quotaValue, QUOTA_VALUE));
+    add("quotaModel", pick(violation.quotaDimensions?.model, MODEL_ID));
+  }
+  add("retryDelay", pick(details.find((d) => typeof d?.retryDelay === "string")?.retryDelay, RETRY_DELAY));
+  if (typeof err.message === "string") {
+    const hints = MESSAGE_HINTS.filter(([re]) => re.test(err.message as string)).map(([, token]) => token);
+    if (hints.length > 0) parts.push(`hint=${hints.join(",")}`);
+  }
+  return parts.length > 0 ? parts.join("; ").slice(0, 500) : null;
 }
 
 /** SDK·네트워크 오류를 종류로 분류한다. 메시지는 분류에만 쓰고 저장·로그하지 않는다. */
