@@ -24,12 +24,12 @@ model User {
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @db.Timestamptz(3)
 
-  sessions           Session[]
-  accounts           Account[] // providerId = "google" 만 사용
-  providerConnection AiProviderConnection?
-  worlds             World[]
-  apiRequestLogs     ApiRequestLog[]
-  sseConnections     SseConnection[]
+  sessions            Session[]
+  accounts            Account[] // providerId = "google" 만 사용
+  providerConnections AiProviderConnection[] // 사용자당 Provider별 1개 (MVP: GEMINI)
+  worlds              World[]
+  apiRequestLogs      ApiRequestLog[]
+  sseConnections      SseConnection[]
 
   @@unique([email])
   @@map("user")
@@ -101,7 +101,7 @@ enum ConnectionStatus {
 
 model AiProviderConnection {
   id       String     @id @default(cuid())
-  userId   String     @unique // 사용자당 1개 (Gemini)
+  userId   String
   provider AiProvider @default(GEMINI)
 
   // 암호화된 키 (AES-256-GCM, AAD = userId:id)
@@ -133,6 +133,8 @@ model AiProviderConnection {
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   usageDaily     ApiUsageDaily[]
   apiRequestLogs ApiRequestLog[]
+
+  @@unique([userId, provider]) // 사용자당 Provider별 1개 (database.md §3.2)
 }
 
 model ApiUsageDaily {
