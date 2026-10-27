@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GEMINI_PROBE_MAX_OUTPUT_TOKENS } from "../../config/limits";
 import { assertNoMockProviderInProduction, MockInProductionError } from "@/server/llm";
-import { createGeminiSdkClient, GeminiCallError, type GeminiCallRecord, type GeminiModelInfo } from "@/server/llm/gemini/client";
+import { createGeminiSdkClient, GeminiCallError, type GeminiCallRecord, type GeminiModelInfo, type GeminiRequestMeter } from "@/server/llm/gemini/client";
 import { isSelectableGeminiModel, selectableModels } from "@/server/llm/gemini/models";
 
 // 실제 @google/genai SDK에 가짜 fetch를 주입해 검증한다. 네트워크·실제 키를 쓰지 않는다.
@@ -48,7 +48,16 @@ const MODELS_PAGE = {
   ],
 };
 
-const noop = () => {};
+/** 예약을 항상 허용하고 정산 결과를 버리는 meter */
+const noop: GeminiRequestMeter = async () => async () => {};
+
+/** 정산된 호출 기록을 records에 모으는 meter */
+const recordTo =
+  (records: GeminiCallRecord[]): GeminiRequestMeter =>
+  async () =>
+  async (r) => {
+    records.push(r);
+  };
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -83,7 +92,7 @@ describe("키 전달·요청 형태", () => {
       const client = createGeminiSdkClient({ fetch: fn });
       const records: GeminiCallRecord[] = [];
       for (const key of ["", "   ", "\t\n", "z".repeat(4097)]) {
-        await expect(client.listModels(key, (r) => records.push(r))).rejects.toMatchObject({ kind: "KEY_INVALID", local: true });
+        await expect(client.listModels(key, recordTo(records))).rejects.toMatchObject({ kind: "KEY_INVALID", local: true });
       }
       expect(calls).toHaveLength(0);
       expect(records).toHaveLength(0); // 외부 호출로 기록되지 않음
@@ -105,7 +114,7 @@ describe("키 전달·요청 형태", () => {
     // fakeFetch는 실제 fetch처럼 new Headers()에서 잘못된 헤더 값을 거부한다
     const { fn, calls } = fakeFetch([json(MODELS_PAGE)]);
     const records: GeminiCallRecord[] = [];
-    const error = await createGeminiSdkClient({ fetch: fn }).listModels("line1\nline2-key", (r) => records.push(r)).catch((e: unknown) => e);
+    const error = await createGeminiSdkClient({ fetch: fn }).listModels("line1\nline2-key", recordTo(records)).catch((e: unknown) => e);
     expect(error).toMatchObject({ kind: "KEY_INVALID", local: true });
     expect(calls).toHaveLength(0);
     expect(records).toMatchObject([{ sent: false, errorKind: "KEY_INVALID" }]);
@@ -120,7 +129,7 @@ describe("키 전달·요청 형태", () => {
       }),
     ]);
     const records: GeminiCallRecord[] = [];
-    const usage = await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", (r) => records.push(r));
+    const usage = await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", recordTo(records));
 
     expect(usage).toEqual({ inputTokens: 2, outputTokens: 1, thoughtTokens: 5 });
     expect(calls).toHaveLength(1);
@@ -191,7 +200,7 @@ describe("오류 응답에서 안전한 정보만 꺼낸다", () => {
     );
     const { fn } = fakeFetch([leaky]);
     const records: GeminiCallRecord[] = [];
-    const error = await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, (r) => records.push(r)).catch((e: unknown) => e);
+    const error = await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, recordTo(records)).catch((e: unknown) => e);
     expect(error).toMatchObject({ kind: "KEY_INVALID", upstreamDetail: "status=INVALID_ARGUMENT; reason=API_KEY_INVALID" });
     expect(records[0]!.upstreamDetail).toBe("status=INVALID_ARGUMENT; reason=API_KEY_INVALID");
     expect(JSON.stringify([error, records])).not.toContain(FAKE_KEY);
@@ -316,7 +325,7 @@ describe("probe 성공 기준: 완료 상태 STOP + 비어 있지 않은 텍스�
     it(`${label} → INCOMPLETE_RESPONSE, 사용량은 기록`, async () => {
       const { fn, calls } = fakeFetch([json(body)]);
       const records: GeminiCallRecord[] = [];
-      const error = await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", (r) => records.push(r)).catch((e: unknown) => e);
+      const error = await createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", recordTo(records)).catch((e: unknown) => e);
       expect(error).toMatchObject({ kind: "INCOMPLETE_RESPONSE", httpStatus: 200, upstreamDetail: detail });
       expect(calls).toHaveLength(1);
       expect(records).toMatchObject([
@@ -337,7 +346,7 @@ describe("모델 목록", () => {
   it("한 페이지면 HTTP 1회, 모델 정보를 정규화한다", async () => {
     const { fn, calls } = fakeFetch([json(MODELS_PAGE)]);
     const records: GeminiCallRecord[] = [];
-    const models = await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, (r) => records.push(r));
+    const models = await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, recordTo(records));
     expect(calls).toHaveLength(1);
     expect(records).toHaveLength(1);
     expect(models[0]).toEqual({
@@ -360,6 +369,53 @@ describe("모델 목록", () => {
   });
 });
 
+describe("요청 전 예약(meter) — Phase 3-3", () => {
+  const okProbe = json({ candidates: [{ content: { parts: [{ text: "pong" }], role: "model" }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1 } });
+
+  it("meter가 거부하면 HTTP 요청을 보내지 않는다", async () => {
+    const { fn, calls } = fakeFetch([okProbe]);
+    const refuse: GeminiRequestMeter = async () => {
+      throw new Error("한도 초과");
+    };
+    await expect(createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", refuse)).rejects.toThrow("한도 초과");
+    await expect(createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, refuse)).rejects.toThrow("한도 초과");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("HTTP 요청마다 예약 1회·정산 1회 (목록 여러 페이지 = 페이지 수만큼), 예약 후에 전송한다", async () => {
+    const page = (n: number) => json({ models: [{ name: `models/gemini-p${n}`, supportedGenerationMethods: ["generateContent"] }], nextPageToken: `t${n}` });
+    const { fn, calls } = fakeFetch([page(1), page(2), page(3)]);
+    const events: string[] = [];
+    const meter: GeminiRequestMeter = async (req) => {
+      events.push(`reserve:${req.operation}:${calls.length}`);
+      return async (r) => {
+        events.push(`settle:${r.httpStatus}:${calls.length}`);
+      };
+    };
+    await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, meter);
+    expect(events).toEqual(["reserve:models.list:0", "settle:200:1", "reserve:models.list:1", "settle:200:2", "reserve:models.list:2", "settle:200:3"]);
+  });
+
+  it("응답에 usageMetadata가 없으면 사용량을 0이 아닌 null로 기록한다", async () => {
+    const { fn } = fakeFetch([json({ candidates: [{ content: { parts: [{ text: "pong" }], role: "model" }, finishReason: "STOP" }] })]);
+    const records: GeminiCallRecord[] = [];
+    await expect(createGeminiSdkClient({ fetch: fn }).probeModel(FAKE_KEY, "gemini-test-flash", recordTo(records))).resolves.toBeNull();
+    expect(records).toMatchObject([{ httpStatus: 200, errorKind: null, usage: null }]);
+  });
+
+  it("429의 RetryInfo.retryDelay를 ms로 기록한다 (그 밖의 오류는 null)", async () => {
+    const quota = json({ error: { code: 429, message: "quota", status: "RESOURCE_EXHAUSTED", details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "1.5s" }] } }, 429);
+    const records: GeminiCallRecord[] = [];
+    const error = (await createGeminiSdkClient({ fetch: fakeFetch([quota]).fn }).probeModel(FAKE_KEY, "gemini-test-flash", recordTo(records)).catch((e: unknown) => e)) as GeminiCallError;
+    expect(error.retryAfterMs).toBe(1500);
+    expect(records).toMatchObject([{ httpStatus: 429, retryAfterMs: 1500 }]);
+
+    const records2: GeminiCallRecord[] = [];
+    await createGeminiSdkClient({ fetch: fakeFetch([apiError(503, "UNAVAILABLE")]).fn }).probeModel(FAKE_KEY, "gemini-test-flash", recordTo(records2)).catch(() => {});
+    expect(records2).toMatchObject([{ httpStatus: 503, retryAfterMs: null }]);
+  });
+});
+
 describe("오류 분류 — 자동 재시도 없음", () => {
   const cases: [string, () => Response, string][] = [
     ["400 API_KEY_INVALID", apiError(400, "INVALID_ARGUMENT", "API_KEY_INVALID", "API key not valid. Please pass a valid API key."), "KEY_INVALID"],
@@ -376,7 +432,7 @@ describe("오류 분류 — 자동 재시도 없음", () => {
     it(`${label} → ${kind}, HTTP 요청은 1회뿐`, async () => {
       const { fn, calls } = fakeFetch([response, json(MODELS_PAGE)]);
       const records: GeminiCallRecord[] = [];
-      const error = await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, (r) => records.push(r)).catch((e: unknown) => e);
+      const error = await createGeminiSdkClient({ fetch: fn }).listModels(FAKE_KEY, recordTo(records)).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(GeminiCallError);
       expect((error as GeminiCallError).kind).toBe(kind);
       expect(calls).toHaveLength(1);

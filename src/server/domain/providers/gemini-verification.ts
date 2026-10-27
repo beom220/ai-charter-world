@@ -1,4 +1,3 @@
-import { PROVIDER_CHECK_RATE_LIMIT } from "../../../../config/limits";
 import {
   connectionAad,
   decryptSecret,
@@ -8,14 +7,17 @@ import {
 import { prisma } from "@/server/db/client";
 import { AppError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
+import { ConnectionNotReadyError, KeyChangedError } from "@/server/engine/usage/errors";
+import { createUsageMeter } from "@/server/engine/usage/usage-guard";
 import { getGeminiKeyClient } from "@/server/llm";
-import { GeminiCallError, type GeminiCallRecord, type GeminiErrorKind, type GeminiKeyClient } from "@/server/llm/gemini/client";
+import { GeminiCallError, type GeminiErrorKind, type GeminiKeyClient, type GeminiRequestMeter } from "@/server/llm/gemini/client";
 import { isSelectableGeminiModel, selectableModels, type SelectableModel } from "@/server/llm/gemini/models";
 import { getGeminiConnection, type GeminiConnectionView } from "./gemini-connection";
 
 // Gemini 키 검증·모델 목록·모델 선택 (architecture.md §8.2). 런타임 독립.
 // - 외부 호출은 사용자가 명시적으로 요청한 경우에만 한다 (검증 / 목록 새로고침 / 모델 선택)
-// - 자동 재시도 없음. 호출마다 ApiRequestLog에 기록하고, 그 기록으로 사용자별 호출 한도를 건다
+// - 자동 재시도 없음. HTTP 요청마다 UsageGuard가 전송 직전에 예약하고(사용자별 호출 한도·일일 한도, DB 잠금으로 원자적),
+//   응답 후 ApiRequestLog·ApiUsageDaily에 정산한다 (Phase 3-3)
 // - 같은 연결·같은 키의 동시 요청은 하나의 외부 호출로 합친다 (중복 방어)
 // - 결과는 키 지문으로 펜싱한다: 호출 중 키가 교체되면 이전 키의 결과를 반영하지 않는다
 
@@ -56,22 +58,8 @@ export class GeminiRequestError extends AppError {
   }
 }
 
-export class ProviderRateLimitError extends AppError {
-  constructor(readonly retryAfterSeconds: number) {
-    super(429, "RATE_LIMITED", `Gemini 확인 요청이 너무 많습니다. ${retryAfterSeconds}초 후 다시 시도하세요.`);
-  }
-}
-
-export class ConnectionNotReadyError extends AppError {
-  constructor(code: "GEMINI_NOT_CONNECTED" | "GEMINI_NOT_VERIFIED" | "GEMINI_MODEL_NOT_SELECTED") {
-    const message = {
-      GEMINI_NOT_CONNECTED: "Gemini API 키가 등록되어 있지 않습니다.",
-      GEMINI_NOT_VERIFIED: "Gemini API 키를 먼저 검증하세요.",
-      GEMINI_MODEL_NOT_SELECTED: "사용할 Gemini 모델을 먼저 선택하세요.",
-    }[code];
-    super(409, code, message);
-  }
-}
+// 예약 단계 오류는 UsageGuard와 같은 클래스를 쓴다 (기존 import 경로 유지)
+export { ConnectionNotReadyError, ProviderRateLimitError } from "@/server/engine/usage/errors";
 
 /**
  * 모델 정보 조회(models.get)는 성공했지만 최소 생성 요청이 거부됨 (404·403·400).
@@ -87,53 +75,6 @@ export class UnsupportedModelError extends AppError {
   constructor() {
     super(422, "GEMINI_MODEL_NOT_SUPPORTED", "이 모델은 대화 생성에 사용할 수 없습니다. 목록에서 다른 모델을 선택하세요.");
   }
-}
-
-// ── 호출 기록과 한도 ─────────────────────────────
-
-/** 세계관·Run에 속하지 않는 호출 = 연결 관리용 호출 */
-const managementCalls = (userId: string, since: Date) => ({ userId, worldId: null, runId: null, createdAt: { gte: since } });
-
-async function assertWithinRateLimit(userId: AuthenticatedUserId, needed: number, now: Date): Promise<void> {
-  const since = new Date(now.getTime() - PROVIDER_CHECK_RATE_LIMIT.windowMs);
-  const recent = await prisma.apiRequestLog.findMany({
-    where: managementCalls(userId, since),
-    select: { createdAt: true },
-    orderBy: { createdAt: "asc" },
-  });
-  if (recent.length + needed <= PROVIDER_CHECK_RATE_LIMIT.maxCalls) return;
-  const freeAt = recent[recent.length + needed - PROVIDER_CHECK_RATE_LIMIT.maxCalls - 1]!.createdAt.getTime() + PROVIDER_CHECK_RATE_LIMIT.windowMs;
-  throw new ProviderRateLimitError(Math.max(1, Math.ceil((freeAt - now.getTime()) / 1000)));
-}
-
-/** Gemini로 실제 전송된 요청만 기록한다 (= 호출 한도 집계 단위). 로컬에서 거부된 시도는 제외. */
-async function writeCallLogs(userId: string, connectionId: string, records: GeminiCallRecord[]): Promise<void> {
-  const sent = records.filter((r) => r.sent);
-  if (sent.length === 0) return;
-  await prisma.apiRequestLog.createMany({
-    data: sent.map((r) => ({
-      userId,
-      connectionId,
-      model: r.model ?? `(${r.operation})`,
-      startedAt: r.startedAt,
-      latencyMs: r.latencyMs,
-      httpStatus: r.httpStatus,
-      // HTTP 200이지만 완료되지 않은 생성은 VALIDATION_ERROR (architecture.md §12)
-      outcome:
-        r.errorKind === null
-          ? "SUCCESS"
-          : r.errorKind === "INCOMPLETE_RESPONSE"
-            ? "VALIDATION_ERROR"
-            : r.errorKind === "NETWORK_ERROR" || (r.errorKind === "TIMEOUT" && r.httpStatus === null)
-              ? "NETWORK_ERROR"
-              : "HTTP_ERROR",
-      errorCode: r.errorKind,
-      errorMessage: r.upstreamDetail, // 안전한 열거형 토큰만 (safeUpstreamDetail)
-      inputTokens: r.usage?.inputTokens ?? null,
-      outputTokens: r.usage?.outputTokens ?? null,
-      thoughtTokens: r.usage?.thoughtTokens ?? null,
-    })),
-  });
 }
 
 // ── 키 로드와 동시 요청 병합 ─────────────────────
@@ -165,14 +106,17 @@ function singleFlight<T>(key: string, run: () => Promise<T>): Promise<T> {
   return promise;
 }
 
-/** 외부 호출을 실행하고, 성공·실패와 관계없이 호출 기록을 남긴다. */
-async function withCallLog<T>(userId: string, ctx: KeyContext, run: (onCall: (r: GeminiCallRecord) => void) => Promise<T>): Promise<T> {
-  const records: GeminiCallRecord[] = [];
-  try {
-    return await run((r) => records.push(r));
-  } finally {
-    await writeCallLogs(userId, ctx.connectionId, records);
-  }
+/**
+ * 연결 관리용 meter: 요청마다 전송 직전에 사용자당 호출 한도(10분 10회)·일일 한도를 원자적으로 예약하고,
+ * 응답 후 호출 기록과 일일 사용량에 정산한다. 서킷 브레이커는 적용하지 않는다(사용자가 직접 누른 요청).
+ * requiredCapacity: 작업 전체에 필요한 호출 수. 첫 요청 예약 때 그만큼 남아 있어야 진행한다.
+ */
+function managementMeter(userId: string, ctx: KeyContext, requiredCapacity: number, deps: Deps): GeminiRequestMeter {
+  return createUsageMeter(
+    { userId, connectionId: ctx.connectionId, keyFingerprint: ctx.fingerprint },
+    { kind: "MANAGEMENT", requiredCapacity },
+    { now: deps.now },
+  );
 }
 
 /** 키 지문이 그대로일 때만 상태를 바꾼다. 바뀌었으면 false (호출 중 키 교체). */
@@ -215,13 +159,15 @@ export async function verifyGeminiConnection(userId: AuthenticatedUserId, deps: 
   const ctx = await loadKey(userId, material);
   return singleFlight(`verify:${ctx.connectionId}:${ctx.fingerprint}`, async () => {
     const now = deps.now?.() ?? new Date();
-    await assertWithinRateLimit(userId, 1, now);
     const client = deps.client ?? getGeminiKeyClient();
 
     let models: SelectableModel[];
     try {
-      models = selectableModels(await withCallLog(userId, ctx, (onCall) => client.listModels(ctx.apiKey, onCall)));
+      models = selectableModels(await client.listModels(ctx.apiKey, managementMeter(userId, ctx, 1, deps)));
     } catch (error) {
+      if (error instanceof KeyChangedError) {
+        return { verification: { ok: false, code: "KEY_CHANGED", message: GEMINI_ERROR_MESSAGES.KEY_CHANGED }, connection: await currentView(userId), models: [], modelReselectRequired: false };
+      }
       if (!(error instanceof GeminiCallError)) throw error;
       await markFailure(ctx, error.kind);
       return {
@@ -254,11 +200,11 @@ export async function listGeminiModels(userId: AuthenticatedUserId, deps: Deps =
   const ctx = await loadKey(userId, material);
   if (ctx.status !== "ACTIVE") throw new ConnectionNotReadyError("GEMINI_NOT_VERIFIED");
   return singleFlight(`list:${ctx.connectionId}:${ctx.fingerprint}`, async () => {
-    await assertWithinRateLimit(userId, 1, deps.now?.() ?? new Date());
     const client = deps.client ?? getGeminiKeyClient();
     try {
-      return selectableModels(await withCallLog(userId, ctx, (onCall) => client.listModels(ctx.apiKey, onCall)));
+      return selectableModels(await client.listModels(ctx.apiKey, managementMeter(userId, ctx, 1, deps)));
     } catch (error) {
+      if (error instanceof KeyChangedError) throw new ConnectionNotReadyError("GEMINI_NOT_VERIFIED");
       if (!(error instanceof GeminiCallError)) throw error;
       await markFailure(ctx, error.kind);
       throw new GeminiRequestError(error.kind);
@@ -278,17 +224,17 @@ export async function selectGeminiModel(userId: AuthenticatedUserId, modelId: st
   const ctx = await loadKey(userId, material);
   if (ctx.status !== "ACTIVE") throw new ConnectionNotReadyError("GEMINI_NOT_VERIFIED");
   return singleFlight(`select:${ctx.connectionId}:${ctx.fingerprint}:${modelId}`, async () => {
-    await assertWithinRateLimit(userId, 2, deps.now?.() ?? new Date());
     const client = deps.client ?? getGeminiKeyClient();
+    // 조회 + 최소 생성 = 2회. 첫 예약 때 2회분이 남아 있어야 진행한다 (조회만 하고 생성 직전에 막히는 것을 피함)
+    const meter = managementMeter(userId, ctx, 2, deps);
     const progress: { stage: "get" | "probe" } = { stage: "get" };
     try {
-      await withCallLog(userId, ctx, async (onCall) => {
-        const info = await client.getModel(ctx.apiKey, modelId, onCall);
-        if (!isSelectableGeminiModel(info)) throw new UnsupportedModelError();
-        progress.stage = "probe";
-        await client.probeModel(ctx.apiKey, modelId, onCall);
-      });
+      const info = await client.getModel(ctx.apiKey, modelId, meter);
+      if (!isSelectableGeminiModel(info)) throw new UnsupportedModelError();
+      progress.stage = "probe";
+      await client.probeModel(ctx.apiKey, modelId, meter);
     } catch (error) {
+      if (error instanceof KeyChangedError) throw new ConnectionNotReadyError("GEMINI_NOT_VERIFIED");
       if (!(error instanceof GeminiCallError)) throw error;
       // 키 자체가 무효로 판정된 경우에만 연결을 INVALID로 바꾼다. 403 등은 모델 단위 문제일 수 있어 연결 상태를 유지한다
       if (error.kind === "KEY_INVALID") await markFailure(ctx, error.kind);

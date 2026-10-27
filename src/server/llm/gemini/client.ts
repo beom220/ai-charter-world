@@ -18,6 +18,7 @@ import {
 //     → probe에서 automaticContinuation: false로 끈다
 //   · 자동 함수 호출(AFC)은 도구가 있을 때만 반복한다 → 도구를 쓰지 않고 disable: true로 명시한다
 // - 오류는 종류(kind)로만 분류하고, SDK 오류 메시지(응답 본문)는 밖으로 내보내지 않는다
+// - HTTP 요청마다 보내기 직전에 meter(사용량 예약)를 거친다. meter가 거부하면 요청을 보내지 않는다 (Phase 3-3)
 
 export type GeminiModelInfo = {
   /** SDK·API에 넘기는 모델 ID (예: "models/" 접두사를 뗀 값) */
@@ -32,17 +33,23 @@ export type GeminiModelInfo = {
 
 export type GeminiUsage = { inputTokens: number | null; outputTokens: number | null; thoughtTokens: number | null };
 
+export type GeminiOperation = "models.list" | "models.get" | "models.generateContent";
+
+/** 보내려는 요청 1건 (예약 시점에 아는 정보) */
+export type GeminiRequestInfo = { operation: GeminiOperation; model: string | null };
+
 /** 외부 호출 1건의 결과. 호출 기록(ApiRequestLog)에 쓴다. */
-export type GeminiCallRecord = {
-  operation: "models.list" | "models.get" | "models.generateContent";
-  model: string | null;
+export type GeminiCallRecord = GeminiRequestInfo & {
   startedAt: Date;
   latencyMs: number;
   httpStatus: number | null;
   errorKind: GeminiErrorKind | null;
   /** Google 오류 응답에서 꺼낸 안전한 열거형 토큰만 (예: "status=NOT_FOUND; reason=API_KEY_INVALID") */
   upstreamDetail: string | null;
+  /** 응답의 usageMetadata. 응답이 없거나 usageMetadata가 없으면 null (0으로 단정하지 않는다) */
   usage: GeminiUsage | null;
+  /** 오류 응답의 RetryInfo.retryDelay (ms). 없으면 null */
+  retryAfterMs: number | null;
   /** 요청이 실제로 Gemini로 나갔는지. 로컬에서 거부된 시도(전송 불가 키)는 false — 외부 호출로 집계하지 않는다 */
   sent: boolean;
 };
@@ -68,18 +75,26 @@ export class GeminiCallError extends Error {
     readonly local = false,
     /** 응답은 받았지만 실패로 판정된 경우의 사용량 (INCOMPLETE_RESPONSE) */
     readonly usage: GeminiUsage | null = null,
+    /** 오류 응답의 RetryInfo.retryDelay (ms) */
+    readonly retryAfterMs: number | null = null,
   ) {
     super(`Gemini 호출 실패: ${kind}`);
     this.name = "GeminiCallError";
   }
 }
 
+/**
+ * HTTP 요청 1건을 보내기 직전에 호출된다 (사용량 예약, 한도·백오프 검사). 거부하려면 throw한다 → 요청을 보내지 않는다.
+ * 반환한 함수는 요청이 끝난 뒤(성공·실패) 결과와 함께 한 번 호출된다 (정산). 정산은 throw하지 않아야 한다.
+ */
+export type GeminiRequestMeter = (request: GeminiRequestInfo) => Promise<(record: GeminiCallRecord) => Promise<void>>;
+
 /** 키를 받는 쪽(서비스)이 한 번의 사용 동안만 키를 쥐도록, 키는 메서드 인자로만 받는다. */
 export interface GeminiKeyClient {
-  listModels(apiKey: string, onCall: (record: GeminiCallRecord) => void): Promise<GeminiModelInfo[]>;
-  getModel(apiKey: string, modelId: string, onCall: (record: GeminiCallRecord) => void): Promise<GeminiModelInfo>;
-  /** 최소 생성 요청으로 실제 사용 가능 여부를 확인한다 (출력 토큰 상한 GEMINI_PROBE_MAX_OUTPUT_TOKENS) */
-  probeModel(apiKey: string, modelId: string, onCall: (record: GeminiCallRecord) => void): Promise<GeminiUsage>;
+  listModels(apiKey: string, meter: GeminiRequestMeter): Promise<GeminiModelInfo[]>;
+  getModel(apiKey: string, modelId: string, meter: GeminiRequestMeter): Promise<GeminiModelInfo>;
+  /** 최소 생성 요청으로 실제 사용 가능 여부를 확인한다 (출력 토큰 상한 GEMINI_PROBE_MAX_OUTPUT_TOKENS). 사용량이 없으면 null */
+  probeModel(apiKey: string, modelId: string, meter: GeminiRequestMeter): Promise<GeminiUsage | null>;
 }
 
 function errorText(error: ApiError): string {
@@ -154,13 +169,19 @@ export function safeUpstreamDetail(error: ApiError): string | null {
   return parts.length > 0 ? parts.join("; ").slice(0, 500) : null;
 }
 
+/** RetryInfo.retryDelay("37s", "1.5s")를 ms로. 형태가 다르면 null */
+export function retryDelayMs(error: ApiError): number | null {
+  const match = /(?:^|; )retryDelay=(\d{1,6}(?:\.\d{1,9})?)s(?:;|$)/.exec(safeUpstreamDetail(error) ?? "");
+  return match ? Math.round(Number(match[1]) * 1000) : null;
+}
+
 /** SDK·네트워크 오류를 종류로 분류한다. 메시지는 분류에만 쓰고 저장·로그하지 않는다. */
 export function classifyGeminiError(error: unknown): GeminiCallError {
   if (error instanceof GeminiCallError) return error;
   if (error instanceof ApiError) {
     const status = error.status;
     const detail = safeUpstreamDetail(error);
-    const make = (kind: GeminiErrorKind) => new GeminiCallError(kind, status, detail);
+    const make = (kind: GeminiErrorKind) => new GeminiCallError(kind, status, detail, false, null, status === 429 ? retryDelayMs(error) : null);
     if (status === 400 && /API_KEY_INVALID|API key not valid|API_KEY_EXPIRED/i.test(errorText(error))) return make("KEY_INVALID");
     if (status === 401) return make("KEY_INVALID");
     if (status === 403) return make("PERMISSION_DENIED");
@@ -178,11 +199,22 @@ export function classifyGeminiError(error: unknown): GeminiCallError {
   return new GeminiCallError("NETWORK_ERROR", null);
 }
 
+/** 응답의 토큰 사용량. usageMetadata가 없거나 토큰 수가 하나도 없으면 null (사용량 미반환 — 0으로 단정하지 않는다) */
+export function usageOf(res: GenerateContentResponse): GeminiUsage | null {
+  const meta = res.usageMetadata;
+  const usage: GeminiUsage = {
+    inputTokens: meta?.promptTokenCount ?? null,
+    outputTokens: meta?.candidatesTokenCount ?? null,
+    thoughtTokens: meta?.thoughtsTokenCount ?? null,
+  };
+  return usage.inputTokens === null && usage.outputTokens === null && usage.thoughtTokens === null ? null : usage;
+}
+
 /**
  * 모델 확인 성공 기준: HTTP 200만으로는 부족하다. 완료 상태가 STOP이고 비어 있지 않은 텍스트가 있어야 한다.
  * 출력 예산 부족(MAX_TOKENS), 안전 차단, 빈 텍스트는 INCOMPLETE_RESPONSE (사용량은 기록한다).
  */
-function assertCompletedGeneration(res: GenerateContentResponse, usage: GeminiUsage): void {
+function assertCompletedGeneration(res: GenerateContentResponse, usage: GeminiUsage | null): void {
   const candidate = res.candidates?.[0];
   const finishReason = candidate?.finishReason;
   const text = (candidate?.content?.parts ?? [])
@@ -230,26 +262,29 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
   };
 
   async function call<T>(
-    record: Pick<GeminiCallRecord, "operation" | "model">,
-    onCall: (r: GeminiCallRecord) => void,
-    run: () => Promise<{ value: T; usage?: GeminiUsage }>,
+    request: GeminiRequestInfo,
+    meter: GeminiRequestMeter,
+    run: () => Promise<{ value: T; usage?: GeminiUsage | null }>,
   ): Promise<T> {
+    // 예약이 거부되면 여기서 throw → 요청을 보내지 않는다
+    const settle = await meter(request);
     const startedAt = new Date();
     const t0 = performance.now();
     try {
       const { value, usage } = await run();
-      onCall({ ...record, startedAt, latencyMs: Math.round(performance.now() - t0), httpStatus: 200, errorKind: null, upstreamDetail: null, usage: usage ?? null, sent: true });
+      await settle({ ...request, startedAt, latencyMs: Math.round(performance.now() - t0), httpStatus: 200, errorKind: null, upstreamDetail: null, usage: usage ?? null, retryAfterMs: null, sent: true });
       return value;
     } catch (error) {
       const classified = classifyGeminiError(error);
-      onCall({
-        ...record,
+      await settle({
+        ...request,
         startedAt,
         latencyMs: Math.round(performance.now() - t0),
         httpStatus: classified.httpStatus,
         errorKind: classified.kind,
         upstreamDetail: classified.upstreamDetail,
         usage: classified.usage,
+        retryAfterMs: classified.retryAfterMs,
         sent: !classified.local,
       });
       throw classified;
@@ -257,11 +292,11 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
   }
 
   return {
-    async listModels(apiKey, onCall) {
+    async listModels(apiKey, meter) {
       const ai = sdk(apiKey, GEMINI_METADATA_TIMEOUT_MS);
       const models: GeminiModelInfo[] = [];
       // 페이지마다 HTTP 요청 1건. 첫 페이지는 list(), 다음 페이지는 nextPage()
-      const pager = await call({ operation: "models.list", model: null }, onCall, async () => ({
+      const pager = await call({ operation: "models.list", model: null }, meter, async () => ({
         value: await ai.models.list({ config: { pageSize: GEMINI_MODEL_LIST_PAGE_SIZE } }),
       }));
       for (let page = 1; ; page++) {
@@ -271,14 +306,14 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
         }
         if (!pager.hasNextPage() || page >= GEMINI_MODEL_LIST_MAX_PAGES) break;
         const current = pager;
-        await call({ operation: "models.list", model: null }, onCall, async () => ({ value: await current.nextPage() }));
+        await call({ operation: "models.list", model: null }, meter, async () => ({ value: await current.nextPage() }));
       }
       return models;
     },
 
-    async getModel(apiKey, modelId, onCall) {
+    async getModel(apiKey, modelId, meter) {
       const ai = sdk(apiKey, GEMINI_METADATA_TIMEOUT_MS);
-      const model = await call({ operation: "models.get", model: modelId }, onCall, async () => ({
+      const model = await call({ operation: "models.get", model: modelId }, meter, async () => ({
         value: await ai.models.get({ model: modelId }),
       }));
       const info = toModelInfo(model);
@@ -286,9 +321,9 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
       return info;
     },
 
-    async probeModel(apiKey, modelId, onCall) {
+    async probeModel(apiKey, modelId, meter) {
       const ai = sdk(apiKey, GEMINI_PROBE_TIMEOUT_MS);
-      return call({ operation: "models.generateContent", model: modelId }, onCall, async () => {
+      return call({ operation: "models.generateContent", model: modelId }, meter, async () => {
         const res = await ai.models.generateContent({
           model: modelId,
           contents: "ping",
@@ -300,11 +335,7 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
             ...probeThinkingConfig(modelId), // 지원이 확인된 모델에만 사고 수준을 지정한다
           },
         });
-        const usage: GeminiUsage = {
-          inputTokens: res.usageMetadata?.promptTokenCount ?? null,
-          outputTokens: res.usageMetadata?.candidatesTokenCount ?? null,
-          thoughtTokens: res.usageMetadata?.thoughtsTokenCount ?? null,
-        };
+        const usage = usageOf(res);
         assertCompletedGeneration(res, usage);
         return { value: usage, usage };
       });

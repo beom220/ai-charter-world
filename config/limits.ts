@@ -22,3 +22,29 @@ export const GEMINI_PROBE_MAX_OUTPUT_TOKENS = 128;
 /** 모델 목록 페이지 크기와 최대 페이지 수 (보통 1회 호출로 끝난다) */
 export const GEMINI_MODEL_LIST_PAGE_SIZE = 1000;
 export const GEMINI_MODEL_LIST_MAX_PAGES = 3;
+
+// ── 연결 단위 백오프·서킷 브레이커 (Phase 3-3, architecture.md §8.3) ──
+
+/** 지수 백오프: 기본 5초에서 두 배씩, 최대 5분 */
+export const BREAKER_BACKOFF_BASE_MS = 5_000;
+export const BREAKER_BACKOFF_MAX_MS = 5 * 60 * 1000;
+
+/** 5xx·네트워크·시간 초과는 연속 3회 실패부터 백오프한다 */
+export const BREAKER_TRANSIENT_FAILURE_THRESHOLD = 3;
+
+/** 429 응답의 RetryInfo(retryDelay)를 우선하되, 비정상적으로 긴 값은 이 값으로 자른다 */
+export const BREAKER_RETRY_AFTER_MAX_MS = 60 * 60 * 1000;
+
+/**
+ * 백오프가 끝난 뒤 첫 요청 1건만 시험 삼아 보낸다(half-open). 그 요청이 끝날 때까지 다른 요청은 기다린다.
+ * 정산되지 않으면(프로세스 종료 등) 이 시간이 지나 자동으로 풀린다. 생성 요청 타임아웃(60초)과 같게 둔다.
+ */
+export const BREAKER_HALF_OPEN_HOLD_MS = 60_000;
+
+// ── 사용량 예약 (Phase 3-3, architecture.md §8.3) ──
+
+/**
+ * 예약(PENDING) 후 이 시간이 지나도 정산되지 않은 호출은 결과를 잃은 것으로 본다(프로세스 종료 등).
+ * 요청 타임아웃(최대 60초)보다 충분히 길게 둔다. 같은 연결의 다음 예약 때 정리한다.
+ */
+export const USAGE_PENDING_STALE_MS = 5 * 60 * 1000;
