@@ -143,7 +143,10 @@ src/
       settings/providers/
     api/
       auth/[...all]/route.ts       # Better Auth 핸들러
-      providers/gemini/route.ts    # GET 상태, PUT 등록·교체, DELETE 삭제 (Phase 3-1). 키 검증·모델 설정은 Phase 3-2
+      providers/gemini/route.ts    # GET 상태, PUT 등록·교체, DELETE 삭제 (Phase 3-1)
+      providers/gemini/verify/     # POST 키 검증 (Phase 3-2)
+      providers/gemini/models/     # GET 모델 목록 새로고침 (Phase 3-2)
+      providers/gemini/model/      # PUT 기본 모델 선택 (Phase 3-2)
       worlds/[worldId]/
         simulation/{start,pause,resume,stop}/route.ts   # POST
         simulation/state/route.ts                       # GET
@@ -315,7 +318,8 @@ SimulationRunner.tick()
   - `maxOutputTokens` 상한
   - thinking 예산은 낮게 설정(비용 통제)
   - `AbortSignal`과 요청 타임아웃(기본 60초)
-  - 정확한 SDK 옵션명(`responseSchema`·`responseJsonSchema`, thinking 설정)과 SDK 자동 재시도 비활성화 여부는 Phase 3 스파이크에서 확정한다.
+  - 정확한 SDK 옵션명(`responseSchema`·`responseJsonSchema`, thinking 설정)은 Phase 3 스파이크에서 확정한다.
+  - **자동 반복 요청 금지 (Phase 3-2 확인, `@google/genai` 2.31.0)**: `httpOptions.retryOptions`를 지정하지 않는다(지정하지 않으면 재시도 없음). `generateContent`는 automatic continuation이 **기본으로 켜져 있어** 응답의 `continuationToken`마다 요청을 반복하므로, 모든 생성 요청에 `automaticContinuation: false`를 넣는다. 자동 함수 호출은 `automaticFunctionCalling: { disable: true }`로 끈다(§8.2).
 
 **출력 스키마 v1 (LLM이 반환하는 형식)**
 
@@ -570,7 +574,7 @@ export interface RunnerHost {
 | 환경변수 | `PROVIDER_KEY_ENCRYPTION_KEY`(엄격한 base64, 디코딩하면 정확히 32바이트), `KEY_FINGERPRINT_SECRET`(32자 이상). 첫 사용 시 검증하며, 누락·형식 오류는 `CryptoConfigError`(변수 이름만) |
 | 서비스 | `server/domain/providers/gemini-connection.ts`: `getGeminiConnection`, `saveGeminiApiKey`(등록·교체), `deleteGeminiConnection`, `decryptGeminiApiKey`(LLM 호출 직전 전용) |
 | 반환 DTO | `provider, status, keyLast4, defaultModel, lastVerifiedAt, lastErrorCode, dailyRequestLimit, dailyTokenLimit, blockedUntil, createdAt, updatedAt`만 Prisma `select`로 고른다 |
-| 입력 검증 | `lib/schemas/provider.ts`(Zod): `apiKey`는 `AIza` + 35자, 앞뒤 공백 제거, 다른 필드는 버림. 오류 메시지에 입력값 미포함 |
+| 입력 검증 | `lib/schemas/provider.ts`(Zod) `isAcceptableGeminiApiKey`: **키 형식을 앱이 정의하지 않는다**(Phase 3-2 확정). 접두사(`AIza`·`AQ.` 등)·정확한 길이·문자 집합을 검사하지 않고 값을 trim·보정하지 않는다. 비어 있거나 공백만 있는 값과 4096자 초과만 거부한다. 서버 SDK 생성 전 검사도 같은 함수를 쓴다(빈 키를 넘기면 SDK가 `GOOGLE_API_KEY`·`GEMINI_API_KEY` 환경변수로 대체하므로 반드시 막는다). 실제 유효성은 Gemini 응답으로 판단한다. 배경: Google이 `AIza…`에서 `AQ.…` 형식으로 바꾸는 중이며 공식 형식 명세가 없다 |
 | CSRF | PUT·DELETE는 `Origin`이 `BETTER_AUTH_URL`의 origin과 같아야 한다(`server/auth/request.ts`). 아니면 403 |
 | 오류·로그 | `app/api/_lib/http.ts`가 오류를 상태 코드로 바꾼다(400/401/403/500). 모든 응답은 `Cache-Control: no-store`. 예상하지 못한 오류는 이름·코드만 기록한다(`server/logging/log.ts`) |
 
@@ -588,7 +592,46 @@ export interface RunnerHost {
 
 ### 8.2 키 검증
 
-> Phase 3-1에서는 외부 검증 호출을 하지 않는다. 등록·교체된 연결은 `UNVERIFIED`이고, 아래 검증은 Phase 3-2에서 구현한다.
+**Phase 3-2 구현** — `server/llm/gemini/client.ts`(SDK 래퍼), `server/llm/gemini/models.ts`(모델 필터), `server/domain/providers/gemini-verification.ts`(서비스), `app/settings/providers/`(최소 설정 화면)
+
+| API | 외부 호출 | 동작 |
+|---|---|---|
+| `POST /api/providers/gemini/verify` | `models.list` 1회(페이지가 더 있으면 최대 3회) | 성공 → `ACTIVE`, `lastVerifiedAt`. 기존 `defaultModel`이 목록에 없으면 비우고 `modelReselectRequired: true`. 키 오류(`KEY_INVALID`·`PERMISSION_DENIED`) → `INVALID`. 그 밖의 오류 → 상태 유지, `lastErrorCode`만 기록. 응답 200 `{ verification, connection, models, modelReselectRequired }` |
+| `GET /api/providers/gemini/models` | `models.list` 1회 | `ACTIVE` 연결만. 목록 새로고침 |
+| `PUT /api/providers/gemini/model` `{ model }` | `models.get` 1회 + 최소 `generateContent` 1회 | `ACTIVE` 연결만. 대화 생성 지원 확인 후 최소 생성 요청(`"ping"`, 출력 16토큰 이하)이 **성공했을 때만** `defaultModel`을 저장한다 |
+
+- **외부 호출은 사용자가 버튼을 누를 때만** 한다. 화면을 열 때 자동 검증·자동 모델 확인을 하지 않고, 일괄 생성 검사도 하지 않는다.
+- **모델 표시**: Gemini 계열(`gemini-`), `generateContent` 지원, TTS·이미지·오디오·실시간·임베딩 제외 필터를 통과한 모델을 모두 보여 준다. 정식 모델을 먼저, 미리보기를 뒤에 둔다. 목록에 있다고 생성 가능하다고 표시하지 않는다(실연동에서 목록·`models.get`은 성공하고 생성만 404·429인 모델 확인).
+- **모델 검증 결과는 저장하지 않는다**: 모델별 결과 테이블·컬럼은 두지 않고, 연결 상태와 `defaultModel`만 쓴다. 이번 화면에서 실패한 모델은 화면 상태로만 표시한다.
+- **키 교체**: `UNVERIFIED`로 돌아가 재검증 전에는 기존 `defaultModel`을 쓸 수 없다(`requireUsableGeminiConnection`). 재검증 시 기존 모델이 새 키의 목록에 없으면 비우고 재선택을 안내한다. 목록에 있으면 유지하지만, 새 키로 생성 가능한지는 자동으로 확인하지 않는다(자동 생성 요청 금지). 생성 실패는 이후 실제 호출에서 드러난다.
+- **지문 펜싱**: 결과는 `keyFingerprint`가 호출 시작 때와 같을 때만 반영한다. 호출 중 키가 바뀌면 `KEY_CHANGED`로 버린다.
+- **중복 방어**: 같은 연결·같은 키·같은 작업의 동시 요청은 프로세스 안에서 외부 호출 1회로 합친다(single-flight).
+- **호출 한도**: 사용자당 **10분 10회**(`config/limits.ts` `PROVIDER_CHECK_RATE_LIMIT`).
+  - 집계 단위는 **Gemini로 실제 전송된 HTTP 요청**이다(엔드포인트 요청 수가 아님). `ApiRequestLog` 중 `worldId`·`runId`가 없는 행(= 연결 관리용 호출)을 센다.
+  - `models.list` 페이지 1개 = 1회, `models.get` = 1회, 최소 `generateContent` = 1회. 성공·실패 모두 센다. 로컬에서 거부되어 전송되지 않은 시도(빈 키·헤더 불가 문자)는 세지 않는다.
+  - 외부 호출 **전에** 검사한다: 검증·목록은 1회분, 모델 선택은 2회분의 여유가 있어야 진행하고, 없으면 429 `RATE_LIMITED` + `Retry-After`(외부 호출 없음).
+  - 알려진 한계: ① 목록에 다음 페이지가 있으면 사전 검사(1회분)보다 최대 2회 더 쓸 수 있다. ② 같은 사용자의 서로 다른 작업이 동시에 들어오면 둘 다 검사를 통과할 수 있다. ③ single-flight는 프로세스 단위다(Worker·다중 인스턴스에서는 DB 한도만 적용).
+- **자동 반복 요청 없음**: §6.5. 앱은 실패한 Gemini 호출을 재시도하지 않는다.
+
+**오류 코드와 사용자 메시지** (응답 본문은 저장·반환하지 않는다. `ApiRequestLog.errorMessage`에는 Google 오류의 `status`·`reason` 열거형 토큰만 남긴다)
+
+| 상황 | 코드 (HTTP) | 연결 상태 | 메시지 요지 |
+|---|---|---|---|
+| 400 `API_KEY_INVALID`, 401, 헤더로 보낼 수 없는 키 | `KEY_INVALID` (검증: 200 ok:false / 선택: 422) | INVALID | API 키가 유효하지 않음, 확인 후 재등록 |
+| 403 (검증 단계) | `PERMISSION_DENIED` | INVALID | 권한·지역 제한, AI Studio 설정 확인 |
+| 429 | `GEMINI_QUOTA_EXCEEDED` (429) | 유지 | 할당량 제한으로 거부. 일시적인지 할당량 부재인지 단정하지 않고 "나중에 다시 시도하거나 다른 모델 선택" 안내 |
+| `models.get` 404 | `GEMINI_MODEL_NOT_FOUND` (422) | 유지 | 모델을 찾을 수 없음, 목록 새로고침 후 다른 모델 선택 |
+| `models.get` 성공 후 생성 요청 404·403·400 | `GEMINI_MODEL_UNAVAILABLE` (422) | 유지 | 이 모델로 생성 요청을 보낼 수 없었음. 원인을 단정하지 않고 다른 모델 선택 또는 재시도 안내. 구분 근거 = 실패한 단계(조회 vs 생성) |
+| 대화 생성 미지원 모델 | `GEMINI_MODEL_NOT_SUPPORTED` (422) | 유지 | 생성 요청을 보내지 않음 |
+| 5xx | `GEMINI_UPSTREAM_ERROR` (502) | 유지 | 일시적 오류, 잠시 후 재시도 |
+| 네트워크·시간 초과 | `GEMINI_NETWORK_ERROR`·`GEMINI_TIMEOUT` (504) | 유지 | 연결 실패·지연 |
+| 미검증 연결에서 목록·선택 | `GEMINI_NOT_VERIFIED` (409) | — | 먼저 검증 |
+| 호출 한도 초과 | `RATE_LIMITED` (429, `Retry-After`) | — | N초 후 다시 시도 |
+
+- `requireUsableGeminiConnection(userId)`: 이후 모든 Gemini 생성 호출의 관문이다. 연결 없음(`GEMINI_NOT_CONNECTED`), 미검증(`GEMINI_NOT_VERIFIED`), 모델 미선택(`GEMINI_MODEL_NOT_SELECTED`)이면 409로 막는다.
+- MockProvider: `LLM_PROVIDER=mock`이고 `NODE_ENV !== "production"`일 때만 쓴다. 프로덕션에서 mock 설정이면 `instrumentation.ts`가 부팅을 실패시킨다.
+
+**설계 단계의 원래 계획**
 
 - 등록·교체 시 가벼운 호출(모델 목록 조회 등, Phase 3 확정)로 검증한다.
 - 결과를 `ACTIVE` / `INVALID`로 저장하고, 오류를 사용자가 이해할 수 있는 메시지로 바꾼다:

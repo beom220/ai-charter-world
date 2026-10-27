@@ -27,6 +27,7 @@
 5. **LLM 출력은 제안일 뿐이다.** Zod와 도메인 검증을 통과한 결과만 반영한다. 관계·감정 수치 초과는 clamp, 구조 오류·잘못된 참조는 장면 실패로 처리한다.
 6. **장면 = 트랜잭션.** 장면 결과는 `GameState` 행 잠금, `stateVersion` 펜싱, `attemptId` 멱등성을 갖춘 단일 트랜잭션으로만 커밋한다. 실패한 장면은 어떤 확정 상태도 바꾸지 않는다.
 7. **실패한 장면은 자동 재시도하지 않는다.** 실패는 건너뛰고 실행을 유지한다. 반복 실패는 키 단위 서킷 브레이커로 억제한다.
+   - `@google/genai`는 `httpOptions.retryOptions`를 지정하지 않는다. `generateContent`에는 반드시 `automaticContinuation: false`(SDK 기본값 true는 요청을 반복함)와 `automaticFunctionCalling: { disable: true }`를 넣는다(architecture.md §6.5).
 8. **세계관당 활성 캐릭터는 최대 6명**, 캐릭터 컨텍스트는 **300 코드 포인트**까지다. 클라이언트와 서버 양쪽에서 검증한다.
 9. **엔진 경계를 지킨다.** `src/server/engine`, `src/server/llm`, `src/server/events`는 `next/*`·`src/app/*`를 import하지 않는다. Worker로 분리할 수 있어야 한다.
    - `server-only`는 **Next.js 전용 서버 어댑터(`src/server/auth/`)에만** 쓴다. engine·llm·events·db·domain·crypto·logging은 실행 환경에 독립적으로 두고 `server-only`·`next/*`·`src/server/auth`를 import하지 않는다(architecture.md §5.1).

@@ -169,6 +169,8 @@ model ApiUsageDaily {
 ```
 
 - **`defaultModel` nullable (Phase 3-1 결정, 마이그레이션 `20261027120000_default_model_nullable`)**: 최초 키 등록 시 NULL로 저장하고 임의의 모델명을 넣지 않는다(A17). Phase 3-2에서 실제 Gemini 모델 목록을 확인해 사용자가 고른다. **`defaultModel`이 NULL인 연결은 Gemini 호출·시뮬레이션 실행 대상으로 쓰지 않는다**(Phase 3-2 이후 실행 전 검사에서 거부). 키 교체 시 기존 값은 유지한다.
+  - **Phase 3-2 확정**: `defaultModel`은 사용자가 고른 모델에 대한 최소 생성 요청이 **성공했을 때만** 저장한다. 모델별 검증 결과를 저장하는 테이블·컬럼은 두지 않는다. 사용 가능 여부는 `status = ACTIVE` + `defaultModel IS NOT NULL`로만 판단한다(`requireUsableGeminiConnection`). 키 교체 후에는 `UNVERIFIED`라서 재검증 전까지 기존 `defaultModel`을 쓸 수 없다. 재검증 때 새 키의 모델 목록에 없으면 NULL로 비운다.
+  - `ApiRequestLog`: 연결 관리용 호출(검증·목록·모델 확인)은 `worldId`·`runId` 없이 기록한다. `model`은 모델 ID 또는 `(models.list)`이다. `errorMessage`에는 Google 오류의 `status`·`reason` 열거형 토큰만 저장한다. 이 행 수가 사용자별 호출 한도(10분 10회)의 집계 기준이다.
 - **키 저장 구현 (Phase 3-1)**: `src/server/crypto/provider-key-crypto.ts`(AES-256-GCM)와 `src/server/domain/providers/gemini-connection.ts`.
   - 연결 id는 암호화 AAD(`userId:id`)에 쓰이므로 앱이 먼저 만든다(UUID). 교체 시 같은 행·같은 id를 유지한다.
   - `keyLast4` = 원문 끝 4자, `encryptionKeyVersion` = 1.
