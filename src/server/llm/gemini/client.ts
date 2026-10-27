@@ -95,7 +95,23 @@ export interface GeminiKeyClient {
   getModel(apiKey: string, modelId: string, meter: GeminiRequestMeter): Promise<GeminiModelInfo>;
   /** 최소 생성 요청으로 실제 사용 가능 여부를 확인한다 (출력 토큰 상한 GEMINI_PROBE_MAX_OUTPUT_TOKENS). 사용량이 없으면 null */
   probeModel(apiKey: string, modelId: string, meter: GeminiRequestMeter): Promise<GeminiUsage | null>;
+  /** 구조화(JSON) 생성 요청 1회. 완료되지 않은 응답은 INCOMPLETE_RESPONSE. 반환 텍스트는 아직 검증 전이다 */
+  generateJson(apiKey: string, request: GeminiJsonRequest, meter: GeminiRequestMeter): Promise<GeminiJsonResult>;
 }
+
+/** 장면 생성 등 구조화 응답 요청 (architecture.md §6.5) */
+export type GeminiJsonRequest = {
+  model: string;
+  systemInstruction: string;
+  prompt: string;
+  /** 응답 JSON 스키마 (responseJsonSchema) */
+  responseJsonSchema: Record<string, unknown>;
+  maxOutputTokens: number;
+  temperature: number;
+  timeoutMs: number;
+};
+
+export type GeminiJsonResult = { text: string; usage: GeminiUsage | null };
 
 function errorText(error: ApiError): string {
   return error.message ?? "";
@@ -214,14 +230,14 @@ export function usageOf(res: GenerateContentResponse): GeminiUsage | null {
  * 모델 확인 성공 기준: HTTP 200만으로는 부족하다. 완료 상태가 STOP이고 비어 있지 않은 텍스트가 있어야 한다.
  * 출력 예산 부족(MAX_TOKENS), 안전 차단, 빈 텍스트는 INCOMPLETE_RESPONSE (사용량은 기록한다).
  */
-function assertCompletedGeneration(res: GenerateContentResponse, usage: GeminiUsage | null): void {
+function assertCompletedGeneration(res: GenerateContentResponse, usage: GeminiUsage | null): string {
   const candidate = res.candidates?.[0];
   const finishReason = candidate?.finishReason;
   const text = (candidate?.content?.parts ?? [])
     .filter((p) => !p.thought && typeof p.text === "string")
     .map((p) => p.text)
     .join("");
-  if (finishReason === FinishReason.STOP && text.trim().length > 0) return;
+  if (finishReason === FinishReason.STOP && text.trim().length > 0) return text;
 
   const detail = [
     `finishReason=${typeof finishReason === "string" && /^[A-Z_]{1,40}$/.test(finishReason) ? finishReason : "NONE"}`,
@@ -338,6 +354,30 @@ export function createGeminiSdkClient(options: SdkOptions = {}): GeminiKeyClient
         const usage = usageOf(res);
         assertCompletedGeneration(res, usage);
         return { value: usage, usage };
+      });
+    },
+
+    async generateJson(apiKey, request, meter) {
+      const ai = sdk(apiKey, request.timeoutMs);
+      return call({ operation: "models.generateContent", model: request.model }, meter, async () => {
+        const res = await ai.models.generateContent({
+          model: request.model,
+          contents: request.prompt,
+          config: {
+            systemInstruction: request.systemInstruction,
+            responseMimeType: "application/json",
+            responseJsonSchema: request.responseJsonSchema,
+            temperature: request.temperature,
+            maxOutputTokens: request.maxOutputTokens,
+            candidateCount: 1,
+            automaticContinuation: false, // SDK 기본값(true)이면 continuationToken마다 요청을 반복한다
+            automaticFunctionCalling: { disable: true },
+            ...probeThinkingConfig(request.model), // 지원이 확인된 모델만 사고 수준을 낮게 (비용 통제)
+          },
+        });
+        const usage = usageOf(res);
+        const text = assertCompletedGeneration(res, usage);
+        return { value: { text, usage }, usage };
       });
     },
   };

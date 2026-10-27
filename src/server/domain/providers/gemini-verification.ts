@@ -79,9 +79,9 @@ export class UnsupportedModelError extends AppError {
 
 // ── 키 로드와 동시 요청 병합 ─────────────────────
 
-type KeyContext = { connectionId: string; fingerprint: string; status: string; defaultModel: string | null; apiKey: string };
+export type KeyContext = { connectionId: string; fingerprint: string; status: string; defaultModel: string | null; apiKey: string };
 
-async function loadKey(userId: AuthenticatedUserId, material: ProviderKeyMaterial): Promise<KeyContext> {
+export async function loadKey(userId: AuthenticatedUserId, material: ProviderKeyMaterial): Promise<KeyContext> {
   const row = await prisma.aiProviderConnection.findUnique({
     where: { userId_provider: { userId, provider: "GEMINI" } },
     select: { id: true, keyFingerprint: true, status: true, defaultModel: true, encryptedKey: true, keyIv: true, keyAuthTag: true, encryptionKeyVersion: true },

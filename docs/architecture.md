@@ -411,6 +411,15 @@ COMMIT
 4. **반복 감지**: 최근 장면과 대사 유사도(정규화 n-gram)가 임계값을 넘으면, 다음 계획에서 동기와 참가자 재선정 가중치를 올린다(PRD §5.3).
 5. 삭제된 캐릭터(`deletedAt` 있음)는 후보에서 제외한다. 활성 캐릭터가 2명 미만이면 시작을 거부한다.
 
+### 6.8.1 수동 장면 생성 (Phase 5-1 Vertical Slice)
+
+Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /api/worlds/[worldId]/scenes`, `server/domain/scenes/generate-scene.ts`).
+- 참가자: 사용자가 고른 활성 캐릭터 2~3명(SceneDirector 미사용). 연결 `ACTIVE` + `defaultModel` 필수.
+- 동시 실행 방지: `SimulationRuntime.status ∈ {IDLE, PAUSED}`이고 `inFlightAttemptId`가 비어 있을 때만 조건부 UPDATE로 점유한다(5분 지나면 만료). 같은 세계관의 중복 클릭은 409 `SCENE_IN_PROGRESS`이며 외부 호출을 하지 않는다.
+- 호출: `GeminiKeyClient.generateJson` 1회, UsageGuard `SIMULATION` meter(`attemptId`, `callIndex = 0`) 경유. 자동 재시도 없음.
+- 출력: §6.5 스키마 v1 중 `scene`·`turns`만 요청·검증한다. `proposals`(감정·관계·기억)는 엔진 단계에서 추가한다. 검증 실패 시 저장하지 않고 호출 기록을 `VALIDATION_ERROR`로 바꾼다.
+- 커밋: §6.7에서 Run·lease 검사·관계/감정/기억·outbox를 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
+
 ### 6.9 AgentModeStrategy 확장 경로 (후속)
 
 - 참가자별 `CharacterKnowledgeView`를 각각 별도 호출에 넣는다. 그래서 정보 비대칭이 Story 모드보다 강하게 지켜진다.

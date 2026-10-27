@@ -26,7 +26,20 @@ export type MockGeminiScript = {
   probeUsage?: GeminiUsage | null;
   /** 429 응답의 RetryInfo.retryDelay (ms) */
   retryAfterMs?: number;
+  /** generateJson 응답 텍스트 (기본: C1·C2가 3턴 대화하는 올바른 장면 JSON) */
+  generateText?: string;
+  /** generateJson 강제 오류 */
+  failGenerate?: GeminiErrorKind;
 };
+
+export const MOCK_SCENE_JSON = JSON.stringify({
+  scene: { title: "모의 장면", summary: "두 인물이 짧게 대화했다.", endReason: "RESOLVED" },
+  turns: [
+    { speaker: "C1", dialogue: "여기서 뭘 하고 있었어?", actionIntent: null, emotionCue: "궁금함" },
+    { speaker: "C2", dialogue: "그냥 바람을 쐬고 있었어.", actionIntent: null, emotionCue: null },
+    { speaker: "C1", dialogue: "그럼 같이 걷자.", actionIntent: "함께 걷기를 제안한다", emotionCue: null },
+  ],
+});
 
 const HTTP_STATUS: Record<GeminiErrorKind, number | null> = {
   KEY_INVALID: 400,
@@ -104,6 +117,17 @@ export function createMockGeminiClient(script: MockGeminiScript = {}) {
       const usage = script.probeUsage === undefined ? { inputTokens: 1, outputTokens: 1, thoughtTokens: 0 } : script.probeUsage;
       const next = () => (sequence.length > 0 ? sequence.shift() : script.failProbe?.[modelId]);
       return run({ operation: "models.generateContent", model: modelId }, apiKey, meter, next, () => usage, usage);
+    },
+    generateJson: (apiKey, request, meter) => {
+      const usage = { inputTokens: 100, outputTokens: 50, thoughtTokens: 0 };
+      return run(
+        { operation: "models.generateContent", model: request.model },
+        apiKey,
+        meter,
+        () => script.failGenerate,
+        () => ({ text: script.generateText ?? MOCK_SCENE_JSON, usage }),
+        usage,
+      );
     },
   };
   return { client, calls, receivedKeys };

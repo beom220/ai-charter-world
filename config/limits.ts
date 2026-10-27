@@ -77,3 +77,32 @@ export const CHARACTER_AGE_MAX = 1000;
 
 /** 랜덤·자동 나이 범위 (성인 기본, 세계관 템플릿 도입 전 공통값) */
 export const RANDOM_ADULT_AGE_RANGE = { min: 20, max: 59 } as const;
+
+// ── 대화 장면 생성 (Phase 5-1, architecture.md §6.4·§6.5 StoryMode) ──
+
+/** 장면 참가자 수 (StoryMode 기본 2~3명) */
+export const SCENE_PARTICIPANTS_MIN = 2;
+export const SCENE_PARTICIPANTS_MAX = 3;
+
+/** 장면 최소 턴 수. 최대는 GameState.maxTurnsPerScene(기본 6) */
+export const SCENE_TURNS_MIN = 3;
+
+/** 장면 생성 요청 타임아웃 (architecture.md §6.5 기본 60초) */
+export const SCENE_GENERATION_TIMEOUT_MS = 60_000;
+
+/** 장면 생성 출력 토큰 상한 (사고 토큰 포함). 6턴×400자 JSON이 잘리지 않을 만큼 */
+export const SCENE_MAX_OUTPUT_TOKENS = 8192;
+
+export const SCENE_TEMPERATURE = 0.9;
+
+/**
+ * 프롬프트에 넣는 세계관 컨텍스트 예산(문자 수, MVP 보수적 추정). 넘으면 문단 단위로 앞에서부터 넣고 나머지는 미반영(D6).
+ * 원본은 그대로 저장한다. 토큰 기반 예산은 엔진 단계에서 조정한다(A17).
+ */
+export const SCENE_WORLD_CONTEXT_BUDGET_CHARS = 30_000;
+
+/** 세계 규칙·현재 상황 각각의 프롬프트 상한(문자 수). 넘으면 뒷부분 절단 */
+export const SCENE_WORLD_FIELD_BUDGET_CHARS = 4_000;
+
+/** 수동 장면 생성 진행 표시(inFlightAttemptId)가 이 시간보다 오래되면 끝난 것으로 본다 (프로세스 종료 대비) */
+export const SCENE_IN_FLIGHT_STALE_MS = 5 * 60 * 1000;
