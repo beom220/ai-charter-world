@@ -112,7 +112,7 @@ model AiProviderConnection {
   keyLast4             String @db.VarChar(4)
   keyFingerprint       String // HMAC-SHA256, 교체 감지용
 
-  defaultModel   String
+  defaultModel   String? // null = 미선택. Phase 3-2에서 실제 모델 확인 후 사용자가 선택. null인 연결은 호출에 쓰지 않는다
   status         ConnectionStatus @default(UNVERIFIED)
   lastVerifiedAt DateTime?        @db.Timestamptz(3)
   lastErrorCode  String?
