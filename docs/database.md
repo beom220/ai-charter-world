@@ -1,6 +1,6 @@
 # AI Character World — 데이터베이스 설계서
 
-> **문서 상태:** v1.1 (2026-10-27 Phase 2-1 구현 반영: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
+> **문서 상태:** v1.2 (2026-10-27 Phase 2-2 반영: §3.2 사용자당 Provider별 연결 1개. v1.1: §3.1 인증 모델, §4.3 동일 세계관 참조 무결성)
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
@@ -33,7 +33,7 @@
 erDiagram
     User ||--o{ Session : has
     User ||--o{ Account : has
-    User ||--o| AiProviderConnection : owns
+    User ||--o{ AiProviderConnection : "owns (Provider별 1개)"
     AiProviderConnection ||--o{ ApiUsageDaily : aggregates
     User ||--o{ World : owns
 
@@ -101,7 +101,7 @@ model User {
 
   sessions           Session[]
   accounts           Account[]            // providerId = "google" 만 사용
-  providerConnection AiProviderConnection?
+  providerConnections AiProviderConnection[]   // 사용자당 Provider별 1개 (§3.2)
   worlds             World[]
   apiRequestLogs     ApiRequestLog[]
 }
@@ -116,7 +116,7 @@ enum ConnectionStatus  { UNVERIFIED ACTIVE INVALID }
 
 model AiProviderConnection {
   id                   String           @id @default(cuid())
-  userId               String           @unique              // 사용자당 1개 (Gemini)
+  userId               String
   provider             AiProvider       @default(GEMINI)
 
   // 암호화된 키 (AES-256-GCM, AAD = userId:id)
@@ -147,6 +147,8 @@ model AiProviderConnection {
 
   user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   usageDaily ApiUsageDaily[]
+
+  @@unique([userId, provider])                                // 사용자당 Provider별 1개 (Phase 2-2)
 }
 
 model ApiUsageDaily {
@@ -164,6 +166,9 @@ model ApiUsageDaily {
 }
 ```
 
+- **연결 단위 (Phase 2-2 확정)**: 사용자당 **Provider별** 연결 1개다(`@@unique([userId, provider])`). `User` ↔ `AiProviderConnection`은 1:N이다. 현재 Provider는 `GEMINI`만 있으므로 실제로는 사용자당 Gemini 연결 1개다. 다른 Provider는 PRD 후속 확장이며 enum 값과 구현을 함께 추가할 때까지 만들지 않는다.
+- **키 조회**: 연결은 항상 `(userId = world.ownerId, provider)`로 찾는다. `userId`만으로 하나를 고르는 코드를 쓰지 않는다.
+- **사용량·로그는 연결 단위**: `ApiUsageDaily(connectionId, usageDate)`, `ApiRequestLog.connectionId`는 연결(=사용자·Provider)을 가리키므로 연결 수 가정이 없다. 한도·서킷 브레이커도 연결 행의 컬럼이라 Provider별로 독립이다(D8).
 - **API 응답 시 제외할 필드**: `encryptedKey`, `keyIv`, `keyAuthTag`, `keyFingerprint`. 응답 DTO에서 화이트리스트 방식으로만 필드를 고른다.
 - **키 교체**(D8): 같은 행에서 암호문·`keyLast4`·`keyFingerprint`를 갱신하고 서킷 브레이커 필드(`consecutiveFailures`, `backoffLevel`, `blockedUntil`, `blockReason`)만 초기화한다. 사용자가 설정한 `dailyRequestLimit`·`dailyTokenLimit`과 `ApiUsageDaily` 집계는 유지한다.
 - **KST 날짜 계산**: 앱에서 `Intl` 또는 SQL `(now() AT TIME ZONE 'Asia/Seoul')::date`로 계산한다. 한 요청 안에서 예약과 누적에 같은 날짜 값을 쓴다.
@@ -707,7 +712,10 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (
 - 모든 조회는 기존대로 `world.ownerId` 조건이 포함된 쿼리로 한다(CLAUDE.md 절대 규칙 3). DB 제약은 쓰기 경로의 2차 방어다.
 - 스냅샷 적용(§5.2)으로 행을 복원할 때도 이 제약이 그대로 적용된다. `SceneParticipant.worldId`는 스냅샷 payload에 없으므로 적용 시 대상 `worldId`로 채운다(payload 구조 변경 없음, `schemaVersion` 유지).
 
-검증: `tests/integration/same-world-integrity.test.ts` (사용자 A 세계관에서 사용자 B 세계관 레코드를 참조하는 모든 경로가 거부되는지 확인)
+검증:
+- `tests/integration/same-world-integrity.test.ts`: 사용자 A 세계관에서 사용자 B 세계관 레코드를 참조하는 시나리오
+- `tests/integration/scope-matrix.test.ts`: 복합 FK 11개 + 트리거 11개 각각을 **INSERT와 UPDATE 양쪽**에서 검증. DB 카탈로그의 제약이 표에 빠지면 실패한다(새 제약 추가 시 표도 갱신).
+- `tests/integration/migration-replay.test.ts`: 새 임시 DB에 전체 마이그레이션을 적용하고, Prisma가 관리하지 않는 CHECK·트리거·함수를 포함한 카탈로그가 개발 DB와 같은지, 재현 DB에서도 트리거가 동작하는지 확인한다.
 
 ---
 
@@ -887,4 +895,4 @@ await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UP
 1. 스냅샷 크기 모니터링 임계값과 초과 시 정책(경고만 / 저장 거부). JSONB 대신 gzip `Bytes`로 바꿀지는 측정 후 판단(Phase 7b).
 2. `Mood` enum 목록과 UI 표시명(Phase 6).
 3. **Phase 2-3**: Better Auth CLI `generate` 결과와 인증 모델 비교 검증(§3.1).
-4. **결정 대기**: `AiProviderConnection`은 현재 `userId @unique`(사용자당 연결 1개)다. 목표 정책 "사용자당 Provider별 1개"는 `@@unique([userId, provider])`이며, Provider가 `GEMINI` 하나뿐인 지금은 두 제약의 효과가 같다. 다중 제공자를 도입할 때(또는 그 전에 미리) 새 마이그레이션으로 바꾼다. 이때 `User.providerConnection`은 목록 관계가 된다.
+4. ~~AiProviderConnection UNIQUE 정책~~ → Phase 2-2에서 `@@unique([userId, provider])`로 확정(§3.2, 마이그레이션 `20261027110000_provider_connection_per_provider`).

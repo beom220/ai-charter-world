@@ -99,6 +99,8 @@ pnpm db:migrate           # prisma migrate dev (Phase 2부터 사용)
   - lease 경쟁
   - 저장·불러오기·초기화 직렬화
   - 서버 재시작 복구와 중복 API 호출 0건(architecture.md §14 필수 복구 테스트)
+  - 동일 세계관·동일 사용자 범위 제약의 INSERT·UPDATE 거부(`tests/integration/scope-matrix.test.ts`)
+  - 새 DB 전체 마이그레이션 재현과 개발 DB 카탈로그 일치(`tests/integration/migration-replay.test.ts`). 새 마이그레이션도 이 테스트를 통과해야 한다
 - PRD §11 MVP 승인 시나리오는 Playwright E2E로 유지한다.
 
 ## 하지 말 것

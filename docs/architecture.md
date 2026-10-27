@@ -559,7 +559,7 @@ export interface RunnerHost {
 - **클라이언트에 반환하는 정보**: `last4`, 상태, 검증 시각, 모델, 한도만. 원문과 암호문은 절대 반환하지 않는다.
 - **키 교체 감지**: `keyFingerprint` = HMAC-SHA256(서버 비밀, 키). 원문은 복원할 수 없다.
 - **복호화 범위**: `MeteredLlmClient`의 호출 직전에만 복호화하고, 변수 수명을 최소화한다.
-- **키 조회 경로**: 항상 `world.ownerId`의 연결만 조회한다. 다른 계정의 키가 쓰일 경로가 없다(PRD FR-02 인수 조건).
+- **키 조회 경로**: 항상 `(userId = world.ownerId, provider)`로 연결을 조회한다. 다른 계정의 키가 쓰일 경로가 없다(PRD FR-02 인수 조건).
 - **폴백 금지**: 운영자 키는 존재하지 않는다. MockProvider는 `NODE_ENV !== "production"`이고 `LLM_PROVIDER=mock`일 때만 활성화된다. 프로덕션에서 mock 설정이 감지되면 부팅을 실패시킨다.
 
 ### 8.2 키 검증
@@ -575,7 +575,7 @@ export interface RunnerHost {
 
 ### 8.3 사용량 한도와 백오프 (D8)
 
-- **관리 단위**: 사용자의 Gemini 연결(`AiProviderConnection`, 사용자당 1개).
+- **관리 단위**: 사용자의 Provider 연결(`AiProviderConnection`, 사용자당 **Provider별 1개**, `@@unique([userId, provider])`). MVP Provider는 Gemini뿐이므로 사용자당 Gemini 연결 1개다(database.md §3.2).
 - **한도**: 사용자가 설정하는 일일 요청 수·일일 토큰 수(`dailyRequestLimit`, `dailyTokenLimit`). 집계는 `ApiUsageDaily(connectionId, usageDate)`에 한다. `usageDate`는 **Asia/Seoul(KST) 날짜**다(A9). KST 자정에 새 날짜로 집계가 시작된다.
 - **요청 예약**: 호출 직전에 조건부 UPDATE(`requestCount < limit`)로 요청 1건을 원자적으로 예약한다. 예약에 실패하면 → `PAUSED`(사유 `USAGE_LIMIT`) + 한도 도달 안내. 일반 장면 실패(건너뛰기)와는 다른 경로다(PRD FR-07).
 - **토큰 한도**: 응답 후 실제 토큰을 누적한다. 다음 호출 전에 누적값이 한도를 넘었으면 차단한다(호출 1건만큼 초과할 수 있음을 안내).
