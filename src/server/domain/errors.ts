@@ -19,6 +19,20 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+/** 잘못된 요청 본문 (400). message는 사용자에게 보여도 되는 문구만 넣는다. */
+export class BadRequestError extends AppError {
+  constructor(message = "요청 형식이 올바르지 않습니다.") {
+    super(400, "INVALID_REQUEST", message);
+  }
+}
+
+/** 허용되지 않은 출처의 상태 변경 요청 (403) */
+export class ForbiddenError extends AppError {
+  constructor() {
+    super(403, "FORBIDDEN", "허용되지 않은 요청입니다.");
+  }
+}
+
 /** 없거나 타인 소유인 리소스 (404). 둘을 구분하지 않아 존재 여부를 노출하지 않는다. */
 export class NotFoundError extends AppError {
   constructor() {
