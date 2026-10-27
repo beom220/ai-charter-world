@@ -1,4 +1,6 @@
-// 데이터 모델은 Phase 2에서 docs/database.md를 기준으로 작성한다.
+// 데이터 모델 기준 문서: docs/database.md (v1.0)
+// - 모든 DateTime은 UTC timestamptz로 저장한다 (database.md §1-9).
+// - Prisma로 표현할 수 없는 CHECK 제약은 마이그레이션 SQL에 있다 (database.md §4.1).
 
 generator client {
   provider = "prisma-client"
@@ -7,4 +9,717 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// 3.1 인증 (Better Auth 1.7 core schema, Prisma 어댑터)
+// ─────────────────────────────────────────────
+
+model User {
+  id            String   @id
+  name          String
+  email         String
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  sessions           Session[]
+  accounts           Account[] // providerId = "google" 만 사용
+  providerConnection AiProviderConnection?
+  worlds             World[]
+  apiRequestLogs     ApiRequestLog[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime @db.Timestamptz(3)
+  token     String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  ipAddress String?
+  userAgent String?
+  userId    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
+  scope                 String?
+  password              String? // Better Auth core 필드. 이메일·비밀번호 로그인은 활성화하지 않으므로 항상 null
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ─────────────────────────────────────────────
+// 3.2 BYOK·사용량
+// ─────────────────────────────────────────────
+
+enum AiProvider {
+  GEMINI
+}
+
+enum ConnectionStatus {
+  UNVERIFIED
+  ACTIVE
+  INVALID
+}
+
+model AiProviderConnection {
+  id       String     @id @default(cuid())
+  userId   String     @unique // 사용자당 1개 (Gemini)
+  provider AiProvider @default(GEMINI)
+
+  // 암호화된 키 (AES-256-GCM, AAD = userId:id)
+  encryptedKey         Bytes
+  keyIv                Bytes
+  keyAuthTag           Bytes
+  encryptionKeyVersion Int
+  keyLast4             String @db.VarChar(4)
+  keyFingerprint       String // HMAC-SHA256, 교체 감지용
+
+  defaultModel   String
+  status         ConnectionStatus @default(UNVERIFIED)
+  lastVerifiedAt DateTime?        @db.Timestamptz(3)
+  lastErrorCode  String?
+
+  // 사용자 설정 한도 (D8: 키 연결 단위). null = 한도 없음
+  dailyRequestLimit Int?
+  dailyTokenLimit   Int?
+
+  // 서킷 브레이커 (키 연결 단위, 여러 세계관이 공유)
+  consecutiveFailures Int       @default(0)
+  backoffLevel        Int       @default(0)
+  blockedUntil        DateTime? @db.Timestamptz(3)
+  blockReason         String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageDaily     ApiUsageDaily[]
+  apiRequestLogs ApiRequestLog[]
+}
+
+model ApiUsageDaily {
+  connectionId        String
+  usageDate           DateTime @db.Date // Asia/Seoul(KST) 기준 날짜 (A9)
+  requestCount        Int      @default(0)
+  inputTokens         Int      @default(0)
+  outputTokens        Int      @default(0)
+  thoughtTokens       Int      @default(0)
+  estimatedCostMicros BigInt   @default(0) // 예상 비용, 1e-6 USD 단위
+
+  connection AiProviderConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@id([connectionId, usageDate])
+}
+
+// ─────────────────────────────────────────────
+// 3.3 설정 계층
+// ─────────────────────────────────────────────
+
+enum WorldVisibility {
+  PRIVATE
+  PUBLIC
+}
+// MVP: PRIVATE만 허용 (PUBLIC 미노출)
+
+enum Gender {
+  MALE
+  FEMALE
+  NONBINARY
+  CUSTOM
+  UNSPECIFIED
+}
+
+enum Mood {
+  NEUTRAL
+  HAPPY
+  EXCITED
+  CALM
+  SAD
+  ANXIOUS
+  ANGRY
+  FEARFUL
+  EMBARRASSED
+  LONELY
+  HOPEFUL
+  TIRED
+}
+
+enum IntervalPreset {
+  SLOW
+  NORMAL
+  FAST
+}
+// 15s / 5s / 1s
+
+enum StrategyMode {
+  STORY
+  AGENT
+}
+// MVP: STORY만 노출
+
+model World {
+  id               String          @id @default(cuid())
+  ownerId          String
+  name             String          @db.VarChar(100)
+  summary          String?         @db.Text
+  eraAndPlace      String?         @db.Text // 시대/장소
+  worldRules       String?         @db.Text
+  currentSituation String?         @db.Text // 선택
+  worldContext     String          @default("") @db.Text // 글자 수 제한 없음 (D6)
+  visibility       WorldVisibility @default(PRIVATE)
+  templateKey      String? // 생성 시 사용한 템플릿 (참고용)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(3)
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // 하위 리소스는 모두 worldId를 직접 갖고 onDelete: Cascade (database.md §1-2, §7)
+  gameState             GameState?
+  runtime               SimulationRuntime?
+  characters            Character[]
+  relationshipBaselines RelationshipBaseline[]
+  simulationRuns        SimulationRun[]
+  scenes                ConversationScene[]
+  messages              Message[]
+  relationshipStates    RelationshipState[]
+  relationshipChanges   RelationshipChange[]
+  emotionStates         EmotionState[]
+  emotionChanges        EmotionChange[]
+  memories              CharacterMemory[]
+  worldEvents           WorldEvent[]
+  saveGames             SaveGame[]
+  snapshots             GameSnapshot[]
+  systemNotices         SystemNotice[]
+  simulationEvents      SimulationEvent[]
+  sseConnections        SseConnection[]
+  apiRequestLogs        ApiRequestLog[]
+
+  @@index([ownerId, updatedAt(sort: Desc)])
+}
+
+model Character {
+  id                   String    @id @default(cuid())
+  worldId              String
+  name                 String    @db.VarChar(50)
+  gender               Gender    @default(UNSPECIFIED)
+  genderCustom         String?   @db.VarChar(30) // gender = CUSTOM 일 때
+  age                  Int? // 비우면 저장 시 자동 설정
+  personalityTags      String[] // 태그 코드 (config 분류표), 권장 3~5개
+  extraversion         Int // 0..100
+  agreeableness        Int
+  conscientiousness    Int
+  emotionalStability   Int
+  openness             Int
+  goal                 String?   @db.Text
+  characterContext     String    @default("") @db.VarChar(300) // 코드 포인트 300자
+  initialMood          Mood      @default(NEUTRAL) // 감정 초기화 기준값
+  initialMoodIntensity Int       @default(50) // 0..100
+  sortOrder            Int       @default(0)
+  deletedAt            DateTime? @db.Timestamptz(3) // 소프트 삭제
+  createdAt            DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  baselinesFrom       RelationshipBaseline[] @relation("BaselineFrom")
+  baselinesTo         RelationshipBaseline[] @relation("BaselineTo")
+  relationshipsFrom   RelationshipState[]    @relation("RelationshipFrom")
+  relationshipsTo     RelationshipState[]    @relation("RelationshipTo")
+  emotionState        EmotionState?
+  emotionChanges      EmotionChange[]
+  memoriesOwned       CharacterMemory[]      @relation("MemoryOwner")
+  memoriesAbout       CharacterMemory[]      @relation("MemoryAbout")
+  sceneParticipations SceneParticipant[]
+  messages            Message[]
+
+  @@index([worldId, deletedAt])
+}
+
+model RelationshipBaseline {
+  // 사용자가 지정한 초기 관계 (설정)
+  id              String @id @default(cuid())
+  worldId         String
+  fromCharacterId String
+  toCharacterId   String
+  affinity        Int    @default(0) // -100..100
+  trust           Int    @default(0) // -100..100
+  respect         Int    @default(0) // -100..100
+  familiarity     Int    @default(0) // 0..100
+
+  world World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  from  Character @relation("BaselineFrom", fields: [fromCharacterId], references: [id], onDelete: Cascade)
+  to    Character @relation("BaselineTo", fields: [toCharacterId], references: [id], onDelete: Cascade)
+
+  @@unique([fromCharacterId, toCharacterId])
+  @@index([worldId])
+}
+
+// ─────────────────────────────────────────────
+// 3.4 활성 진행 상태 (D1: GameState의 진행 이력)
+// ─────────────────────────────────────────────
+
+enum MotiveType {
+  WORLD_EVENT
+  RELATIONSHIP
+  GOAL
+  MIXED
+}
+
+enum SceneEndReason {
+  RESOLVED
+  INTERRUPTED
+  STALEMATE
+  TURN_LIMIT
+}
+
+enum MemoryKind {
+  EVENT
+  PROMISE
+  CONFESSION
+  CONFLICT
+  SECRET
+  IMPRESSION
+  OTHER
+}
+
+enum MemoryAcquisition {
+  WITNESSED
+  TOLD
+  OBSERVED
+}
+
+enum WorldEventKind {
+  INITIAL_SITUATION
+  SCENE_OUTCOME
+  USER_INTERVENTION
+}
+// USER_INTERVENTION: P2
+
+enum EventVisibility {
+  PUBLIC
+  PARTICIPANTS
+}
+
+enum EventStatus {
+  ACTIVE
+  RESOLVED
+}
+
+model GameState {
+  worldId      String @id
+  stateVersion Int    @default(0) // 펜싱 토큰: 장면 커밋·종료·불러오기·초기화 시 +1
+  changeSeq    Int    @default(0) // 게임 상태 변경 카운터 (복구 지점 판정, A13)
+  nextSceneSeq Int    @default(1) // 기록 삭제와 무관하게 단조 증가
+
+  // 실행 설정 (설정 계층이지만 1:1이므로 여기 둠; 스냅샷에 포함)
+  strategyMode     StrategyMode   @default(STORY)
+  intervalPreset   IntervalPreset @default(NORMAL)
+  maxTurnsPerScene Int            @default(6) // 3..6
+  participantsMin  Int            @default(2)
+  participantsMax  Int            @default(3)
+  modelOverride    String? // null이면 연결의 defaultModel
+
+  lastCommittedAt DateTime? @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+}
+
+model ConversationScene {
+  id               String         @id @default(cuid())
+  worldId          String
+  seq              Int // 세계관 내 장면 번호
+  attemptId        String         @unique // 멱등성 키
+  runId            String? // 생성된 Run (통계용, 소유 관계 아님)
+  strategyMode     StrategyMode
+  model            String
+  title            String         @db.VarChar(100)
+  summary          String         @db.Text
+  motiveType       MotiveType
+  motiveRef        String? // WorldEvent id 등
+  endReason        SceneEndReason
+  contextTruncated Boolean        @default(false) // D6 안내 근거
+  createdAt        DateTime       @default(now()) @db.Timestamptz(3)
+
+  world        World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  run          SimulationRun?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  participants SceneParticipant[]
+  messages     Message[]
+
+  relationshipChanges RelationshipChange[]
+  emotionChanges      EmotionChange[]
+  memories            CharacterMemory[]
+  worldEvents         WorldEvent[]
+
+  @@unique([worldId, seq])
+  @@index([worldId, createdAt(sort: Desc)])
+}
+
+model SceneParticipant {
+  sceneId      String
+  characterId  String
+  alias        String @db.VarChar(3) // 프롬프트 별칭 C1..C6 (디버깅용)
+  nameSnapshot String @db.VarChar(50)
+
+  scene     ConversationScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  character Character         @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@id([sceneId, characterId])
+  @@index([characterId, sceneId]) // "이 캐릭터가 참가한 최근 장면" (단기 기억)
+}
+
+model Message {
+  id                  String   @id @default(cuid())
+  sceneId             String
+  worldId             String
+  turnIndex           Int
+  speakerCharacterId  String? // 캐릭터 실제 삭제 시 null
+  speakerNameSnapshot String   @db.VarChar(50) // 삭제된 캐릭터도 표시 유지
+  dialogue            String   @db.Text
+  actionIntent        String?  @db.Text // Level 2 행동 의도
+  emotionCue          String?  @db.VarChar(40)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+
+  scene   ConversationScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  world   World             @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  speaker Character?        @relation(fields: [speakerCharacterId], references: [id], onDelete: SetNull)
+
+  @@unique([sceneId, turnIndex])
+  @@index([worldId, createdAt])
+}
+
+model RelationshipState {
+  id              String   @id @default(cuid())
+  worldId         String
+  fromCharacterId String
+  toCharacterId   String
+  affinity        Int // -100..100
+  trust           Int // -100..100
+  respect         Int // -100..100
+  familiarity     Int // 0..100
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  world   World                @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  from    Character            @relation("RelationshipFrom", fields: [fromCharacterId], references: [id], onDelete: Cascade)
+  to      Character            @relation("RelationshipTo", fields: [toCharacterId], references: [id], onDelete: Cascade)
+  changes RelationshipChange[]
+
+  @@unique([fromCharacterId, toCharacterId])
+  @@index([worldId])
+}
+
+model RelationshipChange {
+  id                  String   @id @default(cuid())
+  worldId             String
+  relationshipStateId String
+  sceneId             String? // 기록 삭제 시 SetNull (D9)
+  dAffinity           Int // 적용된(clamp 후) 변화량
+  dTrust              Int
+  dRespect            Int
+  dFamiliarity        Int
+  proposed            Json // LLM 원 제안값 (clamp 전, 디버깅·밸런스용)
+  clamped             Boolean  @default(false)
+  reason              String?  @db.Text
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+
+  world        World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  relationship RelationshipState  @relation(fields: [relationshipStateId], references: [id], onDelete: Cascade)
+  scene        ConversationScene? @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+
+  @@index([relationshipStateId, createdAt])
+}
+
+model EmotionState {
+  characterId String   @id
+  worldId     String
+  mood        Mood
+  intensity   Int // 0..100
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  world     World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId])
+}
+
+model EmotionChange {
+  id            String   @id @default(cuid())
+  worldId       String
+  characterId   String
+  sceneId       String? // SetNull (D9)
+  fromMood      Mood
+  toMood        Mood
+  dIntensity    Int
+  proposedDelta Int
+  clamped       Boolean  @default(false)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  world     World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  character Character          @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  scene     ConversationScene? @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+
+  @@index([characterId, createdAt])
+}
+
+model CharacterMemory {
+  id               String            @id @default(cuid())
+  worldId          String
+  ownerCharacterId String // 이 기억을 "아는" 단 한 명
+  aboutCharacterId String? // 인물 기억 대상 (SetNull)
+  kind             MemoryKind
+  acquisition      MemoryAcquisition @default(WITNESSED)
+  content          String            @db.Text // ≤ 300자 (앱 검증)
+  importance       Int // 1..5
+  sourceSceneId    String? // 출처 장면, 기록 삭제 시 SetNull (D9)
+  shareGroupId     String? // 같은 사건을 공유한 목격자들의 기억 묶음
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+
+  world       World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  owner       Character          @relation("MemoryOwner", fields: [ownerCharacterId], references: [id], onDelete: Cascade)
+  about       Character?         @relation("MemoryAbout", fields: [aboutCharacterId], references: [id], onDelete: SetNull)
+  sourceScene ConversationScene? @relation(fields: [sourceSceneId], references: [id], onDelete: SetNull)
+
+  @@index([ownerCharacterId, importance(sort: Desc), createdAt(sort: Desc)])
+  @@index([worldId])
+}
+
+model WorldEvent {
+  id            String          @id @default(cuid())
+  worldId       String
+  kind          WorldEventKind
+  title         String          @db.VarChar(100)
+  description   String          @db.Text
+  visibility    EventVisibility @default(PUBLIC)
+  status        EventStatus     @default(ACTIVE)
+  sourceSceneId String? // SetNull
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  resolvedAt    DateTime?       @db.Timestamptz(3)
+
+  world       World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  sourceScene ConversationScene? @relation(fields: [sourceSceneId], references: [id], onDelete: SetNull)
+
+  @@index([worldId, status])
+}
+
+// ─────────────────────────────────────────────
+// 3.5 실행·관찰
+// ─────────────────────────────────────────────
+
+enum RuntimeStatus {
+  IDLE
+  RUNNING
+  PAUSING
+  PAUSED
+}
+
+enum StatusReason {
+  USER
+  CLIENT_DISCONNECTED
+  USAGE_LIMIT
+  KEY_INVALID
+  LOADED
+  RESET
+  SERVER_RECOVERY
+}
+
+enum ApiOutcome {
+  SUCCESS
+  HTTP_ERROR
+  NETWORK_ERROR
+  VALIDATION_ERROR
+  ABORTED
+}
+
+model SimulationRuntime {
+  worldId           String        @id
+  status            RuntimeStatus @default(IDLE)
+  statusReason      StatusReason?
+  currentRunId      String?
+  leaseOwner        String? // hostname:pid:bootId
+  leaseExpiresAt    DateTime?     @db.Timestamptz(3)
+  inFlightAttemptId String?
+  inFlightStartedAt DateTime?     @db.Timestamptz(3)
+  clientHoldSince   DateTime?     @db.Timestamptz(3) // 활성 SSE 연결 0 → 신규 호출 보류 시작 시각 (D4)
+  nextSceneAt       DateTime?     @db.Timestamptz(3) // 다음 장면 예정 시각 (UI 표시)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([status, leaseExpiresAt]) // 복구 스위퍼
+}
+
+model SseConnection {
+  // 활성 SSE 연결 등록부 (A12)
+  id          String   @id @default(cuid())
+  worldId     String
+  userId      String
+  instanceId  String // 웹 인스턴스 (hostname:pid:bootId)
+  connectedAt DateTime @default(now()) @db.Timestamptz(3)
+  lastSeenAt  DateTime @default(now()) @db.Timestamptz(3) // 10초마다 갱신, 30초 경과 시 비활성 간주
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, lastSeenAt])
+}
+
+model SimulationRun {
+  // 구 PRD §7 SimulationSession → SimulationRun (A1)
+  id                  String    @id @default(cuid())
+  worldId             String
+  startedAt           DateTime  @default(now()) @db.Timestamptz(3)
+  endedAt             DateTime? @db.Timestamptz(3)
+  endReason           String?
+  requestCount        Int       @default(0)
+  successCount        Int       @default(0)
+  failureCount        Int       @default(0)
+  inputTokens         Int       @default(0)
+  outputTokens        Int       @default(0)
+  thoughtTokens       Int       @default(0)
+  estimatedCostMicros BigInt    @default(0)
+
+  world  World               @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  scenes ConversationScene[]
+
+  @@index([worldId, startedAt(sort: Desc)])
+}
+
+model ApiRequestLog {
+  id                  String     @id @default(cuid())
+  userId              String
+  connectionId        String? // 연결 삭제 시 SetNull
+  worldId             String?
+  runId               String?
+  attemptId           String?
+  callIndex           Int        @default(0) // AgentMode: 장면 내 n번째 호출
+  model               String
+  startedAt           DateTime   @db.Timestamptz(3)
+  latencyMs           Int?
+  httpStatus          Int? // NETWORK_ERROR면 null
+  outcome             ApiOutcome
+  errorCode           String? // RESOURCE_EXHAUSTED, TIMEOUT, SCHEMA_INVALID …
+  errorMessage        String?    @db.VarChar(500) // 마스킹 후 저장
+  inputTokens         Int?
+  outputTokens        Int?
+  thoughtTokens       Int?
+  estimatedCostMicros BigInt?
+  createdAt           DateTime   @default(now()) @db.Timestamptz(3)
+  // 금지: API 키, Authorization 헤더, 프롬프트·컨텍스트 원문, 응답 원문
+
+  user       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection AiProviderConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  world      World?                @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, createdAt(sort: Desc)])
+  @@index([createdAt]) // 보관 기간 정리
+}
+
+model SystemNotice {
+  // 대화창의 시스템 메시지 (A4, 세이브 제외)
+  id        String   @id @default(cuid())
+  worldId   String
+  runId     String?
+  attemptId String?
+  code      String // NETWORK_ERROR / HTTP_ERROR / VALIDATION_ERROR / USAGE_LIMIT …
+  message   String   @db.VarChar(500)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, createdAt])
+}
+
+model SimulationEvent {
+  // SSE outbox (A6)
+  id        BigInt   @id @default(autoincrement()) // SSE id / Last-Event-ID
+  worldId   String
+  type      String
+  payload   Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, id])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────
+// 3.6 세이브
+// ─────────────────────────────────────────────
+
+enum SaveKind {
+  MANUAL
+  AUTO
+}
+
+model SaveGame {
+  id                  String   @id @default(cuid())
+  worldId             String
+  kind                SaveKind
+  autoForWorldId      String?  @unique // AUTO일 때만 = worldId → 세계관당 AUTO 1개 보장
+  name                String   @db.VarChar(60) // AUTO는 "자동저장"
+  snapshotId          String?  @unique // AUTO + null = LIVE 모드
+  sceneCount          Int // 표시용 메타데이터
+  characterCount      Int
+  worldNameSnapshot   String   @db.VarChar(100)
+  stateVersionAtSave  Int
+  replacedAtChangeSeq Int? // AUTO 전용: 직전 불러오기·초기화 적용 직후의 GameState.changeSeq (A13)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+
+  world    World         @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  snapshot GameSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+
+  @@index([worldId, kind, updatedAt(sort: Desc)])
+}
+
+model GameSnapshot {
+  id            String   @id @default(cuid())
+  worldId       String
+  schemaVersion Int // database.md §5.3
+  payload       Json // jsonb, TOAST 자동 압축
+  sizeBytes     Int
+  checksum      String   @db.VarChar(64) // SHA-256 hex
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  world World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  save  SaveGame?
+
+  @@index([worldId])
 }
