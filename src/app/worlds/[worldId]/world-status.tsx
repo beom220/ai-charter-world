@@ -32,9 +32,9 @@ export function WorldClock({ clock, startDate }: { clock: Clock; startDate: stri
   const value = Math.max(floor, liveWorldSeconds(clock, now));
   const at = worldCalendar(startDate, value);
   return (
-    <span className="text-xs text-foreground/70" title="월드 1일 = 실제 40분 (진행 중일 때만 흐름)">
+    <span className="text-xs text-foreground/70">
       🕰 Day {at.day} · {at.dateTime}
-      <span className="text-foreground/50"> · 월드 1일 = 실제 40분{clock.running ? " (진행 중)" : " (멈춤)"}</span>
+      <span className="text-foreground/50">{clock.running ? " (진행 중)" : " (멈춤)"}</span>
     </span>
   );
 }
