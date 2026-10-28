@@ -69,6 +69,24 @@ export function createUsageMeter(target: UsageTarget, purpose: UsagePurpose, opt
   };
 }
 
+/**
+ * 시뮬레이션 시작·재개 전 사전 확인(읽기 전용): 오늘(KST) 일일 요청·토큰 한도에 이미 도달했으면 UsageLimitError(429).
+ * 예약이 아니므로 실제 호출 직전에는 reserve가 다시 확인한다.
+ */
+export async function assertDailyUsageAvailable(connectionId: string, now: Date = new Date()): Promise<void> {
+  const conn = await prisma.aiProviderConnection.findUnique({ where: { id: connectionId }, select: { dailyRequestLimit: true, dailyTokenLimit: true } });
+  if (!conn) throw new NotFoundError();
+  const today = await prisma.apiUsageDaily.findUnique({ where: { connectionId_usageDate: { connectionId, usageDate: kstDate(now) } } });
+  const resetsAt = nextKstMidnight(now);
+  if (conn.dailyRequestLimit !== null && (today?.requestCount ?? 0) >= conn.dailyRequestLimit) {
+    throw new UsageLimitError("REQUESTS", resetsAt, secondsUntil(resetsAt, now));
+  }
+  const usedTokens = (today?.inputTokens ?? 0) + (today?.outputTokens ?? 0) + (today?.thoughtTokens ?? 0);
+  if (conn.dailyTokenLimit !== null && usedTokens >= conn.dailyTokenLimit) {
+    throw new UsageLimitError("TOKENS", resetsAt, secondsUntil(resetsAt, now));
+  }
+}
+
 // ── 예약 ─────────────────────────────────────────
 
 async function reserve(target: UsageTarget, purpose: UsagePurpose, request: GeminiRequestInfo, capacity: number, now: Date): Promise<Reservation> {

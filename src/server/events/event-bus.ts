@@ -6,7 +6,7 @@ import type { Prisma } from "@/generated/prisma/client";
 //   알림이 유실되어도 SSE 핸들러가 ping 때마다 outbox를 따라잡는다. 다중 인스턴스는 PG NOTIFY 어댑터로 확장한다(§15).
 // payload에는 사용자에게 보여 줄 확정 데이터만 넣는다. API 키·프롬프트·내부 오류 원문은 넣지 않는다.
 
-export type SimEvent = { type: "scene.committed"; payload: Prisma.InputJsonValue };
+export type SimEvent = { type: "scene.committed" | "runtime.status"; payload: Prisma.InputJsonValue };
 
 type Listener = () => void;
 const registry = ((globalThis as { __simEventListeners?: Map<string, Set<Listener>> }).__simEventListeners ??= new Map());

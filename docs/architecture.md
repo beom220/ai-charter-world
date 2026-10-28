@@ -479,6 +479,15 @@ stateDiagram-v2
 - 명령 처리기는 루프를 직접 조작하지 않는다. DB 상태를 바꾸고 `RunnerHost.signal(worldId)`만 호출한다.
 - 응답과 `runtime.status` 이벤트에는 "이미 전송된 요청은 취소해도 비용이 발생할 수 있습니다" 안내를 붙일 수 있는 플래그를 담는다(PRD FR-07).
 
+**Phase 5-4-1 구현 (상태 관리만, Runner 없음)**
+- `server/engine/runner/transitions.ts` `decideTransition`: 위 표의 전이. 목표 상태면 noop(200, `changed: false`), 그 밖은 409 `INVALID_TRANSITION`. `PAUSING`에서의 resume은 409(진행 중 장면 완료 후 `PAUSED`에서 재개).
+- `server/domain/simulation/control.ts`: 명령마다 한 트랜잭션에서 World 행 잠금 → (stop: GameState `stateVersion += 1`) → `SimulationRuntime` 전이 → outbox `runtime.status`. 커밋 후 `notifyWorld`. 같은 세계관 명령은 World 잠금으로 직렬화되어 동시 start도 Run 1개다.
+  - start·resume 사전 조건: 연결 ACTIVE + 모델, 활성 캐릭터 ≥ 2, 오늘 일일 한도 미도달(`assertDailyUsageAvailable`, 읽기 전용 — 실제 예약은 호출 직전 UsageGuard). 서킷 브레이커 차단은 시작을 막지 않는다(§7.1, `RUNNING` 유지·호출 보류).
+  - lease는 Runner 소유다. 제어 명령은 `PAUSED`·`IDLE`이 될 때만 해제한다. `PAUSING`은 진행 중 장면이 끝나면 `settlePausing`이 `PAUSED`로 마무리한다(현재는 수동 장면 생성의 종료 처리에서 호출).
+  - `runtime.status` payload: `status, statusReason, runId, intervalPreset, nextSceneAt, inFlight, held`(held는 5-4-3에서 채움).
+- API: `GET·PATCH /simulation/state`(PATCH `{ intervalPreset }` = 실행 속도, 바뀐 경우에만 `changeSeq += 1`), `POST /simulation/{start,pause,resume,stop}`.
+- 아직 없음: Runner·lease 획득, SSE 연결 보류(`clientHoldSince`), `USAGE_LIMIT`·`KEY_INVALID` 자동 전환(5-4-2·5-4-3).
+
 ### 7.3 취소 (D5)
 
 - Runner는 진행 중 호출마다 `AbortController`를 하나씩 둔다.

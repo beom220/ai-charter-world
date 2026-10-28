@@ -6,6 +6,7 @@ import { buildStoryPrompt, type PromptCharacter, type PromptHistoryScene } from 
 import { selectSceneParticipants } from "@/server/engine/director/select-participants";
 import { createUsageMeter } from "@/server/engine/usage/usage-guard";
 import { parseSceneOutput, SCENE_ALIASES, sceneResponseJsonSchema, SceneValidationError } from "@/server/engine/validation/scene-output";
+import { settlePausing } from "@/server/domain/simulation/control";
 import { notifyWorld, publishEvents } from "@/server/events/event-bus";
 import { getGeminiKeyClient } from "@/server/llm";
 import { GeminiCallError, type GeminiKeyClient } from "@/server/llm/gemini/client";
@@ -290,5 +291,6 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
     await prisma.simulationRuntime
       .updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } })
       .catch((e: unknown) => logServerError("scene.release", e));
+    await settlePausing(worldId); // 진행 중 장면 때문에 PAUSING이었으면 PAUSED로 마무리
   }
 }
