@@ -193,7 +193,7 @@ export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshK
   );
 }
 
-// 사건·상태 변화 말풍선(7-4): 흰 배경 + 분류별 테두리, 피드 너비를 꽉 채우고 본문은 가운데 정렬. 라벨 없이 본문만 보인다
+// 사건·상태 변화 말풍선(7-4): 흰 배경(약간 투명, 85%) + 분류별 테두리, 피드 너비를 꽉 채우고 본문은 가운데 정렬. 라벨 없이 본문만 보인다
 const TONE_BORDER: Record<NoteTone, string> = {
   event: "border-[#3B82F6]",
   positive: "border-[#22C55E]",
@@ -212,7 +212,7 @@ export function SceneNotes({ notes }: { notes: SceneNote[] }) {
           <li
             key={i}
             data-tone={tone}
-            className={`w-full rounded-lg border-[1.5px] bg-[#FFFFFF] px-3 py-1.5 text-center text-sm break-words whitespace-pre-wrap text-[#171717] ${TONE_BORDER[tone]}`}
+            className={`w-full rounded-lg border-[1.5px] bg-[#FFFFFF]/85 px-3 py-1.5 text-center text-sm break-words whitespace-pre-wrap text-[#171717] ${TONE_BORDER[tone]}`}
           >
             {noteText(n.text)}
           </li>
