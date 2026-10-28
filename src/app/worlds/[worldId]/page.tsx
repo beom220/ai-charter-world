@@ -7,6 +7,8 @@ import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { listSaves } from "@/server/domain/saves/saves";
 import { listScenes } from "@/server/domain/scenes/generate-scene";
 import { getSimulationState } from "@/server/domain/simulation/control";
+import { getWorld } from "@/server/domain/worlds";
+import { worldStartDate } from "@/lib/world-clock";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
 import { button, LoginRequired } from "../ui";
 import { SaveControls } from "./save-panel";
@@ -31,11 +33,12 @@ async function WorldConversation({ params }: { params: PageProps<"/worlds/[world
   const { worldId } = await params;
 
   const userId = asAuthenticatedUserId(session.user.id);
-  let characters, scenes, eventCursor, simulation, saves;
+  let world, characters, scenes, eventCursor, simulation, saves;
   try {
     // 커서를 먼저 읽는다: 이후에 커밋된 장면·상태 변경은 SSE로 다시 온다(장면은 id로 중복을 거르고, 상태는 마지막 것이 이긴다)
     eventCursor = await currentWorldEventCursor(userId, worldId);
-    [characters, scenes, simulation, saves] = await Promise.all([
+    [world, characters, scenes, simulation, saves] = await Promise.all([
+      getWorld(userId, worldId),
       listCharacters(userId, worldId),
       listScenes(userId, worldId),
       getSimulationState(userId, worldId),
@@ -50,6 +53,7 @@ async function WorldConversation({ params }: { params: PageProps<"/worlds/[world
     <ScenePanel
       key={`scene-${saves.replaceMarker}`} // 불러오기 뒤에는 새로 마운트해 이전 장면·재생 상태를 버린다
       worldId={worldId}
+      worldStartDate={worldStartDate(world.createdAt)}
       activeCharacters={characters.map((c) => ({ id: c.id, alive: c.condition.vital === "ALIVE" }))}
       initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
       initialHasMore={scenes.hasMore}

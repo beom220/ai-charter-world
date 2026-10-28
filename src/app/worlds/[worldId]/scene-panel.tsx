@@ -24,6 +24,7 @@ import {
 import { button, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
+import { worldCalendar } from "@/lib/world-clock";
 import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
@@ -45,6 +46,8 @@ import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
 //   시스템 영역에 보여 준다. 사건 발생은 장면 대사 앞, 상태 변화(과거 기록의 사건 해결 포함)는 장면 대사가 모두 공개된 뒤에 보인다.
 // - 사용자 사건(Phase 7-2-3): [사건 일으키기]·대기 목록·취소(world-status.tsx). 사건 목록은 장면 시작·커밋·실패와 world_event.updated(등록·취소·발생)
 //   SSE, 재연결 때 서버에서 다시 읽는다. 사용자 사건 발생 배너는 자동 사건과 다른 색이다.
+// - 월드 날짜: 장면 구분선에 그 장면의 월드 시각("yyyy-mm-dd hh:mm", 시작일 = 세계관 생성일 KST가 Day 0)을 붙이고, 피드에서 월드 날짜가
+//   바뀌는 장면(피드 첫 장면 포함) 앞에 "Day N" 구분선을 넣는다. 월드 시각이 없는 7-2-2 이전 장면은 표시하지 않는다.
 
 type Message = {
   id: string;
@@ -82,6 +85,7 @@ const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
 
 export function ScenePanel({
   worldId,
+  worldStartDate,
   activeCharacters,
   initialScenes,
   initialHasMore,
@@ -90,6 +94,8 @@ export function ScenePanel({
   saveControls,
 }: {
   worldId: string;
+  /** 월드 시작일 "yyyy-mm-dd" (Day 0, 세계관 생성일 KST) */
+  worldStartDate: string;
   /** 이 세계관의 활성(삭제되지 않은) 캐릭터: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분, 사망자 포함). 생존자 수는 시작 안내에 쓴다 */
   activeCharacters: { id: string; alive: boolean }[];
   /** 실행 제어 줄에 놓을 [저장]·[불러오기] */
@@ -318,7 +324,7 @@ export function ScenePanel({
           {STREAM_LABEL[stream]}
         </span>
       </div>
-      <WorldClock clock={view.state.worldClock} />
+      <WorldClock clock={view.state.worldClock} startDate={worldStartDate} />
       <WorldEvents worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
 
       <div
@@ -334,15 +340,24 @@ export function ScenePanel({
           </div>
         )}
         {scenes.length === 0 && <p className="m-auto text-sm text-foreground/50">아직 대화가 없습니다.</p>}
-        {scenes.map((s) => {
+        {scenes.map((s, i) => {
           const visible = s.messages.filter((m) => !play.pending.has(m.id) || play.typing === m.id);
           if (!visible.length) return null; // 재생 차례가 오기 전 장면은 제목도 숨긴다
+          const at = s.worldSeconds != null ? worldCalendar(worldStartDate, s.worldSeconds) : null;
+          const prev = scenes[i - 1]?.worldSeconds;
+          const newDay = at !== null && (prev == null || worldCalendar(worldStartDate, prev).day !== at.day);
           return (
             <div key={s.id} className="flex flex-col gap-2">
+              {newDay && (
+                <div className="flex justify-center pt-1">
+                  <span className="rounded-full bg-foreground/10 px-3 py-0.5 text-[11px] font-semibold text-foreground/70">Day {at.day}</span>
+                </div>
+              )}
               <div className="flex items-center gap-2 py-1 text-[11px] text-foreground/50">
                 <span className="h-px flex-1 bg-foreground/10" />
                 <span className="max-w-[70%] truncate">
-                  #{s.seq} {s.title} · 허구의 캐릭터 발화 · AI 생성
+                  #{s.seq}
+                  {at ? ` · ${at.dateTime}` : ""} · {s.title} · 허구의 캐릭터 발화 · AI 생성
                 </span>
                 <span className="h-px flex-1 bg-foreground/10" />
               </div>

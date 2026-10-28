@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EXTREME_LETHAL_WORLD_SECONDS, EXTREME_LIFE_RISK_WORLD_SECONDS } from "../../config/limits";
 import { conditionBadges, painLabel, thermalLabel } from "@/lib/condition-labels";
-import { formatWorldTime, liveWorldSeconds, realMsForWorldSeconds, worldSecondsForRealMs } from "@/lib/world-clock";
+import { formatWorldTime, liveWorldSeconds, realMsForWorldSeconds, worldCalendar, worldSecondsForRealMs, worldStartDate } from "@/lib/world-clock";
 import { DEFAULT_CONDITION_STATE, planConditionChange, type ConditionProposal, type ConditionState } from "@/server/engine/commit/condition-rules";
 import { parseSceneOutput, SceneValidationError } from "@/server/engine/validation/scene-output";
 
@@ -20,9 +20,15 @@ describe("월드 시간", () => {
     expect(worldSecondsForRealMs(40 * 60 * 1000)).toBe(24 * HOUR);
     expect(worldSecondsForRealMs(27)).toBe(0); // 27ms < 월드 1초 → 다음 정산으로 넘어간다
     expect(realMsForWorldSeconds(36)).toBe(1000);
-    expect(formatWorldTime(0)).toBe("Day 1, 00:00");
-    expect(formatWorldTime(36 * HOUR)).toBe("Day 2, 12:00");
-    expect(formatWorldTime(24 * HOUR - 60)).toBe("Day 1, 23:59");
+    expect(formatWorldTime(0)).toBe("Day 0, 00:00");
+    expect(formatWorldTime(36 * HOUR)).toBe("Day 1, 12:00");
+    expect(formatWorldTime(24 * HOUR - 60)).toBe("Day 0, 23:59");
+    // 대화 화면 날짜: 시작일(세계관 생성일 KST) 00:00 = Day 0
+    expect(worldStartDate(new Date("2026-10-28T15:30:00.000Z"))).toBe("2026-10-29"); // KST 10-29 00:30
+    expect(worldStartDate(new Date("2026-10-28T14:59:00.000Z"))).toBe("2026-10-28");
+    expect(worldCalendar("2026-10-28", 0)).toEqual({ day: 0, dateTime: "2026-10-28 00:00" });
+    expect(worldCalendar("2026-10-28", 24 * HOUR - 60)).toEqual({ day: 0, dateTime: "2026-10-28 23:59" });
+    expect(worldCalendar("2026-10-31", 3 * 24 * HOUR + 8 * HOUR + 90)).toEqual({ day: 3, dateTime: "2026-11-03 08:01" }); // 월 넘김
   });
 
   it("화면 계산: 흐르는 중이면 asOf 이후 실제 시간 × 36을 더하고, 멈춰 있으면 그대로", () => {

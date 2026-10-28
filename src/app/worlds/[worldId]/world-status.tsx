@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { USER_EVENT_PENDING_MAX, USER_EVENT_TEXT_MAX_LENGTH } from "../../../../config/limits";
 import { userEventTextLength } from "@/lib/schemas/world-event";
-import { formatWorldTime, liveWorldSeconds } from "@/lib/world-clock";
+import { liveWorldSeconds, worldCalendar } from "@/lib/world-clock";
 import { button } from "../ui";
 import { send } from "../world-form";
 
@@ -15,7 +15,7 @@ import { send } from "../world-form";
 
 type Clock = { seconds: number; running: boolean; asOf: string };
 
-export function WorldClock({ clock }: { clock: Clock }) {
+export function WorldClock({ clock, startDate }: { clock: Clock; startDate: string }) {
   const [now, setNow] = useState(() => Date.now());
   // 새 서버 값이 와도 이미 보여 준 값보다 뒤로 가지 않게, 이전 값의 마지막 표시를 하한으로 둔다
   const [floor, setFloor] = useState(clock.seconds);
@@ -30,9 +30,10 @@ export function WorldClock({ clock }: { clock: Clock }) {
     return () => clearInterval(timer);
   }, [clock.running]);
   const value = Math.max(floor, liveWorldSeconds(clock, now));
+  const at = worldCalendar(startDate, value);
   return (
     <span className="text-xs text-foreground/70" title="월드 1일 = 실제 40분 (진행 중일 때만 흐름)">
-      🕰 {formatWorldTime(value)}
+      🕰 Day {at.day} · {at.dateTime}
       <span className="text-foreground/50"> · 월드 1일 = 실제 40분{clock.running ? " (진행 중)" : " (멈춤)"}</span>
     </span>
   );

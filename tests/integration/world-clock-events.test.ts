@@ -110,7 +110,7 @@ describe("월드 시계", () => {
     expect(scene.worldSeconds).toBe(360);
     clock.ms += 20_000;
     await runWorldTick(world.id, { owner: "host-a", deps: d, state: { failures: 0 } });
-    expect(prompts.at(-1)).toContain("현재 월드 시각: Day 1, 00:");
+    expect(prompts.at(-1)).toContain("현재 월드 시각: Day 0, 00:");
   });
 });
 
