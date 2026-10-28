@@ -123,10 +123,14 @@ export const SSE_HEARTBEAT_INTERVAL_MS = 10_000;
 export const SSE_REPLAY_MAX_EVENTS = 100;
 
 /**
- * 새 장면 발언을 브라우저에서 하나씩 보여 주는 간격(UI 연출 전용).
- * 장면 사이 간격(SLOW 15s / NORMAL 5s / FAST 1s, Runner)과는 별개다.
+ * 새 장면 발언의 브라우저 재생 템포(UI 연출 전용, ms 범위 [최소, 최대]에서 무작위).
+ * 이전 발언 뒤 잠깐 쉬고(gap) → 다음 발언자 "입력 중…"(typing) → 대사 공개를 반복한다.
+ * 장면 사이 간격(SLOW 15s / NORMAL 5s / FAST 1s, Runner)과는 별개이며, 이후 속도 옵션에 맞춰 이 값을 바꿔 넘긴다.
  */
-export const SCENE_MESSAGE_REVEAL_INTERVAL_MS = 1_000;
+export const SCENE_PLAYBACK_TIMING = {
+  gapMs: [500, 900],
+  typingMs: [1_500, 3_000],
+} as const satisfies { gapMs: readonly [number, number]; typingMs: readonly [number, number] };
 
 /** 수동 장면 생성 진행 표시(inFlightAttemptId)가 이 시간보다 오래되면 끝난 것으로 본다 (프로세스 종료 대비) */
 export const SCENE_IN_FLIGHT_STALE_MS = 5 * 60 * 1000;

@@ -424,7 +424,8 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
 - 대화 기록 조회: `GET /api/worlds/[worldId]/scenes?before=<seq>`가 최신순 `SCENE_HISTORY_PAGE_SIZE`(10)개와 `hasMore`를 준다. `seq`는 세계관 내 UNIQUE라 커서로 이어 받아도 중복·누락이 없다.
 - 실시간 전달(Phase 5-3): 커밋 트랜잭션 안에서 outbox(`SimulationEvent`)에 `scene.committed { scene(id, seq, title, summary, contextTruncated, messages[id, turnIndex, speakerName, dialogue, actionIntent, emotionCue]) }`를 기록하고, 커밋 후 프로세스 내 EventBus로 SSE 구독자를 깨운다(`server/events/event-bus.ts`, §10.3).
   - SSE `GET /api/worlds/[worldId]/simulation/stream`(`server/events/world-stream.ts`): 소유권 확인 후 열고, `SseConnection`을 등록·10초 갱신·종료 시 삭제한다. 첫 연결은 페이지 렌더 시점 커서(`?lastEventId`), 재연결은 `Last-Event-ID` 이후만 재전송한다. 커서가 이 세계관 이벤트가 아니거나 밀린 이벤트가 `SSE_REPLAY_MAX_EVENTS`(100)를 넘으면 `sync.required`. 15초 ping 때 outbox를 따라잡는다. 보류(`clientHoldSince`) 처리는 Runner 단계에서 추가한다.
-  - 서버는 저장된 장면을 한 번에 보내고, 브라우저가 발언을 `SCENE_MESSAGE_REVEAL_INTERVAL_MS`(1초) 간격으로 순차 표시한다(연출 전용, 장면 간격 15/5/1초와 별개). POST 응답과 SSE가 같은 장면을 줄 수 있으므로 화면은 장면 id로 한 번만 넣는다.
+  - 서버는 저장된 장면을 한 번에 보내고, 브라우저가 하나의 재생 큐(`lib/scene-feed.ts` `ScenePlayback`)로 발언마다 "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 템포는 `SCENE_PLAYBACK_TIMING`(쉼 500~900ms, 입력 중 1.5~3초, 연출 전용, 장면 간격 15/5/1초와 별개)이다. 처음 불러온 기록·이전 기록은 연출 없이 즉시 표시한다. POST 응답과 SSE가 같은 장면을 줄 수 있으므로 화면은 장면 id로 한 번만 넣는다.
+  - 화면은 오래된 장면이 위인 연속 대화 피드다(seq·turnIndex 오름차순). 하단 근처일 때만 새 발언을 따라 스크롤하고, 이전 기록을 위에 붙일 때는 보던 위치를 유지한다.
   - 아직 없는 이벤트: `scene.started`·`scene.failed`(실패는 POST 응답으로만 알린다), outbox 24시간 정리 작업.
 - 커밋: §6.7에서 Run·lease 검사·관계/감정/기억을 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
 
