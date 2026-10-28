@@ -36,7 +36,7 @@ async function WorldSettings({ params }: { params: PageProps<"/worlds/[worldId]/
       </p>
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">세계관 설정</h2>
-        <WorldForm initial={{ id: world.id, name: world.name, worldContext: world.worldContext }} />
+        <WorldForm initial={{ id: world.id, name: world.name, worldContext: world.worldContext }} locked={world.settingsLocked} />
       </section>
       <section className="flex flex-col gap-2 border-t border-foreground/10 pt-6">
         <h2 className="text-sm font-semibold">위험 구역</h2>

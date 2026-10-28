@@ -10,11 +10,23 @@ import { createManualSave, deleteManualSave, listSaves, loadSave, overwriteManua
 import { captureSnapshot, parseSnapshot, snapshotChecksum } from "@/server/domain/saves/snapshot";
 import { generateScene, prepareScene, runSceneAttempt } from "@/server/domain/scenes/generate-scene";
 import { runSimulationCommand } from "@/server/domain/simulation/control";
-import { updateWorld } from "@/server/domain/worlds";
+import { updateCharacter } from "@/server/domain/characters/characters";
 import { createMockGeminiClient, type MockGeminiScript } from "@/server/llm/mock/gemini-mock";
 import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey } from "./helpers";
 
 // 세이브 (Phase 6). 실제 DB + Mock Gemini. 슬롯 정책, 자동 저장 순환·간격, 스냅샷 검증, 원자적 복원, 실행 중 차단, 펜싱, 롤백, 복구 지점.
+
+/** 설정 수정 (첫 장면 뒤 세계관은 잠기므로 캐릭터 설정을 바꾼다, PRD v1.8) */
+const renamed = (name: string) => ({
+  name,
+  gender: "FEMALE" as const,
+  age: 30,
+  personalityTags: ["reserved", "cautious", "sensitive"],
+  goal: "",
+  characterContext: "",
+  childhoodBackgroundId: "childhood_bookworm",
+  adulthoodBackgroundId: "adulthood_scientist",
+});
 
 const material = readProviderKeyMaterial({
   PROVIDER_KEY_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
@@ -130,13 +142,13 @@ describe("자동 저장", () => {
 
 describe("불러오기", () => {
   it("감정·관계·기억·대화·설정을 저장 시점으로 원자적으로 되돌리고, 이후 만든 캐릭터·장면은 남지 않는다", async () => {
-    const { uid, world, deps } = await setup("save-load");
+    const { uid, world, chars, deps } = await setup("save-load");
     await generateScene(uid, world.id, deps);
     const saved = await createManualSave(uid, world.id, "첫 장면 뒤");
     const expected = await current(world.id);
 
     await generateScene(uid, world.id, deps);
-    await updateWorld(uid, world.id, { name: "바뀐 이름", worldContext: "바뀐 설명" });
+    await updateCharacter(uid, world.id, chars[0]!.id, renamed("바뀐 이름"));
     await prisma.character.create({ data: characterData(world.id, "새 인물") });
     const versionBefore = (await prisma.gameState.findUniqueOrThrow({ where: { worldId: world.id } })).stateVersion;
 
@@ -199,7 +211,7 @@ describe("불러오기", () => {
   });
 
   it("복구 지점: 직전 상태를 보관하고, 변경 없이 연속으로 불러오면 유지, 변경 후에는 교체, 복구 지점을 불러오면 현재 상태와 맞바꾼다", async () => {
-    const { uid, world, deps } = await setup("save-recovery");
+    const { uid, world, chars, deps } = await setup("save-recovery");
     const a = await createManualSave(uid, world.id, "A (장면 0)");
     await generateScene(uid, world.id, deps);
     const b = await createManualSave(uid, world.id, "B (장면 1)");
@@ -212,15 +224,15 @@ describe("불러오기", () => {
     expect((await recoveryRow(world.id)).snapshotId).toBe(first.snapshotId);
     expect((await listSaves(uid, world.id)).saves).toHaveLength(2); // 복구 지점은 목록에 없다
 
-    await updateWorld(uid, world.id, { name: "B 이후 수정", worldContext: "" }); // changeSeq 증가
+    await updateCharacter(uid, world.id, chars[0]!.id, renamed("B 이후 수정")); // changeSeq 증가
     await loadSave(uid, world.id, a.id);
     const replaced = await recoveryRow(world.id);
     expect(replaced.snapshotId).not.toBe(first.snapshotId);
-    expect(replaced).toMatchObject({ sceneCount: 1, worldNameSnapshot: "B 이후 수정" });
+    expect(replaced).toMatchObject({ sceneCount: 1 });
 
     // 복구 지점 불러오기 → "B 이후 수정" 상태로 돌아가고, 복구 지점은 방금의 A 상태가 된다
     await loadSave(uid, world.id, replaced.id);
-    expect((await prisma.world.findUniqueOrThrow({ where: { id: world.id } })).name).toBe("B 이후 수정");
+    expect((await prisma.character.findUniqueOrThrow({ where: { id: chars[0]!.id } })).name).toBe("B 이후 수정");
     expect(await recoveryRow(world.id)).toMatchObject({ sceneCount: 0 });
     expect(await prisma.saveGame.count({ where: { worldId: world.id, kind: "RECOVERY" } })).toBe(1);
   });

@@ -1,4 +1,4 @@
-import type { WorldInput } from "@/lib/schemas/world";
+import { WORLD_SETTINGS_LOCKED_MESSAGE, type WorldInput } from "@/lib/schemas/world";
 import { prisma } from "@/server/db/client";
 import { ownedWorldWhere, requireOwnedWorld } from "@/server/db/scope";
 import { SETTINGS_LOCKED_MESSAGE, settingsEditable } from "@/lib/simulation-view";
@@ -18,7 +18,11 @@ export type WorldSummaryView = {
   updatedAt: Date;
 };
 
-export type WorldDetailView = WorldSummaryView & { worldContext: string };
+export type WorldDetailView = WorldSummaryView & {
+  worldContext: string;
+  /** 대화 장면이 1개 이상이면 세계관 설정 영구 잠금 (불러오기로 장면이 0개가 되면 풀린다) */
+  settingsLocked: boolean;
+};
 
 export const RECOVERY_SAVE_NAME = "복구 지점";
 
@@ -50,11 +54,11 @@ export async function listWorlds(userId: AuthenticatedUserId): Promise<WorldSumm
 export async function getWorld(userId: AuthenticatedUserId, worldId: string): Promise<WorldDetailView> {
   const row = await prisma.world.findFirst({
     where: ownedWorldWhere(userId, worldId),
-    select: { ...summarySelect, worldContext: true },
+    select: { ...summarySelect, worldContext: true, scenes: { select: { id: true }, take: 1 } },
   });
   if (!row) throw new NotFoundError();
-  const { worldContext, ...summary } = row;
-  return { ...toSummary(summary), worldContext };
+  const { worldContext, scenes, ...summary } = row;
+  return { ...toSummary(summary), worldContext, settingsLocked: scenes.length > 0 };
 }
 
 /** World + GameState + SimulationRuntime(IDLE) + 복구 지점 행(RECOVERY, 스냅샷 없음)을 한 트랜잭션에서 만든다 (database.md §5, §6) */
@@ -101,7 +105,8 @@ export async function assertSettingsEditable(tx: Parameters<Parameters<typeof pr
 }
 
 /**
- * 세계관 설정 수정 (database.md §6.7). 중지(IDLE)나 진행 중 장면이 없는 일시정지(PAUSED)에서만 허용하고 stateVersion은 올리지 않는다.
+ * 세계관 설정 수정 (database.md §6.7). 대화 장면이 1개라도 있으면 실행 상태와 관계없이 409 WORLD_SETTINGS_LOCKED(영구 잠금, PRD v1.8).
+ * 장면이 없으면 중지(IDLE)나 진행 중 장면이 없는 일시정지(PAUSED)에서만 허용하고 stateVersion은 올리지 않는다.
  * 저장한 설정은 다음 장면 준비 때 DB에서 다시 읽어 반영한다(architecture.md §6.7).
  * 실제로 값이 바뀐 경우에만 GameState.changeSeq += 1 (복구 지점 판정, A13).
  */
@@ -112,6 +117,10 @@ export async function updateWorld(
 ): Promise<{ world: WorldDetailView; changed: boolean }> {
   const changed = await prisma.$transaction(async (tx) => {
     await lockOwnedWorld(tx, userId, worldId);
+    // 장면 커밋은 진행 중 시도가 있어야 하고, 시도 기록은 World 잠금 아래에서 하므로 이 확인과 엇갈리지 않는다
+    if (await tx.conversationScene.findFirst({ where: { worldId }, select: { id: true } })) {
+      throw new ConflictError("WORLD_SETTINGS_LOCKED", WORLD_SETTINGS_LOCKED_MESSAGE);
+    }
     const current = await requireOwnedWorld(userId, worldId, tx);
     if (current.name === input.name && current.worldContext === input.worldContext) return false;
     await assertSettingsEditable(tx, worldId);

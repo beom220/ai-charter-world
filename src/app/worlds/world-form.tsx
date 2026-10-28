@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { MAX_REQUEST_BODY_BYTES, WORLD_NAME_MAX_LENGTH } from "../../../config/limits";
-import { worldInputSchema } from "@/lib/schemas/world";
+import { WORLD_SETTINGS_LOCKED_MESSAGE, worldInputSchema } from "@/lib/schemas/world";
 import Link from "next/link";
 import { SettingsLockedNotice, useSettingsEditable } from "./settings-lock";
 import { button } from "./ui";
@@ -21,13 +21,15 @@ export async function send(path: string, method: string, body?: unknown) {
   return { ok: res.ok, json: await res.json().catch(() => null) };
 }
 
-export function WorldForm({ initial }: { initial: Initial }) {
+/** locked: 대화가 시작된 세계관(장면 1개 이상)은 설정을 영구히 바꿀 수 없다 */
+export function WorldForm({ initial, locked = false }: { initial: Initial; locked?: boolean }) {
   const router = useRouter();
   const [name, setName] = useState(initial?.name ?? "");
   const [worldContext, setWorldContext] = useState(initial?.worldContext ?? "");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  const editable = useSettingsEditable(initial?.id ?? null);
+  const runtimeEditable = useSettingsEditable(locked ? null : (initial?.id ?? null));
+  const editable = !locked && runtimeEditable;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -59,8 +61,9 @@ export function WorldForm({ initial }: { initial: Initial }) {
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">세계관 이름</span>
         <input
-          className="rounded-md border border-foreground/20 bg-transparent px-3 py-2"
+          className="rounded-md border border-foreground/20 bg-transparent px-3 py-2 disabled:opacity-60"
           value={name}
+          disabled={locked}
           onChange={(e) => setName(e.target.value)}
           maxLength={WORLD_NAME_MAX_LENGTH * 2}
           required
@@ -70,23 +73,24 @@ export function WorldForm({ initial }: { initial: Initial }) {
         <span className="font-medium">세계관 컨텍스트</span>
         <span className="text-foreground/60">배경·규칙·현재 상황 등 자유롭게 적으세요. 글자 수 제한은 없습니다(전송 최대 10MB).</span>
         <textarea
-          className="min-h-64 rounded-md border border-foreground/20 bg-transparent px-3 py-2"
+          className="min-h-64 rounded-md border border-foreground/20 bg-transparent px-3 py-2 disabled:opacity-60"
+          disabled={locked}
           value={worldContext}
           onChange={(e) => setWorldContext(e.target.value)}
         />
         <span className="text-right text-xs text-foreground/60">{[...worldContext].length.toLocaleString()}자</span>
       </label>
-      {initial && (
-        <p className="text-xs text-foreground/60">
-          설정을 바꿔도 지난 대화·감정·관계·기억은 그대로 남습니다. 배경을 통째로 다른 이야기로 바꾸면 지난 대화와 어긋날 수 있으니,
-          완전히 다른 이야기는{" "}
+      {locked ? (
+        <p role="status" className="rounded-md border border-amber-600/40 bg-amber-600/5 px-3 py-2 text-sm">
+          {WORLD_SETTINGS_LOCKED_MESSAGE}{" "}
           <Link href="/worlds/new" className="underline">
-            새 세계관
+            새 세계관 만들기
           </Link>
-          으로 만드는 것을 권장합니다.
         </p>
+      ) : (
+        initial && <p className="text-xs text-foreground/60">첫 대화 장면이 만들어지면 세계관 설정은 더 이상 바꿀 수 없습니다.</p>
       )}
-      {!editable && <SettingsLockedNotice />}
+      {!locked && !runtimeEditable && <SettingsLockedNotice />}
       <div className="flex items-center gap-3">
         <button type="submit" className={button} disabled={busy || !editable}>
           {initial ? "저장" : "만들기"}

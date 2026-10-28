@@ -6,6 +6,8 @@ import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId, type AuthenticatedUserId } from "@/server/domain/identity";
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
 import { prepareScene, runSceneAttempt, SceneValidationFailedError, type SceneDeps } from "@/server/domain/scenes/generate-scene";
+
+type PreparedScene = Awaited<ReturnType<typeof prepareScene>>;
 import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
 import { publishRuntimeStatus, settlePausing } from "@/server/domain/simulation/control";
 import { CircuitOpenError, KeyChangedError, UsageLimitError } from "@/server/engine/usage/errors";
@@ -135,36 +137,8 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
     return;
   }
 
-  // 호출 전에 시도를 기록한다. 이 조건부 UPDATE가 세계관당 진행 중 생성 1건을 보장한다 (lease와 별개의 2차 방어).
-  // 같은 트랜잭션에서 scene.started를 기록하므로 기록에 성공한 Runner만 이벤트를 낸다 (잠금 순서 World → Runtime)
   const attemptId = randomUUID();
-  const startedAt = now();
-  const claimed = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
-    // 준비 이후 설정 수정·불러오기 등으로 changeSeq가 바뀌었으면 이전 설정으로 호출하지 않고 다음 단계에서 다시 준비한다
-    const gs = await tx.gameState.findUnique({ where: { worldId }, select: { changeSeq: true } });
-    if (gs?.changeSeq !== prepared.changeSeq) return false;
-    const { count } = await tx.simulationRuntime.updateMany({
-      where: {
-        worldId,
-        status: "RUNNING",
-        currentRunId: runId,
-        leaseOwner: owner,
-        inFlightAttemptId: null,
-        clientHoldSince: null,
-        OR: [{ nextSceneAt: null }, { nextSceneAt: { lte: startedAt } }],
-      },
-      data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
-    });
-    if (count === 0) return false;
-    await publishEvents(tx, worldId, [
-      {
-        type: "scene.started",
-        payload: { worldId, attemptId, startedAt: startedAt.toISOString(), participants: prepared.characters.map((c) => c.name) },
-      },
-    ]);
-    return true;
-  });
+  const claimed = await claimAttempt(worldId, runId, owner, prepared, attemptId, now());
   if (!claimed) return; // 그사이 상태가 바뀜 → 다음 단계에서 다시 판단
   notifyWorld(worldId);
 
@@ -199,6 +173,47 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
     clearInterval(heartbeat);
   }
   await finishAttempt(worldId, attemptId, outcome, ctx);
+}
+
+/**
+ * 시도 기록 (테스트에서 직접 부른다). 준비 이후 상태·설정이 바뀌었으면 false.
+ * 호출 전에 시도를 기록한다. 이 조건부 UPDATE가 세계관당 진행 중 생성 1건을 보장한다 (lease와 별개의 2차 방어).
+ * 같은 트랜잭션에서 scene.started를 기록하므로 기록에 성공한 Runner만 이벤트를 낸다 (잠금 순서 World → Runtime)
+ */
+export async function claimAttempt(
+  worldId: string,
+  runId: string,
+  owner: string,
+  prepared: Pick<PreparedScene, "characters" | "changeSeq">,
+  attemptId: string,
+  startedAt: Date,
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
+    // 준비 이후 설정 수정·불러오기 등으로 changeSeq가 바뀌었으면 이전 설정으로 호출하지 않고 다음 단계에서 다시 준비한다
+    const gs = await tx.gameState.findUnique({ where: { worldId }, select: { changeSeq: true } });
+    if (gs?.changeSeq !== prepared.changeSeq) return false;
+    const { count } = await tx.simulationRuntime.updateMany({
+      where: {
+        worldId,
+        status: "RUNNING",
+        currentRunId: runId,
+        leaseOwner: owner,
+        inFlightAttemptId: null,
+        clientHoldSince: null,
+        OR: [{ nextSceneAt: null }, { nextSceneAt: { lte: startedAt } }],
+      },
+      data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
+    });
+    if (count === 0) return false;
+    await publishEvents(tx, worldId, [
+      {
+        type: "scene.started",
+        payload: { worldId, attemptId, startedAt: startedAt.toISOString(), participants: prepared.characters.map((c) => c.name) },
+      },
+    ]);
+    return true;
+  });
 }
 
 async function renewLease(worldId: string, owner: string, now: Date): Promise<void> {

@@ -395,6 +395,7 @@ COMMIT
 - **트랜잭션 밖 처리**: `ApiRequestLog`, `SimulationRun` 카운터, `ApiUsageDaily`는 장면 성공 여부와 무관하게 기록한다(실패도 비용이 발생하므로).
 - **설정 편집은 펜싱하지 않음**: 캐릭터·세계관 설정 편집은 `stateVersion`을 올리지 않고, 복구 지점 판정용 `changeSeq`만 올린다(§9.3).
 - **설정 편집 가능 상태(PRD v1.7)**: 세계관 수정·캐릭터 생성/수정/삭제는 `IDLE`, 또는 `inFlightAttemptId IS NULL`인 `PAUSED`에서만 허용한다. World 잠금 뒤 `SimulationRuntime`을 `FOR UPDATE`로 읽어 확인하고(잠금 순서 World → Runtime), 아니면 409 `SETTINGS_LOCKED`. Runner의 시도 기록도 World 잠금 아래에서 하므로 편집과 호출 시작이 겹치지 않는다. 화면도 같은 규칙(`settingsEditable`)으로 버튼을 막는다.
+- **세계관 설정 영구 잠금(PRD v1.8)**: World 잠금 뒤 `ConversationScene`이 1개라도 있으면 실행 상태 확인 전에 409 `WORLD_SETTINGS_LOCKED`. 장면 수는 현재 활성 상태 기준이므로 불러오기로 장면이 0개가 되면 다시 수정할 수 있다. `getWorld`가 `settingsLocked`를 돌려주고 설정 화면은 입력을 막는다.
 - **이전 설정으로 호출 금지**: Runner는 장면 준비 때 읽은 `changeSeq`를 시도 기록 트랜잭션에서 다시 확인하고, 다르면 기록하지 않고 다음 단계에서 다시 준비한다(일시정지 → 편집 → 재개가 준비와 기록 사이에 끼는 경우). 설정은 매 장면 DB에서 새로 읽는다.
 - **프롬프트 우선순위**: `<world>`·`<character>`는 현재 유효한 설정이며 `<history>`·기억과 어긋나면 설정을 따른다. 마지막 설정 변경 시각(`World.updatedAt`, 캐릭터 `updatedAt` 최댓값)보다 먼저 만든 장면에는 "장면 #N까지 이전 설정" 표시를 붙인다. 기존 장면·기억은 지우지 않는다.
 

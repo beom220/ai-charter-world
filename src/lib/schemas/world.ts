@@ -17,3 +17,6 @@ export const worldInputSchema = z
   .strip(); // ownerId 등 다른 필드는 버린다 (소유자는 세션에서만 정한다)
 
 export type WorldInput = z.infer<typeof worldInputSchema>;
+
+/** 첫 대화 장면이 생긴 세계관은 설정을 영구히 바꿀 수 없다 (PRD v1.8) */
+export const WORLD_SETTINGS_LOCKED_MESSAGE = "대화가 시작된 세계관은 설정을 변경할 수 없습니다. 다른 설정으로 진행하려면 새 세계관을 생성하세요.";
