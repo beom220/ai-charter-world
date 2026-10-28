@@ -156,3 +156,20 @@ export const RUNNER_SWEEP_INTERVAL_MS = 15_000;
  */
 export const RUNNER_FAILURE_BACKOFF_MIN_MS = 5_000;
 export const RUNNER_FAILURE_BACKOFF_MAX_MS = 5 * 60 * 1000;
+
+// ── SSE 연결 보류·outbox 정리 (Phase 5-4-3, architecture.md §7.5·§10.3) ──
+
+/** 활성 SSE 연결 = lastSeenAt이 이 시간 이내인 SseConnection 행 (heartbeat 10초 × 3) */
+export const SSE_CONNECTION_ACTIVE_MS = 30_000;
+
+/** 활성 연결이 0이 된 뒤 이 시간 안에 재연결이 없으면 PAUSED(CLIENT_DISCONNECTED) (확정, D4) */
+export const CLIENT_HOLD_TIMEOUT_MS = 60_000;
+
+/** outbox(SimulationEvent) 보관 기간 (확정, A16) */
+export const OUTBOX_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** 비정상 종료로 남은 SseConnection 행 삭제 기준 (활성 판정과 무관한 청소용) */
+export const SSE_CONNECTION_PURGE_MS = 10 * 60 * 1000;
+
+/** outbox·연결 등록부 정리 주기 (RunnerHost 스위퍼에서 실행) */
+export const OUTBOX_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;

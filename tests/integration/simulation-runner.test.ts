@@ -21,6 +21,7 @@ const material = readProviderKeyMaterial({
 });
 
 const T0 = Date.parse("2026-10-28T03:00:00.000Z");
+const ALWAYS_ACTIVE = new Date("2100-01-01T00:00:00.000Z");
 
 async function setup(label: string, script: MockGeminiScript = {}) {
   const user = await createTestUser(label);
@@ -29,6 +30,8 @@ async function setup(label: string, script: MockGeminiScript = {}) {
   await prisma.aiProviderConnection.updateMany({ where: { userId: user.id }, data: { status: "ACTIVE", defaultModel: "gemini-mock-flash" } });
   const world = await createTestWorld(user.id, `${label} 세계`);
   for (let i = 0; i < 2; i++) await prisma.character.create({ data: characterData(world.id, `${label}-${i + 1}`) });
+  // 브라우저 탭 1개가 연결된 상태 (테스트 시계와 무관하게 활성). 보류 정책은 client-hold.test.ts에서 따로 본다
+  await prisma.sseConnection.create({ data: { worldId: world.id, userId: user.id, instanceId: "test", lastSeenAt: ALWAYS_ACTIVE } });
   const mock = createMockGeminiClient(script);
   const clock = { ms: T0 };
   const deps = { client: mock.client, material, now: () => new Date(clock.ms) };
@@ -69,7 +72,7 @@ describe("Runner 단계 (runWorldTick)", () => {
     expect(await runtime(world.id)).toMatchObject({ status: "RUNNING", inFlightAttemptId: null, leaseOwner: "host-a", nextSceneAt: new Date(T0 + 11_700) });
     expect(await prisma.simulationRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({ requestCount: 1, successCount: 1 });
     const types = (await prisma.simulationEvent.findMany({ where: { worldId: world.id }, orderBy: { id: "asc" } })).map((e) => e.type);
-    expect(types).toEqual(["runtime.status", "scene.committed", "runtime.status"]);
+    expect(types).toEqual(["runtime.status", "scene.started", "scene.committed", "runtime.status"]);
 
     // 예정 시각 전: 대기만 한다. 실행 중 수동 생성은 409
     expect(await runWorldTick(world.id, runner)).toMatchObject({ kind: "wait" });
@@ -88,6 +91,7 @@ describe("Runner 단계 (runWorldTick)", () => {
     await Promise.all([runWorldTick(a.world.id, a.ctx("host-a")), runWorldTick(a.world.id, a.ctx("host-b")), runWorldTick(b.world.id, b.ctx("host-a"))]);
     expect(a.mock.calls).toHaveLength(1);
     expect(await sceneCount(a.world.id)).toBe(1);
+    expect(await prisma.simulationEvent.count({ where: { worldId: a.world.id, type: "scene.started" } })).toBe(1);
     expect(b.mock.calls).toHaveLength(1);
     expect(await sceneCount(b.world.id)).toBe(1);
   });

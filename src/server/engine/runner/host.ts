@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { RUNNER_POLL_INTERVAL_MS, RUNNER_SWEEP_INTERVAL_MS } from "../../../../config/limits";
+import { OUTBOX_CLEANUP_INTERVAL_MS, RUNNER_POLL_INTERVAL_MS, RUNNER_SWEEP_INTERVAL_MS } from "../../../../config/limits";
 import { prisma } from "@/server/db/client";
 import type { SceneDeps } from "@/server/domain/scenes/generate-scene";
+import { cleanupExpiredEvents } from "@/server/events/outbox-cleanup";
 import { logServerError } from "@/server/logging/log";
 import { registerRunnerHost, type RunnerSignalTarget } from "./signal";
 import { runWorldTick, type RunnerContext, type TickResult } from "./world-tick";
@@ -16,6 +17,7 @@ import { runWorldTick, type RunnerContext, type TickResult } from "./world-tick"
 // - 종료: shutdown() → 스위퍼 중지, Runner에 중단 표시·깨우기, 진행 중 단계가 끝날 때까지 기다린 뒤 진행 중 시도가 없는 lease를 해제.
 //   프로세스가 비정상 종료되면 lease 만료(30초) 후 다른 호스트·재시작한 호스트의 스위퍼가 이어받는다.
 //   타이머는 unref라 프로세스 종료를 막지 않는다. HTTP 요청 수명과 무관하게 돈다(서버리스 배포에는 맞지 않음, §15).
+// - 정리: 스위퍼가 OUTBOX_CLEANUP_INTERVAL_MS(10분)마다 24시간 지난 outbox와 남은 SSE 연결 행을 지운다(기다리지 않음, Runner와 무관).
 
 export type RunnerHostOptions = {
   owner?: string;
@@ -77,6 +79,8 @@ export class InProcessRunnerHost implements RunnerSignalTarget {
   private readonly runners = new Map<string, WorldRunner>();
   private sweeper: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
+  private lastCleanupAt = 0;
+  private cleaning: Promise<void> | null = null;
 
   constructor(private readonly options: RunnerHostOptions = {}) {
     this.owner = options.owner ?? `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
@@ -111,6 +115,19 @@ export class InProcessRunnerHost implements RunnerSignalTarget {
     } catch (error) {
       logServerError("runner.sweep", error);
     }
+    this.cleanupIfDue();
+  }
+
+  /** 정리는 기다리지 않는다. 한 번에 하나만 돈다 */
+  private cleanupIfDue(): void {
+    if (this.cleaning || Date.now() - this.lastCleanupAt < OUTBOX_CLEANUP_INTERVAL_MS) return;
+    this.lastCleanupAt = Date.now();
+    this.cleaning = cleanupExpiredEvents()
+      .then(() => undefined)
+      .catch((e: unknown) => logServerError("runner.cleanup", e))
+      .finally(() => {
+        this.cleaning = null;
+      });
   }
 
   async shutdown(): Promise<void> {
@@ -119,7 +136,7 @@ export class InProcessRunnerHost implements RunnerSignalTarget {
     this.sweeper = null;
     const runners = [...this.runners.values()];
     for (const runner of runners) runner.stop();
-    await Promise.all(runners.map((r) => r.done));
+    await Promise.all([...runners.map((r) => r.done), this.cleaning]);
     // 진행 중 시도가 없는 lease만 놓는다. 진행 중이면 다른 호스트가 결과 불확실 기간을 지킬 수 있게 그대로 둔다
     await prisma.simulationRuntime
       .updateMany({ where: { leaseOwner: this.owner, inFlightAttemptId: null }, data: { leaseOwner: null, leaseExpiresAt: null } })

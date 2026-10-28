@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import { SSE_HEARTBEAT_INTERVAL_MS, SSE_PING_INTERVAL_MS, SSE_REPLAY_MAX_EVENTS } from "../../../config/limits";
 import { prisma } from "@/server/db/client";
 import { requireOwnedWorld } from "@/server/db/scope";
+import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { logServerError } from "@/server/logging/log";
 import { subscribeWorld } from "./event-bus";
@@ -10,8 +11,9 @@ import { subscribeWorld } from "./event-bus";
 // 세계관 SSE 스트림 (architecture.md §10.1, Phase 5-3). 런타임 독립(Web ReadableStream).
 // - 연결 전에 소유권을 확인한다. 없거나 타인 소유면 NotFoundError(404) — 스트림을 열지 않는다.
 // - SSE는 DB의 진실을 전달할 뿐이다. 이벤트 id = SimulationEvent.id. 재연결 시 Last-Event-ID 이후 outbox만 재전송한다.
-// - 이 스트림은 Gemini 호출·장면 생성을 시작하지 않는다(생성은 POST /scenes만).
-// - SseConnection 등록부에 연결을 기록한다(A12). 보류(clientHoldSince) 처리는 Runner 단계에서 추가한다.
+// - 이 스트림은 Gemini 호출·장면 생성을 시작하지 않는다(생성은 POST /scenes와 Runner).
+// - SseConnection 등록부에 연결을 기록한다(A12, 연결마다 행 1개, 10초 heartbeat, 종료 시 삭제).
+//   등록 직후·삭제 직후 reconcileClientHold로 SSE 연결 보류를 해제·시작한다(§7.5, Phase 5-4-3). 재연결로 자동 재개하지는 않는다.
 
 const INSTANCE_ID = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
 const encoder = new TextEncoder();
@@ -50,6 +52,7 @@ export async function openWorldStream({ userId, worldId, lastEventId, signal }: 
   await requireOwnedWorld(userId, worldId);
   const start = await resolveCursor(worldId, lastEventId);
   const connection = await prisma.sseConnection.create({ data: { worldId, userId, instanceId: INSTANCE_ID }, select: { id: true } });
+  await reconcileClientHold(worldId).catch((e: unknown) => logServerError("sse.hold-release", e)); // 보류 중이면 해제 (RUNNING 유지)
 
   let cursor = start.cursor;
   let closed = false;
@@ -59,7 +62,11 @@ export async function openWorldStream({ userId, worldId, lastEventId, signal }: 
     if (closed) return;
     closed = true;
     for (const fn of cleanups) fn();
-    prisma.sseConnection.deleteMany({ where: { id: connection.id } }).catch((e: unknown) => logServerError("sse.unregister", e));
+    // 마지막 활성 연결이었으면 보류를 시작한다 (다른 탭이 연결돼 있으면 아무것도 바꾸지 않음)
+    prisma.sseConnection
+      .deleteMany({ where: { id: connection.id } })
+      .then(() => reconcileClientHold(worldId))
+      .catch((e: unknown) => logServerError("sse.unregister", e));
   };
 
   return new ReadableStream<Uint8Array>({

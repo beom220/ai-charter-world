@@ -1,4 +1,4 @@
-import { SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
+import { CLIENT_HOLD_TIMEOUT_MS, SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
 import type { IntervalPreset, Prisma, StatusReason } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/client";
 import { requireOwnedWorld } from "@/server/db/scope";
@@ -27,8 +27,10 @@ export type SimulationStateView = {
   intervalPreset: IntervalPreset;
   nextSceneAt: string | null;
   inFlight: boolean;
-  /** SSE 연결 보류 (Phase 5-4-3에서 채운다) */
+  /** RUNNING인데 활성 SSE 연결이 없어 신규 호출을 보류 중 (§7.5) */
   held: boolean;
+  /** 보류가 이 시각까지 이어지면 PAUSED(CLIENT_DISCONNECTED) */
+  holdDeadline: string | null;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -52,7 +54,9 @@ async function readState(db: Tx | typeof prisma, worldId: string): Promise<Simul
     intervalPreset: gameState.intervalPreset,
     nextSceneAt: runtime.nextSceneAt?.toISOString() ?? null,
     inFlight: runtime.inFlightAttemptId !== null,
-    held: runtime.clientHoldSince !== null,
+    held: runtime.status === "RUNNING" && runtime.clientHoldSince !== null,
+    holdDeadline:
+      runtime.status === "RUNNING" && runtime.clientHoldSince ? new Date(runtime.clientHoldSince.getTime() + CLIENT_HOLD_TIMEOUT_MS).toISOString() : null,
   };
 }
 
@@ -101,7 +105,7 @@ export async function runSimulationCommand(
       });
     } else if (command === "resume") {
       await assertCanRun(userId, worldId, tx);
-      await tx.simulationRuntime.update({ where: { worldId }, data: { status: "RUNNING", statusReason: "USER", nextSceneAt: at } });
+      await tx.simulationRuntime.update({ where: { worldId }, data: { status: "RUNNING", statusReason: "USER", nextSceneAt: at, clientHoldSince: null } });
     } else if (command === "pause") {
       await tx.simulationRuntime.update({
         where: { worldId },

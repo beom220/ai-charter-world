@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { RUNNER_LEASE_RENEW_MS, RUNNER_LEASE_TTL_MS, RUNNER_POLL_INTERVAL_MS, SCENE_IN_FLIGHT_STALE_MS } from "../../../../config/limits";
 import type { StatusReason } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/client";
-import { NotFoundError } from "@/server/domain/errors";
+import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId, type AuthenticatedUserId } from "@/server/domain/identity";
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
-import { prepareScene, runSceneAttempt, type SceneDeps } from "@/server/domain/scenes/generate-scene";
+import { prepareScene, runSceneAttempt, SceneValidationFailedError, type SceneDeps } from "@/server/domain/scenes/generate-scene";
+import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
 import { publishRuntimeStatus, settlePausing } from "@/server/domain/simulation/control";
 import { CircuitOpenError, KeyChangedError, UsageLimitError } from "@/server/engine/usage/errors";
-import { notifyWorld } from "@/server/events/event-bus";
+import { notifyWorld, publishEvents } from "@/server/events/event-bus";
 import { logServerError } from "@/server/logging/log";
 import { nextSceneAfterBackoff, nextSceneAfterCommit, nextSceneAfterFailure } from "./schedule";
 
@@ -19,7 +20,10 @@ import { nextSceneAfterBackoff, nextSceneAfterCommit, nextSceneAfterFailure } fr
 //   3) PAUSING이면 PAUSED로 마무리하고 종료. RUNNING이면 nextSceneAt까지 대기
 //   4) 참가자·연결·키 준비 → 시도 기록(조건부 UPDATE: RUNNING + 같은 Run + lease 소유 + 진행 중 없음 + 예정 시각 도달)
 //      → 요청 직전 재검증 → UsageGuard 예약 → Gemini 1회 → 검증 → 펜싱 커밋(stateVersion·Run·lease·attemptId) + outbox
-//   5) 진행 중 표시 해제 + 다음 예약(nextSceneAt) 또는 PAUSED(USAGE_LIMIT·KEY_INVALID) + runtime.status, 한 트랜잭션
+//   5) 진행 중 표시 해제 + 다음 예약(nextSceneAt) 또는 PAUSED(USAGE_LIMIT·KEY_INVALID) + scene.failed·runtime.status, 한 트랜잭션
+// SSE 연결 보류(Phase 5-4-3): RUNNING이면 매 단계와 호출 중 heartbeat마다 reconcileClientHold로 보류 시작·해제·만료를 처리한다.
+//   보류 중에는 시도를 기록하지 않고(조건: clientHoldSince IS NULL), 요청 직전 재검증도 같은 조건을 본다.
+// 이벤트: 시도 기록과 같은 트랜잭션에서 scene.started, 커밋과 함께 scene.committed, 실패 확정과 함께 scene.failed.
 // DB 트랜잭션은 Gemini 요청 동안 열어 두지 않는다. 실패한 장면은 다시 보내지 않는다(다음 장면은 새 attemptId).
 
 export type RunnerContext = {
@@ -41,13 +45,26 @@ class AttemptPreemptedError extends Error {
   override name = "AttemptPreemptedError";
 }
 
+/** scene.failed의 공개 오류 코드 (오류 원문·키·프롬프트 없음) */
+export type SceneFailureCode =
+  | "VALIDATION_ERROR"
+  | "NETWORK_ERROR"
+  | "HTTP_ERROR"
+  | "USAGE_LIMIT"
+  | "BACKOFF"
+  | "KEY_INVALID"
+  | "STALE"
+  | "ABORTED"
+  | "RESULT_LOST"
+  | "INTERNAL_ERROR";
+
 type Outcome =
   | { kind: "committed"; turns: number }
-  | { kind: "failed" }
-  | { kind: "backoff"; until: Date }
-  | { kind: "pause"; reason: StatusReason }
+  | { kind: "failed"; code: SceneFailureCode }
+  | { kind: "backoff"; until: Date; code: SceneFailureCode }
+  | { kind: "pause"; reason: StatusReason; code: SceneFailureCode }
   /** 외부 요청 전에 멈춤(상태 변경·키 교체). 실패로 세지 않고 예약도 바꾸지 않는다 */
-  | { kind: "skipped" };
+  | { kind: "skipped"; code: SceneFailureCode };
 
 const KEY_FATAL = new Set(["KEY_INVALID", "PERMISSION_DENIED"]);
 
@@ -69,11 +86,17 @@ export async function runWorldTick(worldId: string, ctx: RunnerContext): Promise
   });
   if (!rt) return EXIT;
 
+  if (rt.status === "RUNNING") {
+    const hold = await reconcileClientHold(worldId, at);
+    if (hold === "paused") return waitFor(0); // PAUSED면 다음 단계에서 종료, PAUSING이면 진행 중 시도 처리
+    if (hold === "held" && !rt.inFlightAttemptId) return waitFor(RUNNER_POLL_INTERVAL_MS); // 활성 연결 0: 신규 호출 보류
+  }
+
   if (rt.inFlightAttemptId) {
     // lease 만료는 이전 요청이 끝났다는 증거가 아니다. 확실히 끝났을 시간까지 새 호출을 하지 않는다
     const staleAt = (rt.inFlightStartedAt?.getTime() ?? 0) + SCENE_IN_FLIGHT_STALE_MS;
     if (staleAt > at.getTime()) return waitFor(staleAt - at.getTime());
-    await finishAttempt(worldId, rt.inFlightAttemptId, { kind: "failed" }, ctx);
+    await finishAttempt(worldId, rt.inFlightAttemptId, { kind: "failed", code: "RESULT_LOST" }, ctx);
     return waitFor(0);
   }
   if (rt.status === "PAUSING") {
@@ -112,23 +135,41 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
     return;
   }
 
-  // 호출 전에 시도를 기록한다. 이 조건부 UPDATE가 세계관당 진행 중 생성 1건을 보장한다 (lease와 별개의 2차 방어)
+  // 호출 전에 시도를 기록한다. 이 조건부 UPDATE가 세계관당 진행 중 생성 1건을 보장한다 (lease와 별개의 2차 방어).
+  // 같은 트랜잭션에서 scene.started를 기록하므로 기록에 성공한 Runner만 이벤트를 낸다 (잠금 순서 World → Runtime)
   const attemptId = randomUUID();
   const startedAt = now();
-  const claimed = await prisma.simulationRuntime.updateMany({
-    where: {
-      worldId,
-      status: "RUNNING",
-      currentRunId: runId,
-      leaseOwner: owner,
-      inFlightAttemptId: null,
-      OR: [{ nextSceneAt: null }, { nextSceneAt: { lte: startedAt } }],
-    },
-    data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
+  const claimed = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
+    const { count } = await tx.simulationRuntime.updateMany({
+      where: {
+        worldId,
+        status: "RUNNING",
+        currentRunId: runId,
+        leaseOwner: owner,
+        inFlightAttemptId: null,
+        clientHoldSince: null,
+        OR: [{ nextSceneAt: null }, { nextSceneAt: { lte: startedAt } }],
+      },
+      data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
+    });
+    if (count === 0) return false;
+    await publishEvents(tx, worldId, [
+      {
+        type: "scene.started",
+        payload: { worldId, attemptId, startedAt: startedAt.toISOString(), participants: prepared.characters.map((c) => c.name) },
+      },
+    ]);
+    return true;
   });
-  if (claimed.count === 0) return; // 그사이 상태가 바뀜 → 다음 단계에서 다시 판단
+  if (!claimed) return; // 그사이 상태가 바뀜 → 다음 단계에서 다시 판단
+  notifyWorld(worldId);
 
-  const heartbeat = setInterval(() => void renewLease(worldId, owner, now()), RUNNER_LEASE_RENEW_MS);
+  // 호출 중에도 lease를 갱신하고 보류 만료를 확인한다 (만료되면 PAUSING → 이 시도가 끝난 뒤 PAUSED)
+  const heartbeat = setInterval(() => {
+    void renewLease(worldId, owner, now());
+    void reconcileClientHold(worldId, now()).catch((e: unknown) => logServerError("runner.hold", e));
+  }, RUNNER_LEASE_RENEW_MS);
   heartbeat.unref?.();
   let outcome: Outcome;
   try {
@@ -141,7 +182,7 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
         runner: { runId, leaseOwner: owner },
         beforeRequest: async () => {
           const current = await prisma.simulationRuntime.count({
-            where: { worldId, status: "RUNNING", currentRunId: runId, leaseOwner: owner, inFlightAttemptId: attemptId },
+            where: { worldId, status: "RUNNING", currentRunId: runId, leaseOwner: owner, inFlightAttemptId: attemptId, clientHoldSince: null },
           });
           if (current !== 1) throw new AttemptPreemptedError();
         },
@@ -169,14 +210,21 @@ async function renewLease(worldId: string, owner: string, now: Date): Promise<vo
 }
 
 function classify(error: unknown): Outcome {
-  if (error instanceof UsageLimitError) return { kind: "pause", reason: "USAGE_LIMIT" };
-  if (error instanceof CircuitOpenError) return { kind: "backoff", until: error.until };
+  if (error instanceof UsageLimitError) return { kind: "pause", reason: "USAGE_LIMIT", code: "USAGE_LIMIT" };
+  if (error instanceof CircuitOpenError) return { kind: "backoff", until: error.until, code: "BACKOFF" };
   // 연결 미준비·삭제(NotFound: 세계관이 삭제된 경우면 아래 갱신이 0건이라 무해), 키 무효 응답 → 키를 바꿀 때까지 멈춘다
-  if (error instanceof ConnectionNotReadyError || error instanceof NotFoundError) return { kind: "pause", reason: "KEY_INVALID" };
-  if (error instanceof GeminiRequestError && KEY_FATAL.has(error.kind)) return { kind: "pause", reason: "KEY_INVALID" };
-  if (error instanceof AttemptPreemptedError || error instanceof KeyChangedError) return { kind: "skipped" };
+  if (error instanceof ConnectionNotReadyError || error instanceof NotFoundError) return { kind: "pause", reason: "KEY_INVALID", code: "KEY_INVALID" };
+  if (error instanceof GeminiRequestError && KEY_FATAL.has(error.kind)) return { kind: "pause", reason: "KEY_INVALID", code: "KEY_INVALID" };
+  if (error instanceof AttemptPreemptedError || error instanceof KeyChangedError) return { kind: "skipped", code: "ABORTED" };
   logServerError("runner.scene", error); // 이름·코드만 (키·프롬프트 없음)
-  return { kind: "failed" };
+  return { kind: "failed", code: failureCode(error) };
+}
+
+function failureCode(error: unknown): SceneFailureCode {
+  if (error instanceof SceneValidationFailedError) return "VALIDATION_ERROR";
+  if (error instanceof GeminiRequestError) return error.kind === "TIMEOUT" || error.kind === "NETWORK_ERROR" ? "NETWORK_ERROR" : "HTTP_ERROR";
+  if (error instanceof ConflictError && (error.code === "SCENE_STALE" || error.code === "STALE_REFERENCE")) return "STALE";
+  return "INTERNAL_ERROR";
 }
 
 /** 진행 중 표시 해제 + 다음 예약 또는 일시정지 + runtime.status를 한 트랜잭션으로. 이어서 PAUSING을 마무리한다 */
@@ -193,6 +241,10 @@ async function finishAttempt(worldId: string, attemptId: string | null, outcome:
       const at = now();
       if (attemptId) {
         await tx.simulationRuntime.updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } });
+        // scene.started를 낸 시도가 커밋되지 않고 끝남을 확정한다 (공개 코드만)
+        if (outcome.kind !== "committed") {
+          await publishEvents(tx, worldId, [{ type: "scene.failed", payload: { worldId, attemptId, failedAt: at.toISOString(), code: outcome.code } }]);
+        }
       }
       if (outcome.kind === "pause") {
         await tx.simulationRuntime.updateMany({
