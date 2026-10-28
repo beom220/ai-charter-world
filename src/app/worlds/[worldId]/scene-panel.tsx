@@ -42,7 +42,7 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
 // - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행 아이콘(시작·일시정지·재개·종료)과
-//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기]. 생성 중 표시·시작 안내·시스템 안내·오류는 바 바로 위에 함께 고정한다.
+//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기]. 생성 중 표시·시작 안내·시스템 안내·오류는 바 바로 위에 알림 카드로 고정한다.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
@@ -417,31 +417,16 @@ export function ScenePanel({
 
       {/* 하단 고정 영역: 안내·시스템 문구(있을 때) + 실행 바. 높이를 재서 피드 아래 여백으로 쓴다 */}
       <div ref={dockRef} className="fixed inset-x-0 bottom-0 z-30">
+        {/* 알림(노티피케이션) 카드: 바 위에 가운데로 쌓인다. 모든 문구는 같은 글자 크기(text-sm) */}
         {hasDockText && (
-          <div className="flex flex-col gap-1 bg-background/95 px-4 pt-2 pb-2 backdrop-blur sm:px-6">
-            {lacksCharacters ? (
-              <p className="text-sm text-foreground/70">
-                대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
-                <Link href={`/worlds/${worldId}/characters`} className="underline">
-                  캐릭터 탭
-                </Link>
-                에서 추가하세요.
-              </p>
-            ) : (
-              view.state.status === "IDLE" && (
-                <p className="text-xs text-foreground/60">
-                  시작하면 참여 캐릭터를 자동으로 정해 장면을 계속 만듭니다. 장면마다 Gemini API를 1회 호출합니다(본인 키 사용, 비용은 Google에서 청구).
-                </p>
-              )
-            )}
+          <div className="pointer-events-none flex flex-col items-center gap-2 px-4 pb-2 sm:px-6">
             {generating && (
-              <p role="status" className="text-sm text-foreground/70">
+              <Toast tone="progress" role="status">
                 {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
-              </p>
+              </Toast>
             )}
             {notice && (
-              <p role="status" className={`rounded-md px-3 py-2 text-sm ${notice.tone === "warn" ? "border border-amber-600/40 bg-amber-600/5" : "bg-foreground/5"}`}>
-                <span className="font-semibold">시스템 · </span>
+              <Toast tone={notice.tone === "warn" ? "warn" : "info"} role="status">
                 {notice.text}
                 {notice.settingsLink && (
                   <>
@@ -451,19 +436,32 @@ export function ScenePanel({
                     </a>
                   </>
                 )}
-              </p>
+              </Toast>
             )}
             {view.failure && view.state.status === "RUNNING" && (
-              <p role="status" className="rounded-md bg-foreground/5 px-3 py-2 text-sm text-foreground/80">
-                <span className="font-semibold">시스템 · </span>
+              <Toast tone="warn" role="status">
                 {view.failure}
-              </p>
+              </Toast>
             )}
             {error && (
-              <p role="alert" className="rounded-md border border-red-600/40 bg-red-600/5 px-3 py-2 text-sm text-red-600">
-                <span className="font-semibold">시스템 · </span>
+              <Toast tone="error" role="alert">
                 {error}
-              </p>
+              </Toast>
+            )}
+            {lacksCharacters ? (
+              <Toast tone="info">
+                대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
+                <Link href={`/worlds/${worldId}/characters`} className="underline">
+                  캐릭터 탭
+                </Link>
+                에서 추가하세요.
+              </Toast>
+            ) : (
+              view.state.status === "IDLE" && (
+                <Toast tone="info">
+                  시작하면 참여 캐릭터를 자동으로 정해 장면을 계속 만듭니다. 장면마다 Gemini API를 1회 호출합니다(본인 키 사용, 비용은 Google에서 청구).
+                </Toast>
+              )
             )}
           </div>
         )}
@@ -590,5 +588,28 @@ function SpeedIcon() {
       <path d="m12 14 4-4" />
       <path d="M3.34 19a10 10 0 1 1 17.32 0" />
     </svg>
+  );
+}
+
+// ── 하단 알림 카드 (노티피케이션 형태). 색 점 + 본문, 글자 크기는 모두 text-sm
+type ToastTone = "progress" | "info" | "warn" | "error";
+const TOAST_DOT: Record<ToastTone, string> = {
+  progress: "animate-pulse bg-[#3B82F6]",
+  info: "bg-foreground/40",
+  warn: "bg-amber-500",
+  error: "bg-red-600",
+};
+
+function Toast({ tone, role, children }: { tone: ToastTone; role?: "status" | "alert"; children: React.ReactNode }) {
+  return (
+    <div
+      role={role}
+      className={`pointer-events-auto flex w-full max-w-xl items-start gap-2.5 rounded-xl border bg-background/95 px-4 py-2.5 text-sm shadow-lg backdrop-blur ${
+        tone === "error" ? "border-red-600/40 text-red-600" : tone === "warn" ? "border-amber-500/50 text-foreground" : "border-foreground/10 text-foreground/80"
+      }`}
+    >
+      <span aria-hidden className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TOAST_DOT[tone]}`} />
+      <p className="min-w-0 flex-1 break-words">{children}</p>
+    </div>
   );
 }
