@@ -130,6 +130,24 @@ describe("Runner 단계 (runWorldTick)", () => {
     expect((await prisma.gameState.findUniqueOrThrow({ where: { worldId: world.id } })).nextSceneSeq).toBe(1);
   });
 
+  it("진행 중 stop → 바로 start: 이전 Run의 늦은 결과는 새 Run의 첫 장면 예약·연속 실패 수에 영향을 주지 않는다", async () => {
+    const { world, mock, clock, ctx, command } = await setup("run-restart", { delayMs: 300 });
+    const runner = ctx();
+    const tick = runWorldTick(world.id, runner);
+    await until(() => mock.receivedKeys.length === 1);
+    await command("stop");
+    clock.ms += 1_000;
+    await command("start");
+    await tick;
+    expect(await sceneCount(world.id)).toBe(0);
+    expect(await runtime(world.id)).toMatchObject({ status: "RUNNING", inFlightAttemptId: null, nextSceneAt: new Date(T0 + 1_000) });
+    expect(runner.state.failures).toBe(0);
+    expect((await prisma.simulationEvent.findMany({ where: { worldId: world.id, type: "scene.failed" } })).map((e) => (e.payload as { code: string }).code)).toEqual(["STALE"]);
+    await runWorldTick(world.id, runner); // 새 Run의 첫 장면은 바로 시작한다
+    expect(mock.calls).toHaveLength(2);
+    expect(await sceneCount(world.id)).toBe(1);
+  });
+
   it("lease 만료·재시작: 남은 진행 중 시도는 재시도하지 않고, 결과 불확실 기간이 지난 뒤 새 장면을 간격 뒤에 시작한다", async () => {
     const { world, mock, clock, ctx } = await setup("run-recover");
     await prisma.simulationRuntime.update({

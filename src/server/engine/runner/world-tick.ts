@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { RUNNER_LEASE_RENEW_MS, RUNNER_LEASE_TTL_MS, RUNNER_POLL_INTERVAL_MS, SCENE_IN_FLIGHT_STALE_MS } from "../../../../config/limits";
-import type { StatusReason } from "@/generated/prisma/client";
+import type { Prisma, StatusReason } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/client";
 import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId, type AuthenticatedUserId } from "@/server/domain/identity";
@@ -137,7 +137,7 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
   try {
     prepared = await prepareScene(userId, worldId, deps);
   } catch (error) {
-    await finishAttempt(worldId, null, classify(error), ctx);
+    await finishAttempt(worldId, null, classify(error), ctx, runId);
     return;
   }
 
@@ -179,7 +179,7 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
   } finally {
     clearInterval(heartbeat);
   }
-  await finishAttempt(worldId, attemptId, outcome, ctx);
+  await finishAttempt(worldId, attemptId, outcome, ctx, runId);
 }
 
 /**
@@ -255,11 +255,14 @@ function failureCode(error: unknown): SceneFailureCode {
   return "INTERNAL_ERROR";
 }
 
-/** 진행 중 표시 해제 + 다음 예약 또는 일시정지 + runtime.status를 한 트랜잭션으로. 이어서 PAUSING을 마무리한다 */
-async function finishAttempt(worldId: string, attemptId: string | null, outcome: Outcome, ctx: RunnerContext): Promise<void> {
+/**
+ * 진행 중 표시 해제 + 다음 예약 또는 일시정지 + runtime.status를 한 트랜잭션으로. 이어서 PAUSING을 마무리한다.
+ * runId를 주면 다음 예약·연속 실패 수는 그 Run이 아직 현재 Run일 때만 반영한다
+ * (진행 중 종료 → 바로 시작한 뒤 끝난 이전 Run의 시도가 새 Run의 첫 장면을 미루거나 실패 간격을 늘리지 않게)
+ */
+async function finishAttempt(worldId: string, attemptId: string | null, outcome: Outcome, ctx: RunnerContext, runId: string | null = null): Promise<void> {
   const now = ctx.deps?.now ?? (() => new Date());
   if (outcome.kind === "committed") ctx.state.failures = 0;
-  if (outcome.kind === "failed") ctx.state.failures += 1;
   try {
     const published = await prisma.$transaction(async (tx) => {
       // 잠금 순서 World → Runtime (제어 명령과 같음). outbox INSERT가 World에 FK 잠금을 걸므로 먼저 잡는다
@@ -281,7 +284,8 @@ async function finishAttempt(worldId: string, attemptId: string | null, outcome:
           where: { worldId, status: { in: ["RUNNING", "PAUSING"] } },
           data: { status: "PAUSED", statusReason: outcome.reason, leaseOwner: null, leaseExpiresAt: null, nextSceneAt: null },
         });
-      } else if (outcome.kind !== "skipped") {
+      } else if (outcome.kind !== "skipped" && (await currentRun(tx, worldId, runId))) {
+        if (outcome.kind === "failed") ctx.state.failures += 1;
         // 속도 설정은 이 시점의 값을 쓴다 (실행 중 변경이 다음 예약부터 반영)
         const next =
           outcome.kind === "committed"
@@ -299,4 +303,10 @@ async function finishAttempt(worldId: string, attemptId: string | null, outcome:
     logServerError("runner.finish", error);
   }
   await settlePausing(worldId);
+}
+
+/** 이 시도의 Run이 아직 실행 중인 현재 Run인가 (runId가 없으면 현재 Run으로 본다) */
+async function currentRun(tx: Prisma.TransactionClient, worldId: string, runId: string | null): Promise<boolean> {
+  const rt = await tx.simulationRuntime.findUnique({ where: { worldId }, select: { status: true, currentRunId: true } });
+  return rt?.status === "RUNNING" && (runId === null || rt.currentRunId === runId);
 }
