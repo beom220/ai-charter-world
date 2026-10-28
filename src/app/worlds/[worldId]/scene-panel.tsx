@@ -65,7 +65,6 @@ const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
 
 export function ScenePanel({
   worldId,
-  activeCount,
   activeCharacterIds,
   initialScenes,
   initialHasMore,
@@ -74,8 +73,7 @@ export function ScenePanel({
   saveControls,
 }: {
   worldId: string;
-  activeCount: number;
-  /** 이 세계관의 활성 캐릭터 ID: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분) */
+  /** 이 세계관의 활성 캐릭터 ID: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분). 수는 시작 안내에 쓴다 */
   activeCharacterIds: string[];
   /** 실행 제어 줄에 놓을 [저장]·[불러오기] */
   saveControls: React.ReactNode;
@@ -94,7 +92,14 @@ export function ScenePanel({
   const router = useRouter();
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const activeIds = new Set(activeCharacterIds);
+  // 활성 캐릭터: 서버가 다시 그리면 props로, 숨김에서 복원(<Activity>)되면 SSE 연결 직후 다시 받아 갱신한다
+  const [characterIds, setCharacterIds] = useState(activeCharacterIds);
+  const [propIds, setPropIds] = useState(activeCharacterIds);
+  if (propIds !== activeCharacterIds) {
+    setPropIds(activeCharacterIds);
+    setCharacterIds(activeCharacterIds);
+  }
+  const activeIds = new Set(characterIds);
 
   const scenesRef = useRef(scenes);
   const playbackRef = useRef<ScenePlayback | null>(null);
@@ -124,6 +129,12 @@ export function ScenePanel({
     if (parsed?.success) setView((v) => withState(v, parsed.data));
   }, [worldId]);
 
+  /** 활성 캐릭터 목록을 다시 읽는다 (다른 탭에서 추가·삭제했을 수 있다) */
+  const refreshCharacters = useCallback(async () => {
+    const { ok, json } = await send(`/api/worlds/${worldId}/characters`, "GET").catch(() => ({ ok: false, json: null }));
+    if (ok) setCharacterIds((json.characters as { id: string }[]).map((c) => c.id));
+  }, [worldId]);
+
   // 세계관 이벤트 구독. 이 연결은 장면 생성·실행 명령을 시작하지 않는다 (연결 자체가 서버의 연결 보류를 해제할 뿐)
   useEffect(() => {
     const es = new EventSource(`/api/worlds/${worldId}/simulation/stream?lastEventId=${encodeURIComponent(eventCursor)}`);
@@ -139,6 +150,7 @@ export function ScenePanel({
     es.onopen = () => {
       setStream("open");
       void refreshState();
+      void refreshCharacters();
     };
     es.onerror = () => {
       setStream(es.readyState === EventSource.CLOSED ? "closed" : "reconnecting");
@@ -190,7 +202,7 @@ export function ScenePanel({
         body: JSON.stringify({ connectionId }),
       }).catch(() => undefined);
     };
-  }, [worldId, eventCursor, addScenes, refreshState, router]);
+  }, [worldId, eventCursor, addScenes, refreshState, refreshCharacters, router]);
 
   // 피드 내용이 바뀐 직후(그리기 전) 스크롤 위치를 맞춘다: 이전 기록 추가 → 위치 유지, 하단 근처 → 맨 아래
   useLayoutEffect(() => {
@@ -341,7 +353,7 @@ export function ScenePanel({
         })}
       </div>
 
-      {activeCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE" ? (
+      {characterIds.length < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE" ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm text-foreground/70">
             대화하려면 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
