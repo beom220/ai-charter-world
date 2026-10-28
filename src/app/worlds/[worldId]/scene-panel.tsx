@@ -94,7 +94,7 @@ export function ScenePanel({
   const router = useRouter();
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeIds] = useState(() => new Set(activeCharacterIds));
+  const activeIds = new Set(activeCharacterIds);
 
   const scenesRef = useRef(scenes);
   const playbackRef = useRef<ScenePlayback | null>(null);
@@ -136,7 +136,10 @@ export function ScenePanel({
         connectionId = null;
       }
     });
-    es.onopen = () => setStream("open");
+    es.onopen = () => {
+      setStream("open");
+      void refreshState();
+    };
     es.onerror = () => {
       setStream(es.readyState === EventSource.CLOSED ? "closed" : "reconnecting");
       playbackRef.current?.flush(); // 남은 연출은 건너뛰고 받은 대사를 모두 보여 준다
@@ -177,6 +180,7 @@ export function ScenePanel({
     // 새로고침·탭 닫기는 여기 오지 않을 수 있으므로 SSE 연결 종료 → 연결 보류(신규 호출 즉시 중단, 60초 뒤 PAUSED)가 맡는다.
     // 연결 ID를 받기 전(개발 모드 StrictMode의 즉시 cleanup 등)에는 보내지 않는다: 서버에 등록된 적 없는 연결로 일시정지하지 않게.
     return () => {
+      playbackRef.current?.flush(); // 화면 이탈 시 진행 중이던 대사 재생을 마무리한다
       es.close();
       if (!connectionId) return;
       void fetch(`/api/worlds/${worldId}/simulation/leave`, {
