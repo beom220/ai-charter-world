@@ -328,7 +328,7 @@ export function ScenePanel({
   const lacksCharacters = aliveCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE";
 
   return (
-    <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6 pb-28">
+    <section className="flex flex-col gap-3 pt-2 pb-28">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">
           대화 장면 <span className="text-sm font-normal text-foreground/60">· {STATUS_LABEL[view.state.status]}</span>
