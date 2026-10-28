@@ -1070,6 +1070,17 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **화면**: 대화 피드의 말풍선은 캐릭터 발화만. 사건 발생은 장면 대사 앞, 해결·상태 변화·사망은 대사 공개 뒤에 시스템 줄로(`SceneView.notes`), 진행 중 사건 목록(`GET /api/worlds/[id]/events`)과 월드 시각은 피드 위. 캐릭터 목록 배지·상세 신체 상태 패널(실시간 갱신).
 - **세이브**: 스냅샷 v4(`lib/snapshot/v4.ts`) = v3 + `gameState.worldSeconds`·장면/사건/변화의 월드 시각·신체 상태 재구성. `migrateV3ToV4`는 DB 마이그레이션 20261028150000과 같은 보존적 매핑. 시계 기준(anchor)은 담지 않는다.
 
+**Phase 7-2-3 사용자 지정 사건 (PRD v2.1)** — `domain/events/user-events.ts`, `engine/commit/event-rules.ts`.
+
+- **API**: `GET /api/worlds/[id]/events` → `{ active, pending[{id, text, createdAt, claimed}] }`, `POST` `{ text ≤200자, requestId }` → 201(새) / 200(같은 requestId 재전송), `DELETE /api/worlds/[id]/events/[eventId]` → 대기 사건 취소. 오류: 409 `USER_EVENT_PENDING_LIMIT`·`USER_EVENT_REQUEST_REUSED`·`USER_EVENT_NOT_CANCELLABLE`·`USER_EVENT_IN_PROGRESS`, 429 `USER_EVENT_TOO_SOON`·`USER_EVENT_DAILY_LIMIT`(Retry-After), 타인 세계관·사건 404.
+- **등록·취소**: World 행 잠금(소유자 조건) 아래에서 멱등 키 → 대기 3건 → 30초 간격 → KST 하루 30건(취소 포함) 순으로 검사한다. 설정 변경이 아니므로 첫 장면 이후에도 허용하고 `settingsSeq`는 그대로, `changeSeq`만 +1. outbox `world_event.updated`(submitted·cancelled·started).
+- **점유**: Runner `claimAttempt`·수동 생성 점유 트랜잭션(World 잠금, `inFlightAttemptId` 기록 직후)에서 `claimUserEvent`가 다른 시도 ID로 남은 점유를 풀고 가장 오래된 PENDING 1건에 `claimedAttemptId`를 단다. 실패·펜싱·건너뜀은 `finishAttempt`·수동 `finally`의 `releaseUserEventClaim`으로 해제. 커밋 트랜잭션은 "PENDING이고 이 시도가 점유 중"일 때만 ACTIVE로 바꾸고, 아니면 장면 전체를 `SCENE_STALE`로 버린다(취소된 사건이 대사에 남지 않음).
+- **취소**: PENDING이고 점유한 시도가 지금 진행 중(`inFlightAttemptId` 일치, `SCENE_IN_FLIGHT_STALE_MS` 이내)이 아닐 때만. 오래된 점유는 취소하며 점유를 지운다(늦은 커밋은 위 확인으로 거부).
+- **프롬프트·강도**: 새 사용자 사건은 `<events>`에 원문 그대로 「」로(자르지 않음, 제목 없이) 넣고 `<events>`도 데이터 태그로 명시한다. `intensity = MEDIUM`, `EventRef.highIntensity`(장면 전체 고강도)는 자동 HIGH 사건에만. 출력 `events[].danger`(NONE·ATTACK·DISASTER·ACCIDENT)가 그 사건의 실제 위험을 보고하고 캐릭터 `conditions[].eventRef`가 그 사건이면 그 캐릭터에게만 고강도 한도, 위험이 없는 사용자 사건을 가리키는 부상·사망 제안은 버린다.
+- **해결 판정** (`acceptResolution`, 자동·사용자 공통): `status RESOLVED` + `resolutionKind`(SOLVED·MITIGATED·FAILED·COMPROMISE·THREAT_GONE) + 요약. 요약이 발생·발견·논의 표현이나 계획·시도 어절(…하기로·…려고·시도·할)을 담으면 그 어절을 뺀 나머지에 결과 표현(해결했·쫓아냈·실패했·마무리됐 등)이 있어야 한다. 새 사건은 LOW만 첫 장면 해결. 형식이 틀린 `resolutionKind`·`danger`는 그 값만 비운다.
+- **화면**: 대화 탭 `[사건 일으키기]` 모달(200자·남은 글자 수·명령이 아니라는 안내), 대기 목록·취소(점유 중이면 "장면에 반영 중"), 진행 중 사건의 사용자 사건 배지, 장면 노트 `USER_EVENT_STARTED`(자동 사건과 다른 색). 목록은 `scene.started`·`scene.committed`·`scene.failed`·`world_event.updated`·재연결 때 다시 읽는다.
+- **세이브**: 스냅샷 v4 그대로(사용자 사건 필드는 v3부터 포함, `claimedAttemptId` 제외 → 복원 시 점유 없음).
+
 ### 13.3 사건 시스템과 캐릭터 신체 상태 (Phase 7-2, PRD v1.9)
 
 실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터(완료) → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 스파이크.

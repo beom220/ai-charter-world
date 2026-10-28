@@ -7,7 +7,7 @@ import type { Prisma } from "@/generated/prisma/client";
 // payload에는 사용자에게 보여 줄 확정 데이터만 넣는다. API 키·프롬프트·내부 오류 원문은 넣지 않는다.
 
 export type SimEvent = {
-  type: "scene.started" | "scene.committed" | "scene.failed" | "runtime.status" | "saves.updated" | "state.replaced";
+  type: "scene.started" | "scene.committed" | "scene.failed" | "runtime.status" | "saves.updated" | "state.replaced" | "world_event.updated";
   payload: Prisma.InputJsonValue;
 };
 

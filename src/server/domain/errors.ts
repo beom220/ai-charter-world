@@ -53,3 +53,14 @@ export class ConflictError extends AppError {
     super(409, code, message);
   }
 }
+
+/** 빈도 제한 (429). retryAfterSeconds가 있으면 Retry-After 헤더로 보낸다 */
+export class TooManyRequestsError extends AppError {
+  constructor(
+    code: string,
+    message: string,
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(429, code, message);
+  }
+}

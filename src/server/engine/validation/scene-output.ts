@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MEMORY_CONTENT_MAX_LENGTH, MEMORY_PER_OWNER_PER_SCENE, MEMORY_PER_SCENE_MAX, SCENE_TURNS_MIN } from "../../../../config/limits";
 import type { MemoryAcquisition, MemoryKind, Mood } from "@/generated/prisma/client";
+import { EVENT_DANGERS, RESOLUTION_KINDS } from "../commit/event-rules";
 
 // StoryMode 장면 출력 검증 (architecture.md §6.5 출력 스키마 v1, §6.6 SceneValidator). 런타임 독립 순수 모듈.
 // LLM 출력은 제안일 뿐이다: 파싱·Zod·별칭 참조 검사를 모두 통과해야 장면 초안이 된다.
@@ -12,6 +13,7 @@ import type { MemoryAcquisition, MemoryKind, Mood } from "@/generated/prisma/cli
 // - 없거나 형식이 틀려도 장면은 저장한다(사건은 미해결로 계속, 상태는 자연 변화만). 사건 별칭(E1…)이 이번 프롬프트에 없으면 그 항목만 버린다
 //   (다른 사건을 잘못 종료하지 않는다). 상태 제안의 캐릭터는 참가자 별칭만 가능하다(사망자·비참가자는 발화·참조 불가).
 // - 단계의 타당성(한 장면 상한·원인·치료 근거·사망 조건)은 커밋 때 engine/commit/condition-rules가 검증한다.
+// - 사건 결과 종류(resolutionKind)·위험(danger, 7-2-3)은 형식이 틀리면 그 값만 비운다. 해결·위험 인정은 engine/commit/event-rules가 판단한다.
 
 export const SCENE_ALIASES = ["C1", "C2", "C3", "C4", "C5", "C6"] as const;
 export type SceneAlias = (typeof SCENE_ALIASES)[number];
@@ -83,6 +85,10 @@ const eventOutcomeSchema = z.object({
   realization: z.string().trim().refine(cp(200)).nullable().default(null),
   /** 생물이 불가능한 세계관이라 대체 사건으로 썼는가 */
   usedFallback: z.boolean().default(false),
+  /** RESOLVED의 결과 종류 (7-2-3). 없으면 해결로 받지 않는다 */
+  resolutionKind: z.enum(RESOLUTION_KINDS).nullable().catch(null).default(null),
+  /** 이번 장면에서 이 사건으로 실제 일어난 신체 위험 (7-2-3). 사용자 사건의 고강도 악화 허용 근거 */
+  danger: z.enum(EVENT_DANGERS).catch("NONE").default("NONE"),
 });
 
 const conditionProposalSchema = z.object({
@@ -203,8 +209,10 @@ export function sceneResponseJsonSchema(aliases: readonly SceneAlias[], maxTurns
                   resolutionSummary: nullableString(300),
                   realization: nullableString(200),
                   usedFallback: { type: "boolean" },
+                  resolutionKind: { type: ["string", "null"], enum: [...RESOLUTION_KINDS, null] },
+                  danger: { type: "string", enum: [...EVENT_DANGERS] },
                 },
-                required: ["ref", "status", "resolutionSummary", "realization", "usedFallback"],
+                required: ["ref", "status", "resolutionSummary", "realization", "usedFallback", "resolutionKind", "danger"],
               },
             },
           }

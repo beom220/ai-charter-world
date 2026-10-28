@@ -17,6 +17,7 @@ import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { applySceneProposals, loadParticipantContext } from "./scene-state";
 import { applySceneWorld, claimAutoEvent, conditionPromptLines, countAlive, DEFAULT_CONDITION_STATE, loadPromptEvents, loadSceneNotes, type AutoEventClaim, type SceneNote } from "./scene-world";
 import { settleWorldClock } from "@/server/domain/simulation/world-clock";
+import { claimUserEvent, releaseUserEventClaim, type UserEventClaim } from "@/server/domain/events/user-events";
 import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/server/domain/providers/gemini-verification";
 
 // 수동 대화 장면 1개 생성 (Phase 5-1 Vertical Slice, architecture.md §6.3~§6.7의 축소판). 런타임 독립.
@@ -160,6 +161,8 @@ export type SceneAttempt = {
   beforeRequest?: () => Promise<void>;
   /** 시도 기록 때 정한 자동 사건 (예약 장면이면). 커밋 트랜잭션에서 사건을 만들고 구간을 발생 처리한다 */
   autoEvent?: AutoEventClaim | null;
+  /** 시도 기록 때 점유한 대기 사용자 사건 (7-2-3). 커밋 트랜잭션에서 점유가 그대로일 때만 ACTIVE로 바꾼다 */
+  userEvent?: UserEventClaim | null;
   /**
    * 수동 생성: 커밋 때 settingsSeq가 준비 시점과 같아야 한다(IDLE에서는 호출 중에도 설정을 바꿀 수 있으므로).
    * Runner는 진행 중 시도가 있으면 설정 수정이 거부되므로 쓰지 않는다.
@@ -243,7 +246,7 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
   //    Runner의 시도 기록과 같이 World 잠금 아래에서 설정 펜싱(settingsSeq)을 확인한 뒤 점유한다 (잠금 순서 World → Runtime)
   const attemptId = randomUUID();
   const startedAt = now();
-  const autoEvent = await prisma.$transaction(async (tx) => {
+  const claims = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
     if (!(await settingsUnchanged(tx, worldId, prepared.settingsSeq))) throw settingsChangedError();
     const claimed = await tx.simulationRuntime.updateMany({
@@ -255,12 +258,14 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
       data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
     });
     if (claimed.count === 0) throw new ConflictError("SCENE_IN_PROGRESS", "이 세계관에서 이미 장면을 생성하고 있습니다. 잠시 후 다시 시도하세요.");
-    return claimAutoEvent(tx, worldId, deps.random ?? Math.random); // 자동 사건 구간 판정 (Runner와 같은 영속 규칙)
+    // 자동 사건 구간 판정 (Runner와 같은 영속 규칙)과 가장 오래된 대기 사용자 사건 점유
+    return { autoEvent: await claimAutoEvent(tx, worldId, deps.random ?? Math.random), userEvent: await claimUserEvent(tx, worldId, attemptId) };
   });
 
   try {
-    return await runSceneAttempt(userId, worldId, prepared, { attemptId, expectedSettingsSeq: prepared.settingsSeq, autoEvent }, deps);
+    return await runSceneAttempt(userId, worldId, prepared, { attemptId, expectedSettingsSeq: prepared.settingsSeq, ...claims }, deps);
   } finally {
+    await releaseUserEventClaim(prisma, worldId, attemptId).catch((e: unknown) => logServerError("scene.release-event", e));
     await prisma.simulationRuntime
       .updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } })
       .catch((e: unknown) => logServerError("scene.release", e));
@@ -281,7 +286,7 @@ export async function runSceneAttempt(
   const expected = await prisma.gameState.findUniqueOrThrow({ where: { worldId }, select: { stateVersion: true, maxTurnsPerScene: true } });
   const maxTurns = expected.maxTurnsPerScene;
   const aliases = characters.map((c) => c.alias);
-  const promptEvents = await loadPromptEvents(worldId, attempt.autoEvent ?? null);
+  const promptEvents = await loadPromptEvents(worldId, attempt.autoEvent ?? null, attempt.userEvent ?? null);
   const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId, settingsChangedAt), {
     worldSeconds: world.gameState!.worldSeconds,
     events: promptEvents.events,
@@ -403,7 +408,7 @@ export async function runSceneAttempt(
     // 감정·관계·기억 제안 반영 (Phase 5-5). 같은 트랜잭션이므로 실패하면 장면과 함께 아무것도 저장되지 않는다
     await applySceneProposals(tx, worldId, scene.id, characters, output.proposals);
     // 사건 발생·진행·해결과 신체 상태(Phase 7-2-2). 같은 트랜잭션이므로 실패·펜싱 거부면 사건·상태도 남지 않는다
-    await applySceneWorld(tx, {
+    const applied = await applySceneWorld(tx, {
       worldId,
       scene: { id: scene.id, seq: scene.seq },
       worldSeconds,
@@ -412,6 +417,7 @@ export async function runSceneAttempt(
       output,
       refs: promptEvents.refs,
       autoEvent: attempt.autoEvent ?? null,
+      userEvent: attempt.userEvent ?? null,
     });
     // 사망으로 대화 가능한 생존자가 2명 미만이면 실행을 멈춘다 (이 시도는 그대로 커밋, 진행 중 표시가 풀리면 PAUSED)
     if ((await countAlive(tx, worldId)) < SCENE_PARTICIPANTS_MIN) {
@@ -428,7 +434,10 @@ export async function runSceneAttempt(
     // 검증·저장된 내용만 이벤트로 보낸다 (프롬프트·키·응답 원문 없음)
     const notes = await loadSceneNotes(tx, worldId, [{ id: scene.id, seq: scene.seq }]);
     const view = toView(await tx.conversationScene.findUniqueOrThrow({ where: { id: scene.id }, select: sceneSelect }), notes.get(scene.id));
-    await publishEvents(tx, worldId, [{ type: "scene.committed", payload: { scene: JSON.parse(JSON.stringify(view)) } }]);
+    await publishEvents(tx, worldId, [
+      { type: "scene.committed", payload: { scene: JSON.parse(JSON.stringify(view)) } },
+      ...(applied.userEventStarted ? [{ type: "world_event.updated" as const, payload: { worldId, reason: "started" } }] : []),
+    ]);
     return view;
   });
 

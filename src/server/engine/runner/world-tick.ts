@@ -7,6 +7,7 @@ import { asAuthenticatedUserId, type AuthenticatedUserId } from "@/server/domain
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
 import { prepareScene, runSceneAttempt, SceneValidationFailedError, settingsUnchanged, type SceneDeps } from "@/server/domain/scenes/generate-scene";
 import { claimAutoEvent, type AutoEventClaim } from "@/server/domain/scenes/scene-world";
+import { claimUserEvent, releaseUserEventClaim, type UserEventClaim } from "@/server/domain/events/user-events";
 
 type PreparedScene = Awaited<ReturnType<typeof prepareScene>>;
 import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
@@ -162,6 +163,7 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
         attemptId,
         runner: { runId, leaseOwner: owner },
         autoEvent: claimed.autoEvent,
+        userEvent: claimed.userEvent,
         beforeRequest: async () => {
           const current = await prisma.simulationRuntime.count({
             where: { worldId, status: "RUNNING", currentRunId: runId, leaseOwner: owner, inFlightAttemptId: attemptId, clientHoldSince: null },
@@ -182,7 +184,7 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
 
 /**
  * 시도 기록 (테스트에서 직접 부른다). 준비 이후 상태·설정이 바뀌었으면 null.
- * 기록에 성공하면 같은 트랜잭션에서 자동 사건 구간을 판정해(구간당 한 번, 영속) 이번 장면의 자동 사건을 함께 돌려준다.
+ * 기록에 성공하면 같은 트랜잭션에서 자동 사건 구간을 판정해(구간당 한 번, 영속) 이번 장면의 자동 사건과, 점유한 가장 오래된 대기 사용자 사건을 함께 돌려준다.
  * 호출 전에 시도를 기록한다. 이 조건부 UPDATE가 세계관당 진행 중 생성 1건을 보장한다 (lease와 별개의 2차 방어).
  * 같은 트랜잭션에서 scene.started를 기록하므로 기록에 성공한 Runner만 이벤트를 낸다 (잠금 순서 World → Runtime)
  */
@@ -194,7 +196,7 @@ export async function claimAttempt(
   attemptId: string,
   startedAt: Date,
   random: () => number = Math.random,
-): Promise<{ autoEvent: AutoEventClaim | null } | null> {
+): Promise<{ autoEvent: AutoEventClaim | null; userEvent: UserEventClaim | null } | null> {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
     // 준비 이후 설정 수정·불러오기로 settingsSeq가 바뀌었으면 이전 설정으로 호출하지 않고 다음 단계에서 다시 준비한다
@@ -213,13 +215,14 @@ export async function claimAttempt(
     });
     if (count === 0) return null;
     const autoEvent = await claimAutoEvent(tx, worldId, random);
+    const userEvent = await claimUserEvent(tx, worldId, attemptId); // 가장 오래된 대기 사용자 사건 (취소 불가가 된다)
     await publishEvents(tx, worldId, [
       {
         type: "scene.started",
         payload: { worldId, attemptId, startedAt: startedAt.toISOString(), participants: prepared.characters.map((c) => c.name) },
       },
     ]);
-    return { autoEvent };
+    return { autoEvent, userEvent };
   });
 }
 
@@ -266,6 +269,7 @@ async function finishAttempt(worldId: string, attemptId: string | null, outcome:
       const at = now();
       if (attemptId) {
         await tx.simulationRuntime.updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } });
+        await releaseUserEventClaim(tx, worldId, attemptId); // 커밋되지 않은 시도의 사용자 사건 점유를 푼다 (다음 시도가 다시 점유)
         // scene.started를 낸 시도가 커밋되지 않고 끝남을 확정한다 (공개 코드만)
         if (outcome.kind !== "committed") {
           await publishEvents(tx, worldId, [{ type: "scene.failed", payload: { worldId, attemptId, failedAt: at.toISOString(), code: outcome.code } }]);

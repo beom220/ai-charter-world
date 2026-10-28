@@ -24,7 +24,7 @@ import {
 import { button, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
-import { ActiveEvents, SceneNotes, WorldClock } from "./world-status";
+import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
 // - 실행 상태의 기준은 서버 SimulationRuntime이다. 버튼은 start/pause/resume/stop API만 부르고, 화면 상태는 응답과
@@ -43,6 +43,8 @@ import { ActiveEvents, SceneNotes, WorldClock } from "./world-status";
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 진행 중 사건, 장면별 사건 발생·해결·신체 상태 변화는 말풍선과 구분된
 //   시스템 영역에 보여 준다. 사건 발생은 장면 대사 앞, 해결·상태 변화는 장면 대사가 모두 공개된 뒤에 보인다.
+// - 사용자 사건(Phase 7-2-3): [사건 일으키기]·대기 목록·취소(world-status.tsx). 사건 목록은 장면 시작·커밋·실패와 world_event.updated(등록·취소·발생)
+//   SSE, 재연결 때 서버에서 다시 읽는다. 사용자 사건 발생 배너는 자동 사건과 다른 색이다.
 
 type Message = {
   id: string;
@@ -53,7 +55,9 @@ type Message = {
   actionIntent: string | null;
   emotionCue: string | null;
 };
-type SceneNote = { kind: "EVENT_STARTED" | "EVENT_RESOLVED" | "CONDITION" | "DEATH"; text: string };
+type SceneNote = { kind: "EVENT_STARTED" | "USER_EVENT_STARTED" | "EVENT_RESOLVED" | "CONDITION" | "DEATH"; text: string };
+/** 장면 대사 앞에 보이는 사건 발생 배너 */
+const isStartNote = (n: SceneNote) => n.kind === "EVENT_STARTED" || n.kind === "USER_EVENT_STARTED";
 export type SceneItem = {
   id: string;
   seq: number;
@@ -105,6 +109,7 @@ export function ScenePanel({
   const router = useRouter();
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [eventsTick, setEventsTick] = useState(0); // 사건 목록 다시 읽기 (SSE)
   // 활성 캐릭터: 서버가 다시 그리면 props로, 숨김에서 복원(<Activity>)되면 SSE 연결 직후 다시 받아 갱신한다
   const [characters, setCharacters] = useState(activeCharacters);
   const [propCharacters, setPropCharacters] = useState(activeCharacters);
@@ -179,6 +184,7 @@ export function ScenePanel({
           return; // 형식이 다른 이벤트는 무시한다
         }
         setView((v) => applySimEvent(v, type, payload, Date.now()));
+        if (type !== "runtime.status") setEventsTick((n) => n + 1); // 시작(점유)·커밋(발생)·실패(점유 해제)
         if (type === "runtime.status") {
           const parsed = simulationStateSchema.safeParse(payload);
           if (parsed.success) emitWorldEvent(RUNTIME_EVENT, { status: parsed.data.status, inFlight: parsed.data.inFlight });
@@ -191,6 +197,7 @@ export function ScenePanel({
       });
     }
     es.addEventListener("saves.updated", () => emitWorldEvent(SAVES_EVENT));
+    es.addEventListener("world_event.updated", () => setEventsTick((n) => n + 1)); // 사용자 사건 등록·취소·발생
     // 불러오기: 화면 전체(세계관·캐릭터·기록·상태)를 서버에서 다시 그린다. 이 패널은 새 key로 다시 마운트된다
     es.addEventListener("state.replaced", () => {
       playbackRef.current?.flush();
@@ -312,7 +319,7 @@ export function ScenePanel({
         </span>
       </div>
       <WorldClock clock={view.state.worldClock} />
-      <ActiveEvents worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}`} />
+      <WorldEvents worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
 
       <div
         ref={feedRef}
@@ -339,7 +346,7 @@ export function ScenePanel({
                 </span>
                 <span className="h-px flex-1 bg-foreground/10" />
               </div>
-              <SceneNotes notes={(s.notes ?? []).filter((n) => n.kind === "EVENT_STARTED")} />
+              <SceneNotes notes={(s.notes ?? []).filter(isStartNote)} />
               {visible.map((m) =>
                 play.typing === m.id ? (
                   <div key={m.id} className="flex flex-col items-start" aria-label={`${m.speakerName} 입력 중`}>
@@ -363,7 +370,7 @@ export function ScenePanel({
                   </div>
                 ),
               )}
-              {visible.length === s.messages.length && !play.typing && <SceneNotes notes={(s.notes ?? []).filter((n) => n.kind !== "EVENT_STARTED")} />}
+              {visible.length === s.messages.length && !play.typing && <SceneNotes notes={(s.notes ?? []).filter((n) => !isStartNote(n))} />}
               {s.contextTruncated && visible.length === s.messages.length && !play.typing && (
                 <p className="text-[11px] text-foreground/50">세계관 컨텍스트 일부가 이번 장면에 반영되지 않았을 수 있습니다.</p>
               )}

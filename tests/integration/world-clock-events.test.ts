@@ -140,8 +140,8 @@ describe("자동 사건", () => {
     expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ status: "ACTIVE", lastSceneSeq: 4 });
     expect(await prisma.worldEvent.count({ where: { worldId: world.id } })).toBe(1);
 
-    // 4) 결과 요약이 있는 RESOLVED → 해결, 대화 기록에 발생·해결 시스템 정보
-    await generateScene(uid, world.id, deps(sceneJson({ events: [{ ref: "E1", status: "RESOLVED", resolutionSummary: "모두 힘을 모아 위기를 넘겼다", realization: null, usedFallback: false }] })));
+    // 4) 결과 종류·요약이 있는 RESOLVED → 해결 (7-2-3: 결과 종류 필수), 대화 기록에 발생·해결 시스템 정보
+    await generateScene(uid, world.id, deps(sceneJson({ events: [{ ref: "E1", status: "RESOLVED", resolutionSummary: "모두 힘을 모아 위기를 넘겼다", realization: null, usedFallback: false, resolutionKind: "SOLVED" }] })));
     expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ status: "RESOLVED", resolvedSceneSeq: 5, resolutionSummary: "모두 힘을 모아 위기를 넘겼다" });
     const scenes = await prisma.conversationScene.findMany({ where: { worldId: world.id }, orderBy: { seq: "asc" } });
     expect(scenes.map((s) => s.motiveType)).toEqual(["WORLD_EVENT", "WORLD_EVENT", "WORLD_EVENT"]);
