@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { SCENE_PARTICIPANTS_MIN, SCENE_PLAYBACK_TIMING } from "../../../../config/limits";
+import { SCENE_INTERVAL_MS, SCENE_PARTICIPANTS_MIN, SCENE_PLAYBACK_TIMING } from "../../../../config/limits";
 import { speakerHref } from "@/lib/character-form";
 import { anchoredScrollTop, isNearBottom, mergeScenes, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
 import {
@@ -41,7 +41,7 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 // - SSE(scene.committed) 또는 POST 응답으로 새 장면이 오면 장면 id로 한 번만 넣고, ScenePlayback 큐로
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
-// - 실행 컨트롤(시작·일시정지·재개·종료·속도)과 생성 중 표시는 화면 하단 고정 바에 둔다(뮤직 앱 재생 바처럼). 세이브 버튼은 본문에 남는다.
+// - 하단 고정 바(뮤직 앱 재생 바처럼): 실행 버튼(시작·일시정지·재개·종료)과 [속도](모달에서 선택), 맨 오른쪽 [저장]·[불러오기], 생성 중 표시.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
@@ -133,6 +133,7 @@ export function ScenePanel({
   const scenesRef = useRef(scenes);
   const playbackRef = useRef<ScenePlayback | null>(null);
   const stickRef = useRef(true); // 하단 근처인가 (사용자 스크롤로 갱신)
+  const speedDialog = useRef<HTMLDialogElement>(null);
   const anchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null); // 이전 기록 추가 직전 위치
 
   useEffect(() => {
@@ -322,6 +323,7 @@ export function ScenePanel({
   }
 
   const notice = statusNotice(view.state);
+  const lacksCharacters = aliveCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE";
 
   return (
     <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6 pb-28">
@@ -399,32 +401,30 @@ export function ScenePanel({
         })}
       </div>
 
-      {aliveCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE" ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm text-foreground/70">
-            대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
-            <Link href={`/worlds/${worldId}/characters`} className="underline">
-              캐릭터 탭
-            </Link>
-            에서 추가하세요.
-          </p>
-          <span className="ml-auto flex gap-2">{saveControls}</span>
-        </div>
+      {lacksCharacters ? (
+        <p className="text-sm text-foreground/70">
+          대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
+          <Link href={`/worlds/${worldId}/characters`} className="underline">
+            캐릭터 탭
+          </Link>
+          에서 추가하세요.
+        </p>
       ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-2">{saveControls}</div>
-          {view.state.status === "IDLE" && (
-            <p className="text-xs text-foreground/60">
-              시작하면 참여 캐릭터를 자동으로 정해 장면을 계속 만듭니다. 장면마다 Gemini API를 1회 호출합니다(본인 키 사용, 비용은 Google에서 청구).
-            </p>
-          )}
-          {/* 실행 컨트롤: 뮤직 앱 재생 바처럼 화면 하단에 고정. 본문 너비(max-w-3xl)에 맞춘다 */}
-          <div
-            role="region"
-            aria-label="실행 컨트롤"
-            className="fixed inset-x-0 bottom-0 z-30 border-t border-foreground/10 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
-          >
-            <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-4 py-3 sm:px-8">
+        view.state.status === "IDLE" && (
+          <p className="text-xs text-foreground/60">
+            시작하면 참여 캐릭터를 자동으로 정해 장면을 계속 만듭니다. 장면마다 Gemini API를 1회 호출합니다(본인 키 사용, 비용은 Google에서 청구).
+          </p>
+        )
+      )}
+      {/* 하단 고정 바(뮤직 앱 재생 바처럼): 왼쪽 실행 버튼·[속도], 맨 오른쪽 [저장]·[불러오기]. 본문 너비(max-w-3xl)에 맞춘다 */}
+      <div
+        role="region"
+        aria-label="실행 컨트롤"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-foreground/10 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-4 py-3 sm:px-8">
+          {!lacksCharacters && (
+            <>
               {controlsFor(view.state.status).map((c) => (
                 <button
                   key={c.label}
@@ -436,30 +436,53 @@ export function ScenePanel({
                   {c.label}
                 </button>
               ))}
-              <span className="ml-auto flex items-center gap-1 text-xs text-foreground/70" role="group" aria-label="실행 속도">
-                속도
-                {INTERVAL_PRESETS.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    aria-pressed={view.state.intervalPreset === p}
-                    disabled={pending}
-                    onClick={() => void changeSpeed(p)}
-                    className={`rounded px-2 py-1 disabled:opacity-50 ${view.state.intervalPreset === p ? "bg-foreground/10 font-semibold text-foreground" : "hover:bg-foreground/5"}`}
-                  >
-                    {INTERVAL_LABEL[p]}
-                  </button>
-                ))}
-              </span>
-              {generating && (
-                <p role="status" className="w-full truncate text-xs text-foreground/70">
-                  {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
-                </p>
-              )}
-            </div>
-          </div>
-        </>
-      )}
+              <button type="button" className={button} disabled={pending} onClick={() => speedDialog.current?.showModal()} aria-haspopup="dialog">
+                속도 · {INTERVAL_LABEL[view.state.intervalPreset]}
+              </button>
+            </>
+          )}
+          <span className="ml-auto flex gap-2">{saveControls}</span>
+          {generating && (
+            <p role="status" className="w-full truncate text-xs text-foreground/70">
+              {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
+            </p>
+          )}
+        </div>
+      </div>
+      <dialog
+        ref={speedDialog}
+        aria-label="실행 속도"
+        className="m-auto w-[min(20rem,calc(100vw-2rem))] rounded-lg border border-foreground/20 bg-background p-4 text-foreground backdrop:bg-black/40"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-base font-semibold">실행 속도</h3>
+          <button type="button" className="text-xs text-foreground/70 underline" onClick={() => speedDialog.current?.close()}>
+            닫기
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-foreground/60">장면이 끝난 뒤 다음 장면을 시작하기까지의 간격입니다.</p>
+        <div className="mt-3 flex flex-col gap-2" role="radiogroup" aria-label="실행 속도">
+          {INTERVAL_PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="radio"
+              aria-checked={view.state.intervalPreset === p}
+              disabled={pending}
+              onClick={() => {
+                speedDialog.current?.close();
+                void changeSpeed(p);
+              }}
+              className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm disabled:opacity-50 ${
+                view.state.intervalPreset === p ? "border-foreground/40 bg-foreground/10 font-semibold" : "border-foreground/15 hover:bg-foreground/5"
+              }`}
+            >
+              {INTERVAL_LABEL[p]}
+              <span className="text-xs font-normal text-foreground/60">{SCENE_INTERVAL_MS[p] / 1000}초 간격</span>
+            </button>
+          ))}
+        </div>
+      </dialog>
       {notice && (
         <p role="status" className={`rounded-md px-3 py-2 text-sm ${notice.tone === "warn" ? "border border-amber-600/40 bg-amber-600/5" : "bg-foreground/5"}`}>
           <span className="font-semibold">시스템 · </span>
