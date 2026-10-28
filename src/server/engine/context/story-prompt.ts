@@ -224,7 +224,7 @@ function describeEvents(events: PromptEvent[], omitted: number): string | null {
     "<events>",
     "이 세계에서 진행 중인 사건 (오래된 것부터). 해결되지 않은 사건은 계속 이어진다.",
     ...lines,
-    omitted > 0 ? `(그 밖에 더 최근 사건 ${omitted}건이 진행 중이다)` : null,
+    omitted > 0 ? `(그 밖에 진행 중인 사건 ${omitted}건이 더 있다. 이번 장면에서는 다루지 않지만 해결된 것은 아니다)` : null,
     "</events>",
   ]
     .filter(Boolean)

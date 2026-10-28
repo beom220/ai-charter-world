@@ -148,6 +148,30 @@ describe("자동 사건", () => {
   });
 });
 
+describe("진행 중 사건 9개 초과 (7-2-2 검증)", () => {
+  it("오래된 사건을 우선 넣고 나머지는 차례로 돌려 넣어, 장면을 이어 가면 모든 사건이 다뤄진다", async () => {
+    const { uid, world, deps, prompts } = await setup("event-rotation");
+    for (let i = 1; i <= 12; i++) {
+      await prisma.worldEvent.create({
+        data: { worldId: world.id, kind: "RANDOM", status: "ACTIVE", presetId: "discovery_traces", intensity: "LOW", title: `사건${String(i).padStart(2, "0")}`, description: "d", startedSceneSeq: i, lastSceneSeq: i },
+      });
+    }
+    await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 13 } });
+    const covered = new Set<string>();
+    for (let i = 0; i < 3; i++) {
+      await generateScene(uid, world.id, deps(sceneJson()));
+      const prompt = prompts.at(-1)!;
+      expect(prompt).toContain("[E9]");
+      expect(prompt).toMatch(/그 밖에 진행 중인 사건 \d+건이 더 있다/); // 자동 사건이 발생하면 한 칸을 더 쓴다
+      expect(prompt.indexOf("사건01")).toBeLessThan(prompt.indexOf("사건02")); // 오래된 순
+      for (const m of prompt.matchAll(/사건\d{2}/g)) covered.add(m[0]);
+    }
+    expect(covered.size).toBe(12);
+    // 넣은 사건만 이번 장면으로 이어졌다고 기록, 모두 미해결 유지
+    expect(await prisma.worldEvent.count({ where: { worldId: world.id, status: "ACTIVE", title: { startsWith: "사건" } } })).toBe(12);
+  });
+});
+
 describe("신체 상태와 사망", () => {
   it("극심이 48시간 이어지면 다음 커밋에서 사망을 확정하고, 근거 없는 사망 제안은 무시하며, 사망자는 참가자에서 빠진다", async () => {
     const { uid, world, chars, deps } = await setup("death", 3);

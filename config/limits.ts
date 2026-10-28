@@ -233,6 +233,11 @@ export const USER_EVENT_TEXT_MAX_LENGTH = 200;
 export const USER_EVENT_PENDING_MAX = 3;
 export const USER_EVENT_MIN_INTERVAL_MS = 30_000;
 export const USER_EVENTS_PER_DAY = 30;
+/**
+ * 프롬프트에 넣는 진행 중 사건은 최대 9개(E1~E9)다. 그보다 많으면 오래된 사건을 우선 넣되 이 수만큼은 나머지 중
+ * 가장 오래 다루지 않은(lastSceneSeq가 가장 작은) 사건으로 돌려 넣는다 → 새 사건도 영구히 빠지지 않는다 (7-2-2 검증 수정)
+ */
+export const EVENT_PROMPT_ROTATING_SLOTS = 2;
 
 // ── 신체 상태 규칙 (Phase 7-2-2, 월드 시간 기준). MVP용 보수적 초깃값이며 실제 의학적 기준이 아니다.
 //    자연 회복·고통 완화·극심 지속·사망 위험은 모두 월드 시간으로 판정하고, 장면 커밋은 결과를 확정하는 시점만 담당한다.

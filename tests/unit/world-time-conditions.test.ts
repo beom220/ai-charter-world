@@ -3,6 +3,7 @@ import { EXTREME_LETHAL_WORLD_SECONDS, EXTREME_LIFE_RISK_WORLD_SECONDS } from ".
 import { conditionBadges, painLabel, thermalLabel } from "@/lib/condition-labels";
 import { formatWorldTime, liveWorldSeconds, realMsForWorldSeconds, worldSecondsForRealMs } from "@/lib/world-clock";
 import { DEFAULT_CONDITION_STATE, planConditionChange, type ConditionProposal, type ConditionState } from "@/server/engine/commit/condition-rules";
+import { pickPromptEvents } from "@/server/engine/director/auto-events";
 import { parseSceneOutput, SceneValidationError } from "@/server/engine/validation/scene-output";
 
 // Phase 7-2-2: 월드 시간 배율(실제 1시간 = 월드 36시간), 표시, 온도 불편·고통 단계 표시, 상태 규칙(악화 상한·치료·자연 회복·극심 지속·사망),
@@ -144,5 +145,67 @@ describe("장면 응답의 사건·상태 필드", () => {
   it("참가자가 아닌(사망자 포함) 캐릭터의 상태 제안은 장면 실패", () => {
     const bad = json({ conditions: [{ character: "C3", thermal: null, pain: null, injury: null, treatment: null, death: null, eventRef: null }] });
     expect(() => parseSceneOutput(bad, ["C1", "C2"], 6)).toThrow(SceneValidationError);
+  });
+});
+
+describe("자연 회복 하한 경계 (7-2-2 검증)", () => {
+  const injured = (injury: "MILD" | "MODERATE" | "SEVERE" | "CRITICAL", pain: "MILD" | "SEVERE" | "EXTREME") => ({
+    ...base,
+    injury,
+    injuryCause: "x",
+    injuryUpdatedAtSeconds: 0,
+    painLevel: pain,
+    painCause: "x",
+    painSinceSeconds: 0,
+    extremeSinceSeconds: injury === "CRITICAL" || pain === "EXTREME" ? 0 : null,
+  });
+
+  it("고통은 12시간 직전에는 그대로, 12시간에 한 단계. 부상이 남기는 하한(아픔→경미, 매우 아픔·위독→심함) 아래로는 시간이 지나도 내려가지 않는다", () => {
+    expect(planConditionChange(injured("MODERATE", "SEVERE"), null, ctx(12 * HOUR - 1)).next.painLevel).toBe("SEVERE");
+    expect(planConditionChange(injured("MODERATE", "SEVERE"), null, ctx(12 * HOUR)).next.painLevel).toBe("MILD");
+    expect(planConditionChange(injured("SEVERE", "SEVERE"), null, ctx(100 * HOUR)).next.painLevel).toBe("SEVERE");
+    expect(planConditionChange(injured("CRITICAL", "EXTREME"), null, ctx(12 * HOUR)).next.painLevel).toBe("SEVERE");
+    expect(planConditionChange({ ...injured("CRITICAL", "EXTREME"), painLevel: "SEVERE" }, null, ctx(30 * HOUR)).next.painLevel).toBe("SEVERE");
+    // 약간 아픔의 하한은 없음: 고통 경미는 12시간에 사라진다
+    expect(planConditionChange({ ...injured("MILD", "MILD"), injuryUpdatedAtSeconds: 12 * HOUR }, null, ctx(12 * HOUR)).next).toMatchObject({ painLevel: "NONE", painCause: null });
+  });
+
+  it("부상이 회복해 하한이 낮아진 같은 커밋에서 고통이 그 하한까지 한 단계 내려갈 수 있고, 한 커밋에 두 단계 이상 내려가지 않는다", () => {
+    // 매우 아픔(168시간) → 아픔: 하한 심함 → 경미, 고통 심함 → 경미
+    const r = planConditionChange(injured("SEVERE", "SEVERE"), null, ctx(168 * HOUR));
+    expect(r.next).toMatchObject({ injury: "MODERATE", painLevel: "MILD" });
+    expect(r.changes.map((c) => c.kind)).toEqual(["RECOVERY", "RECOVERY"]);
+    // 아주 오래 지나도 한 커밋에 부상 한 단계, 고통 한 단계
+    expect(planConditionChange(injured("MODERATE", "EXTREME"), null, ctx(10_000 * HOUR)).next).toMatchObject({ injury: "MILD", painLevel: "SEVERE" });
+  });
+
+  it("부상 없이 생긴 고통(추위·질병)은 하한이 없어 12시간마다 한 단계씩 사라지고, 온도 불편은 시간만으로 바뀌지 않는다", () => {
+    const coldPain = { ...base, painLevel: "SEVERE" as const, painCause: "동상 기운", painSinceSeconds: 0, thermalCause: "COLD" as const, thermalLevel: "SEVERE" as const, thermalSinceSeconds: 0 };
+    const r = planConditionChange(coldPain, null, ctx(12 * HOUR));
+    expect(r.next).toMatchObject({ painLevel: "MILD", thermalLevel: "SEVERE" });
+  });
+});
+
+describe("진행 중 사건 프롬프트 칸 (9개 초과, 7-2-2 검증)", () => {
+  type E = { id: number; lastSceneSeq: number | null };
+  const events = (n: number): E[] => Array.from({ length: n }, (_, i) => ({ id: i + 1, lastSceneSeq: i + 1 }));
+
+  it("칸 이하이면 모두, 넘치면 오래된 7개 + 가장 오래 다루지 않은 2개를 오래된 순으로 고른다", () => {
+    expect(pickPromptEvents(events(9), 9).map((e) => e.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const list = events(12).map((e) => (e.id >= 10 ? { ...e, lastSceneSeq: null } : e));
+    expect(pickPromptEvents(list, 9).map((e) => e.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 10, 11]);
+  });
+
+  it("다룬 사건의 lastSceneSeq를 갱신하며 장면을 이어 가면 넘친 사건도 모두 차례로 프롬프트에 들어간다 (영구 누락 없음)", () => {
+    let list: E[] = events(15);
+    const seen = new Set<number>();
+    for (let scene = 100; scene < 106; scene++) {
+      const shown = pickPromptEvents(list, 9);
+      expect(shown).toHaveLength(9);
+      shown.forEach((e) => seen.add(e.id));
+      const ids = new Set(shown.map((e) => e.id));
+      list = list.map((e) => (ids.has(e.id) ? { ...e, lastSceneSeq: scene } : e));
+    }
+    expect([...seen].sort((a, b) => a - b)).toEqual(events(15).map((e) => e.id));
   });
 });

@@ -18,13 +18,14 @@ import {
   type ThermalCauseValue,
 } from "@/server/engine/commit/condition-rules";
 import type { PromptEvent } from "@/server/engine/context/story-prompt";
-import { pickAutoEventPreset } from "@/server/engine/director/auto-events";
+import { pickAutoEventPreset, pickPromptEvents } from "@/server/engine/director/auto-events";
 import { EVENT_ALIASES, type EventAlias, type SceneAlias, type SceneOutput } from "@/server/engine/validation/scene-output";
 
 // 장면의 세계 상태 — 사건·신체 상태 (Phase 7-2-2, architecture.md §13.3). 런타임 독립.
 // - 자동 사건: 시도 기록 트랜잭션(World 잠금·펜싱 안)에서 구간 추첨을 영속화하고(claimAutoEvent), 예약 장면이면 프리셋을 정해 구간 행에 남긴다
 //   (재시도해도 같은 프리셋). 사건 행은 장면 커밋 트랜잭션에서만 만든다 → 실패·펜싱된 시도는 사건을 남기지 않고, 다음 시도가 다시 발생시킨다.
 // - 진행 중 사건(ACTIVE)은 오래된 순(startedSceneSeq → createdAt → id)으로 E1… 별칭을 붙여 프롬프트에 넣는다.
+//   9개를 넘으면 오래된 사건을 우선 넣고, EVENT_PROMPT_ROTATING_SLOTS칸은 나머지 중 가장 오래 다루지 않은 사건을 돌려 넣는다(누락 방지).
 //   커밋 때 별칭으로만 되돌리므로 다른 사건을 잘못 종료하지 않는다. RESOLVED는 결과 요약이 있을 때만(고강도 새 사건은 첫 장면에 해결 불가).
 //   응답에 사건 결과가 없어도 사건은 그대로 진행(ONGOING) 기록된다.
 // - 신체 상태: 커밋 때 정산한 월드 시간으로 살아 있는 모든 캐릭터에 규칙을 적용한다(참가자만 제안 반영, 비참가자는 자연 변화·극심 지속만).
@@ -62,15 +63,15 @@ export type EventRef = { alias: EventAlias; id: string | null; isNew: boolean; h
 const sceneSince = (seq: number | null, seconds: number | null) =>
   seq === null ? null : `장면 #${seq}${seconds === null ? "" : `, ${formatWorldTime(seconds)}`}`;
 
-/** 진행 중 사건(오래된 순) + 이번 장면의 새 자동 사건. 별칭 수를 넘는 최근 사건은 개수만 알린다 */
+/** 진행 중 사건(오래된 순) + 이번 장면의 새 자동 사건. 이번에 넣지 못한 사건은 개수만 알린다 */
 export async function loadPromptEvents(worldId: string, autoEvent: AutoEventClaim | null): Promise<{ events: PromptEvent[]; refs: EventRef[]; omitted: number }> {
   const active = await prisma.worldEvent.findMany({
     where: { worldId, status: "ACTIVE", kind: { in: ["RANDOM", "USER_INTERVENTION"] } },
     orderBy: [{ startedSceneSeq: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-    select: { id: true, kind: true, title: true, description: true, presetId: true, intensity: true, startedSceneSeq: true, startedWorldSeconds: true },
+    select: { id: true, kind: true, title: true, description: true, presetId: true, intensity: true, startedSceneSeq: true, startedWorldSeconds: true, lastSceneSeq: true },
   });
   const slots = EVENT_ALIASES.length - (autoEvent ? 1 : 0);
-  const shown = active.slice(0, slots);
+  const shown = pickPromptEvents(active, slots);
   const events: PromptEvent[] = [];
   const refs: EventRef[] = [];
   shown.forEach((e, i) => {
