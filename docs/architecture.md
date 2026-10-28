@@ -393,10 +393,10 @@ COMMIT
 - **멱등성**: `attemptId`가 UNIQUE이다. 네트워크 재시도나 중복 처리로 같은 시도가 두 번 커밋되면 두 번째는 UNIQUE 위반이 되고, 이미 커밋된 것으로 간주한다.
 - **펜싱**: 종료·불러오기는 `stateVersion`을 올린다. 그 전에 시작된 시도는 커밋 단계에서 반드시 거부된다. 초기화도 버전을 올리지만 `IDLE`·`PAUSED`에서만 실행되므로 거부할 진행 중 시도가 없다. 일시정지와 SSE 연결 보류는 버전을 올리지 않으므로 진행 중인 장면이 정상 커밋된다(D4, D5).
 - **트랜잭션 밖 처리**: `ApiRequestLog`, `SimulationRun` 카운터, `ApiUsageDaily`는 장면 성공 여부와 무관하게 기록한다(실패도 비용이 발생하므로).
-- **설정 편집은 펜싱하지 않음**: 캐릭터·세계관 설정 편집은 `stateVersion`을 올리지 않고, 복구 지점 판정용 `changeSeq`만 올린다(§9.3).
+- **설정 편집은 펜싱하지 않음**: 캐릭터·세계관 설정 편집은 `stateVersion`을 올리지 않고, 복구 지점 판정용 `changeSeq`와 설정 펜싱용 `settingsSeq`만 올린다(§9.3). `settingsSeq`는 세계관·캐릭터 설정 변경과 불러오기에서만 오르고, 실행 속도 변경·사건 등록은 올리지 않는다(Phase 7-2-0).
 - **설정 편집 가능 상태(PRD v1.7)**: 세계관 수정·캐릭터 생성/수정/삭제는 `IDLE`, 또는 `inFlightAttemptId IS NULL`인 `PAUSED`에서만 허용한다. World 잠금 뒤 `SimulationRuntime`을 `FOR UPDATE`로 읽어 확인하고(잠금 순서 World → Runtime), 아니면 409 `SETTINGS_LOCKED`. Runner의 시도 기록도 World 잠금 아래에서 하므로 편집과 호출 시작이 겹치지 않는다. 화면도 같은 규칙(`settingsEditable`)으로 버튼을 막는다.
 - **세계관 설정 영구 잠금(PRD v1.8)**: World 잠금 뒤 `ConversationScene`이 1개라도 있으면 실행 상태 확인 전에 409 `WORLD_SETTINGS_LOCKED`. 장면 수는 현재 활성 상태 기준이므로 불러오기로 장면이 0개가 되면 다시 수정할 수 있다. `getWorld`가 `settingsLocked`를 돌려주고 설정 화면은 입력을 막는다.
-- **이전 설정으로 호출 금지**: Runner는 장면 준비 때 읽은 `changeSeq`를 시도 기록 트랜잭션에서 다시 확인하고, 다르면 기록하지 않고 다음 단계에서 다시 준비한다(일시정지 → 편집 → 재개가 준비와 기록 사이에 끼는 경우). 설정은 매 장면 DB에서 새로 읽는다.
+- **이전 설정으로 호출 금지**: Runner·수동 생성은 장면 준비 때 읽은 `settingsSeq`를 시도 기록 트랜잭션(World 잠금)에서 다시 확인하고(`settingsUnchanged`), 다르면 기록하지 않는다. 수동 생성은 IDLE에서 호출 중에도 설정을 바꿀 수 있으므로 커밋 때도 확인해 다르면 409 `SETTINGS_CHANGED`로 저장하지 않는다. 설정은 매 장면 DB에서 새로 읽는다.
 - **프롬프트 우선순위**: `<world>`·`<character>`는 현재 유효한 설정이며 `<history>`·기억과 어긋나면 설정을 따른다. 마지막 설정 변경 시각(`World.updatedAt`, 캐릭터 `updatedAt` 최댓값)보다 먼저 만든 장면에는 "장면 #N까지 이전 설정" 표시를 붙인다. 기존 장면·기억은 지우지 않는다.
 
 ### 6.8 SceneDirector (비LLM 장면 계획)
@@ -1054,6 +1054,17 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **화면**: 생성·수정 폼에서 단계별 단일 선택 모달(버튼 → `<dialog>`로 프리셋 전체를 이름·설명과 함께 표시, 등급 라벨은 숨김), 선택한 배경 설명, 🎲·잠금, 필수 안내. 성격도 같은 방식의 다중 선택 모달(항목을 누를 때마다 선택·해제, 최대 5개, [완료]로 닫기). 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비우고 선택 영역을 잠근다. 필수 배경 전에는 저장 버튼이 비활성. 캐릭터 상세 프로필에 두 배경(이름·등급·설명)을 보여 준다.
 - **컨텍스트**: `<character>`에 `과거 배경: 유년기 — 이름(설명) / 성년기 — 이름(설명)` 한 줄. 시스템 지시로 과거 경험일 뿐 현재 성격·감정·관계·기억·세계 규칙보다 우선하지 않고, 매 장면 설명하거나 현재 사건처럼 쓰지 않게 한다. 호출 수·출력 스키마는 그대로.
 - **세이브**: 스냅샷 v2(`lib/snapshot/v2.ts`) = v1 + 캐릭터 배경 ID. v1은 저장된 원본·checksum 그대로 검증한 뒤 읽을 때 `migrateV1ToV2`로 배경 NULL을 채운다. v2는 알 수 없는 배경 ID·18세 이하 성년기를 `SAVE_INVALID`로 거절한다.
+
+### 13.3 사건 시스템과 캐릭터 신체 상태 (Phase 7-2, PRD v1.9)
+
+실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터(완료) → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 스파이크.
+
+- **모델**: 기존 `WorldEvent`를 확장한다(별도 Incident 없음). `kind`에 `RANDOM`(자동)·`USER_INTERVENTION`(사용자), `status`에 `PENDING`·`CANCELLED` 추가. `presetId`·`intensity`·`requestId`(`(worldId, requestId)` UNIQUE)·`startedSceneSeq`·`lastSceneSeq`·`resolvedSceneSeq`·`resolutionSummary`·`claimedAttemptId`(진행 중 시도 점유, 스냅샷 제외)·`cancelledAt`. 진행 순서는 `startedSceneSeq → createdAt → id`.
+- **자동 사건 구간**: `WorldEventPeriod(worldId, periodIndex)` PK = 구간당 1행. 순수 함수 `engine/director/auto-events.ts`(`autoEventPeriodOf`·`rollAutoEventPeriod`·`pickAutoEventPreset`)와 영속화 `domain/events/auto-periods.ts`(`ensureAutoEventPeriod`: `ON CONFLICT DO NOTHING` 후 저장된 결과를 읽음). 7-2-2에서 Runner·수동 생성의 시도 기록 트랜잭션(World 잠금·펜싱 안)에서 호출하고, 발생(프리셋 확정·사건 생성·`firedAt`)은 장면 커밋 트랜잭션에서 한다. 구간 중간에 처음 판정하면(기존 진행 세계관·v1·v2 불러오기) 지난 장면에는 예약하지 않는다.
+- **프리셋**: `config/world-events.ts` 24종 `{id, category, title, description, intensity, urgent, fallbackId}`. 생물 프리셋만 `fallbackId`(생물이 불가능한 세계관에서 결정적으로 대체, 장면 응답이 대체 여부를 알린다).
+- **신체 상태**: `CharacterCondition` 1:1(체온·부상(=통증 단계)·원인·발생/마지막 변화 장면·생존·사망 원인/장면/시각)과 `CharacterConditionChange` 이력(장면·사건 참조 선택). 감정과 분리하며 Character 행(설정)에 두지 않는다 — Character `updatedAt`은 프롬프트의 설정 변경 표시 기준이기 때문이다. 자연 회복은 `engine/commit/condition-rules.ts` `naturalInjuryRecovery`(장면 수 기준, `INJURY_NATURAL_RECOVERY_SCENES`). 사망자도 `deletedAt`이 NULL이므로 활성 6명 슬롯을 차지한다. DB CHECK: 사망 기록 필수·부상 원인 필수.
+- **Gemini**: 장면당 1회 유지. 사건 구체화·사건별 진행/해결·온도·부상·치료·사망 제안은 7-2-2에서 기존 구조화 출력에 선택 필드로 통합하고, 서버가 Zod·도메인 규칙으로 검증한 것만 커밋 트랜잭션에서 반영한다. 사망자 발화·다른 사건 ID 종료 제안은 확정하지 않는다.
+- **세이브**: 스냅샷 v3(`lib/snapshot/v3.ts`) = v2 + 확장 사건 필드·`eventPeriods`·`characterConditions`·`conditionChanges`. 읽기는 v1 → v2 → v3(`migrateV2ToV3`: 사건 새 필드 NULL, 구간 없음, 모두 생존·정상·부상 없음). `snapshotV3Error`가 프리셋 ID·대기 3건·구간 당첨/예약 일치·캐릭터별 상태 1개·사망 기록·참조를 검사한다.
 
 ---
 

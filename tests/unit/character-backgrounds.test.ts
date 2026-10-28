@@ -160,9 +160,9 @@ describe("세이브 호환", () => {
     worldEvents: [],
   };
 
-  it("v1 스냅샷은 저장된 checksum 그대로 읽히고 배경 NULL인 v2가 된다. v2의 잘못된 배경은 거절", () => {
+  it("v1 스냅샷은 저장된 checksum 그대로 읽히고 배경 NULL인 최신 버전이 된다. v2의 잘못된 배경은 거절", () => {
     const parsed = parseSnapshot({ schemaVersion: 1, payload: v1, checksum: snapshotChecksum(v1).checksum });
-    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.schemaVersion).toBe(3);
     expect(parsed.characters[0]).toMatchObject({ id: "a", childhoodBackgroundId: null, adulthoodBackgroundId: null });
 
     const v2 = { ...v1, schemaVersion: 2, characters: [{ ...v1.characters[0]!, childhoodBackgroundId: "childhood_city", adulthoodBackgroundId: "adulthood_doctor" }] };

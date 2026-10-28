@@ -212,8 +212,32 @@ export const AUTO_SAVE_RETRY_MS = 10 * 60 * 1000;
 /** 저장 이름 최대 길이(코드 포인트). SaveGame.name VarChar(60) */
 export const SAVE_NAME_MAX_LENGTH = 60;
 
-/** 현재 스냅샷 payload 버전 (lib/snapshot). v2 = 캐릭터 배경 추가 (Phase 7-1) */
-export const SNAPSHOT_SCHEMA_VERSION = 2;
+/** 현재 스냅샷 payload 버전 (lib/snapshot). v2 = 캐릭터 배경 추가 (Phase 7-1), v3 = 사건·자동 사건 구간·캐릭터 신체 상태 (Phase 7-2) */
+export const SNAPSHOT_SCHEMA_VERSION = 3;
 
 /** 저장·불러오기 트랜잭션 제한 시간 (대화 기록 전체를 캡처·복원하므로 기본 5초보다 길게) */
 export const SAVE_TRANSACTION_TIMEOUT_MS = 30_000;
+
+// ── 사건 시스템·캐릭터 신체 상태 (Phase 7-2 확정 정책)
+
+/** 자동 사건: 장면 #3부터 20장면 구간(#3~#22, #23~#42 …)마다 한 번만 40%로 추첨하고, 당첨되면 구간 안 장면 하나에 예약한다 */
+export const AUTO_EVENT_FIRST_SCENE_SEQ = 3;
+export const AUTO_EVENT_PERIOD_SCENES = 20;
+export const AUTO_EVENT_CHANCE = 0.4;
+/** 자동 사건 프리셋 후보에서 뺄 최근 프리셋 수 (직전 범주도 뺀다. 후보가 없으면 단계적으로 완화) */
+export const AUTO_EVENT_RECENT_PRESET_EXCLUDE = 8;
+
+/** 사용자 지정 사건: 내용 최대 200자(코드 포인트), 세계관별 대기 최대 3건, 제출 간격 30초, KST 하루 30건 */
+export const USER_EVENT_TEXT_MAX_LENGTH = 200;
+export const USER_EVENT_PENDING_MAX = 3;
+export const USER_EVENT_MIN_INTERVAL_MS = 30_000;
+export const USER_EVENTS_PER_DAY = 30;
+
+/**
+ * 부상 자연 회복: 마지막 부상 변화 뒤 이 장면 수가 지나면 한 단계 낮아진다 (진행 장면 수 기준, 현실 시간 아님).
+ * null이면 치료 없이는 나아지지 않는다(위독). 치료 효과가 반영된 장면에서는 자연 회복을 함께 적용하지 않는다.
+ */
+export const INJURY_NATURAL_RECOVERY_SCENES = { NONE: null, MILD: 4, MODERATE: 10, SEVERE: 20, CRITICAL: null } as const satisfies Record<
+  "NONE" | "MILD" | "MODERATE" | "SEVERE" | "CRITICAL",
+  number | null
+>;

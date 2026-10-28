@@ -230,6 +230,9 @@ model World {
   relationshipStates    RelationshipState[]
   relationshipChanges   RelationshipChange[]
   emotionStates         EmotionState[]
+  characterConditions   CharacterCondition[]
+  conditionChanges      CharacterConditionChange[]
+  worldEventPeriods     WorldEventPeriod[]
   emotionChanges        EmotionChange[]
   memories              CharacterMemory[]
   worldEvents           WorldEvent[]
@@ -244,39 +247,41 @@ model World {
 }
 
 model Character {
-  id                   String    @id @default(cuid())
-  worldId              String
-  name                 String    @db.VarChar(50)
-  gender               Gender    @default(UNSPECIFIED)
-  genderCustom         String?   @db.VarChar(30) // gender = CUSTOM 일 때
-  age                  Int? // 비우면 저장 시 자동 설정
-  personalityTags      String[] // 태그 코드 (config 분류표), 권장 3~5개
-  extraversion         Int // 0..100
-  agreeableness        Int
-  conscientiousness    Int
-  emotionalStability   Int
-  openness             Int
-  goal                 String?   @db.Text
-  characterContext     String    @default("") @db.VarChar(300) // 코드 포인트 300자
-  childhoodBackgroundId String?  @db.VarChar(64) // 유년기 배경 프리셋 ID (config/character-backgrounds, 신규·수정 시 필수, Phase 7-1)
-  adulthoodBackgroundId String?  @db.VarChar(64) // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL)
-  initialMood          Mood      @default(NEUTRAL) // 감정 초기화 기준값
-  initialMoodIntensity Int       @default(50) // 0..100
-  sortOrder            Int       @default(0)
-  deletedAt            DateTime? @db.Timestamptz(3) // 소프트 삭제
-  createdAt            DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
+  id                    String    @id @default(cuid())
+  worldId               String
+  name                  String    @db.VarChar(50)
+  gender                Gender    @default(UNSPECIFIED)
+  genderCustom          String?   @db.VarChar(30) // gender = CUSTOM 일 때
+  age                   Int? // 비우면 저장 시 자동 설정
+  personalityTags       String[] // 태그 코드 (config 분류표), 권장 3~5개
+  extraversion          Int // 0..100
+  agreeableness         Int
+  conscientiousness     Int
+  emotionalStability    Int
+  openness              Int
+  goal                  String?   @db.Text
+  characterContext      String    @default("") @db.VarChar(300) // 코드 포인트 300자
+  childhoodBackgroundId String?   @db.VarChar(64) // 유년기 배경 프리셋 ID (config/character-backgrounds, 신규·수정 시 필수, Phase 7-1)
+  adulthoodBackgroundId String?   @db.VarChar(64) // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL)
+  initialMood           Mood      @default(NEUTRAL) // 감정 초기화 기준값
+  initialMoodIntensity  Int       @default(50) // 0..100
+  sortOrder             Int       @default(0)
+  deletedAt             DateTime? @db.Timestamptz(3) // 소프트 삭제
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
 
   world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
 
-  baselinesFrom       RelationshipBaseline[] @relation("BaselineFrom")
-  baselinesTo         RelationshipBaseline[] @relation("BaselineTo")
-  relationshipsFrom   RelationshipState[]    @relation("RelationshipFrom")
-  relationshipsTo     RelationshipState[]    @relation("RelationshipTo")
+  baselinesFrom       RelationshipBaseline[]     @relation("BaselineFrom")
+  baselinesTo         RelationshipBaseline[]     @relation("BaselineTo")
+  relationshipsFrom   RelationshipState[]        @relation("RelationshipFrom")
+  relationshipsTo     RelationshipState[]        @relation("RelationshipTo")
   emotionState        EmotionState?
+  condition           CharacterCondition?
+  conditionChanges    CharacterConditionChange[]
   emotionChanges      EmotionChange[]
-  memoriesOwned       CharacterMemory[]      @relation("MemoryOwner")
-  memoriesAbout       CharacterMemory[]      @relation("MemoryAbout")
+  memoriesOwned       CharacterMemory[]          @relation("MemoryOwner")
+  memoriesAbout       CharacterMemory[]          @relation("MemoryAbout")
   sceneParticipations SceneParticipant[]
   messages            Message[]
 
@@ -340,10 +345,15 @@ enum MemoryAcquisition {
 enum WorldEventKind {
   INITIAL_SITUATION
   SCENE_OUTCOME
-  USER_INTERVENTION
+  USER_INTERVENTION // 사용자 지정 사건 (Phase 7-2)
+  RANDOM // 자동 사건 (Phase 7-2, 20장면 구간 추첨)
 }
 
-// USER_INTERVENTION: P2
+enum EventIntensity {
+  LOW
+  MEDIUM
+  HIGH
+}
 
 enum EventVisibility {
   PUBLIC
@@ -351,8 +361,40 @@ enum EventVisibility {
 }
 
 enum EventStatus {
+  PENDING // 사용자 사건 대기 (다음 생성 장면부터 오래된 순 1건씩 ACTIVE)
   ACTIVE
   RESOLVED
+  CANCELLED // PENDING에서만 (진행 중 시도에 점유된 사건은 취소 불가)
+}
+
+// 캐릭터 신체 상태 (Phase 7-2). 감정(EmotionState)과 분리한 지속 상태. 통증은 부상 심도와 같은 단계로 본다(추후 별도 열로 확장)
+enum ThermalState {
+  NORMAL
+  COLD
+  VERY_COLD
+  HOT
+  VERY_HOT
+}
+
+enum InjurySeverity {
+  NONE
+  MILD
+  MODERATE
+  SEVERE
+  CRITICAL
+}
+
+enum VitalStatus {
+  ALIVE
+  DEAD
+}
+
+enum ConditionChangeKind {
+  THERMAL
+  INJURY
+  TREATMENT
+  RECOVERY
+  DEATH
 }
 
 model GameState {
@@ -401,6 +443,7 @@ model ConversationScene {
   emotionChanges      EmotionChange[]
   memories            CharacterMemory[]
   worldEvents         WorldEvent[]
+  conditionChanges    CharacterConditionChange[]
 
   @@unique([worldId, seq])
   @@unique([id, worldId]) // 동일 세계관 복합 FK 대상 (database.md §4.3)
@@ -551,10 +594,85 @@ model WorldEvent {
   createdAt     DateTime        @default(now()) @db.Timestamptz(3)
   resolvedAt    DateTime?       @db.Timestamptz(3)
 
-  world       World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  sourceScene ConversationScene? @relation(fields: [sourceSceneId], references: [id], onDelete: SetNull)
+  // Phase 7-2 사건 시스템. 자동 사건은 프리셋 ID·강도, 사용자 사건은 description에 원문(200자)과 requestId(멱등).
+  // 진행 순서는 startedSceneSeq(최초 반영 장면) → createdAt → id. 장면 수로 강제 종료하지 않는다.
+  presetId          String?         @db.VarChar(64) // config/world-events.ts
+  intensity         EventIntensity?
+  requestId         String?         @db.VarChar(64) // 사용자 제출 멱등 키 (worldId 안에서 UNIQUE)
+  startedSceneSeq   Int? // PENDING → ACTIVE가 된 장면
+  lastSceneSeq      Int? // 마지막으로 반영된 장면
+  resolvedSceneSeq  Int?
+  resolutionSummary String?         @db.Text
+  claimedAttemptId  String?         @db.VarChar(64) // 진행 중 생성 시도에 포함된 PENDING 사건 (취소 불가, 시도 종료 시 해제)
+  cancelledAt       DateTime?       @db.Timestamptz(3)
 
+  world            World                      @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  sourceScene      ConversationScene?         @relation(fields: [sourceSceneId], references: [id], onDelete: SetNull)
+  periods          WorldEventPeriod[]
+  conditionChanges CharacterConditionChange[]
+
+  @@unique([worldId, requestId])
   @@index([worldId, status])
+}
+
+/// 자동 사건 20장면 구간 추첨 기록 (Phase 7-2). 구간마다 한 번만 만든다 (PK 충돌 = 이미 추첨됨)
+model WorldEventPeriod {
+  worldId           String
+  periodIndex       Int // 0: #3~#22, 1: #23~#42 …
+  won               Boolean // 40% 추첨 결과
+  scheduledSceneSeq Int? // 당첨 시 구간 안에서 고른 발생 장면
+  presetId          String?   @db.VarChar(64) // 발생 시 확정한 프리셋 (대체 포함)
+  eventId           String? // 생성된 사건 (SetNull)
+  firedAt           DateTime? @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+
+  world World       @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  event WorldEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@id([worldId, periodIndex])
+}
+
+/// 캐릭터 신체 상태 1:1 (Phase 7-2). 사망해도 캐릭터 행(슬롯)은 그대로다 — deletedAt(소프트 삭제)과 다른 의미
+model CharacterCondition {
+  characterId           String         @id
+  worldId               String
+  thermal               ThermalState   @default(NORMAL)
+  injury                InjurySeverity @default(NONE) // 통증 단계와 같다
+  injuryCause           String?        @db.VarChar(200)
+  injurySceneSeq        Int? // 부상 발생 장면
+  injuryUpdatedSceneSeq Int? // 마지막 부상 변화(악화·치료·회복) 장면 — 자연 회복 계산 기준
+  vital                 VitalStatus    @default(ALIVE)
+  deathCause            String?        @db.VarChar(200)
+  deathSceneSeq         Int?
+  diedAt                DateTime?      @db.Timestamptz(3)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(3)
+
+  character Character @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
+  world     World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@unique([characterId, worldId])
+  @@index([worldId])
+}
+
+/// 신체 상태 변화 이력 (부상·치료·회복·체온·사망). 관련 사건·장면은 선택
+model CharacterConditionChange {
+  id          String              @id @default(cuid())
+  worldId     String
+  characterId String
+  sceneId     String? // SetNull
+  eventId     String? // SetNull
+  kind        ConditionChangeKind
+  fromValue   String              @db.VarChar(20)
+  toValue     String              @db.VarChar(20)
+  reason      String?             @db.VarChar(200)
+  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+
+  world     World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  character Character          @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
+  scene     ConversationScene? @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+  event     WorldEvent?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([characterId, createdAt])
 }
 
 // ─────────────────────────────────────────────

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { SNAPSHOT_SCHEMA_VERSION } from "../../../../config/limits";
 import type { Prisma } from "@/generated/prisma/client";
 import { snapshotReferenceError, snapshotV1Schema } from "@/lib/snapshot/v1";
-import { migrateV1ToV2, snapshotBackgroundError, snapshotV2Schema, type SnapshotV2 } from "@/lib/snapshot/v2";
+import { migrateV1ToV2, snapshotBackgroundError, snapshotV2Schema } from "@/lib/snapshot/v2";
+import { migrateV2ToV3, snapshotV3Error, snapshotV3Schema, type SnapshotV3 } from "@/lib/snapshot/v3";
 import { AppError } from "@/server/domain/errors";
 
 // 스냅샷 캡처·검증·복원 (architecture.md §9.1·§9.2·§9.6, Phase 6). 런타임 독립.
@@ -36,7 +37,7 @@ export const snapshotChecksum = (payload: unknown) => {
 };
 
 /** 현재 버전 payload */
-export type CurrentSnapshot = SnapshotV2;
+export type CurrentSnapshot = SnapshotV3;
 
 /**
  * 저장된 행 → 검증된 현재 버전 payload. 버전 → checksum(저장된 원본 기준) → 버전별 Zod → 마이그레이션 → 참조 순으로 확인한다.
@@ -49,13 +50,17 @@ export function parseSnapshot(row: { schemaVersion: number; payload: unknown; ch
   if (row.schemaVersion === 1) {
     const v1 = snapshotV1Schema.safeParse(row.payload);
     if (!v1.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV1ToV2(v1.data);
-  } else {
+    snapshot = migrateV2ToV3(migrateV1ToV2(v1.data));
+  } else if (row.schemaVersion === 2) {
     const v2 = snapshotV2Schema.safeParse(row.payload);
     if (!v2.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = v2.data;
+    snapshot = migrateV2ToV3(v2.data);
+  } else {
+    const v3 = snapshotV3Schema.safeParse(row.payload);
+    if (!v3.success) throw new SnapshotInvalidError("SCHEMA");
+    snapshot = v3.data;
   }
-  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot);
+  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot) ?? snapshotV3Error(snapshot);
   if (refError) throw new SnapshotInvalidError(refError);
   return snapshot;
 }
@@ -66,7 +71,7 @@ const isoOrNull = (d: Date | null) => (d ? d.toISOString() : null);
 /** 현재 활성 상태를 payload로 만든다 (호출자가 World·GameState 잠금을 잡은 트랜잭션) */
 export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promise<CurrentSnapshot> {
   const where = { worldId };
-  const [world, gs, characters, baselines, states, relChanges, emotions, emoChanges, memories, scenes, events] = await Promise.all([
+  const [world, gs, characters, baselines, states, relChanges, emotions, emoChanges, memories, scenes, events, periods, conditions, conditionChanges] = await Promise.all([
     tx.world.findUniqueOrThrow({ where: { id: worldId } }),
     tx.gameState.findUniqueOrThrow({ where }),
     tx.character.findMany({ where, orderBy: { createdAt: "asc" } }),
@@ -78,10 +83,13 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
     tx.characterMemory.findMany({ where, orderBy: { createdAt: "asc" } }),
     tx.conversationScene.findMany({ where, orderBy: { seq: "asc" }, include: { participants: true, messages: { orderBy: { turnIndex: "asc" } } } }),
     tx.worldEvent.findMany({ where, orderBy: { createdAt: "asc" } }),
+    tx.worldEventPeriod.findMany({ where, orderBy: { periodIndex: "asc" } }),
+    tx.characterCondition.findMany({ where }),
+    tx.characterConditionChange.findMany({ where, orderBy: { createdAt: "asc" } }),
   ]);
   const rel = (r: { affinity: number; trust: number; respect: number; familiarity: number }) => ({ affinity: r.affinity, trust: r.trust, respect: r.respect, familiarity: r.familiarity });
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     capturedAt: iso(now),
     world: {
       name: world.name,
@@ -198,6 +206,50 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       sourceSceneId: e.sourceSceneId,
       createdAt: iso(e.createdAt),
       resolvedAt: isoOrNull(e.resolvedAt),
+      presetId: e.presetId,
+      intensity: e.intensity,
+      requestId: e.requestId,
+      startedSceneSeq: e.startedSceneSeq,
+      lastSceneSeq: e.lastSceneSeq,
+      resolvedSceneSeq: e.resolvedSceneSeq,
+      resolutionSummary: e.resolutionSummary,
+      cancelledAt: isoOrNull(e.cancelledAt),
+    })),
+    eventPeriods: periods.map((x) => ({
+      periodIndex: x.periodIndex,
+      won: x.won,
+      scheduledSceneSeq: x.scheduledSceneSeq,
+      presetId: x.presetId,
+      eventId: x.eventId,
+      firedAt: isoOrNull(x.firedAt),
+      createdAt: iso(x.createdAt),
+    })),
+    // 신체 상태 행이 없는 캐릭터(직접 만든 데이터)는 정상·부상 없음·생존으로 담는다
+    characterConditions: characters.map((c) => {
+      const x = conditions.find((k) => k.characterId === c.id);
+      return {
+        characterId: c.id,
+        thermal: x?.thermal ?? "NORMAL",
+        injury: x?.injury ?? "NONE",
+        injuryCause: x?.injuryCause ?? null,
+        injurySceneSeq: x?.injurySceneSeq ?? null,
+        injuryUpdatedSceneSeq: x?.injuryUpdatedSceneSeq ?? null,
+        vital: x?.vital ?? "ALIVE",
+        deathCause: x?.deathCause ?? null,
+        deathSceneSeq: x?.deathSceneSeq ?? null,
+        diedAt: x?.diedAt ? iso(x.diedAt) : null,
+      };
+    }),
+    conditionChanges: conditionChanges.map((c) => ({
+      id: c.id,
+      characterId: c.characterId,
+      sceneId: c.sceneId,
+      eventId: c.eventId,
+      kind: c.kind,
+      fromValue: c.fromValue,
+      toValue: c.toValue,
+      reason: c.reason,
+      createdAt: iso(c.createdAt),
     })),
   };
 }
@@ -211,6 +263,9 @@ export async function restoreSnapshot(tx: Tx, worldId: string, p: CurrentSnapsho
   const where = { worldId };
   // 1) 진행 상태 삭제 (FK 의존 순서)
   await tx.characterMemory.deleteMany({ where });
+  await tx.characterConditionChange.deleteMany({ where });
+  await tx.worldEventPeriod.deleteMany({ where });
+  await tx.characterCondition.deleteMany({ where });
   await tx.emotionChange.deleteMany({ where });
   await tx.relationshipChange.deleteMany({ where });
   await tx.worldEvent.deleteMany({ where });
@@ -272,8 +327,20 @@ export async function restoreSnapshot(tx: Tx, worldId: string, p: CurrentSnapsho
   }
   if (p.emotionChanges.length) await tx.emotionChange.createMany({ data: p.emotionChanges.map((e) => ({ ...e, worldId, createdAt: at(e.createdAt) })) });
   if (p.memories.length) await tx.characterMemory.createMany({ data: p.memories.map((m) => ({ ...m, worldId, createdAt: at(m.createdAt) })) });
+  const atOrNull = (s: string | null) => (s ? at(s) : null);
   if (p.worldEvents.length) {
-    await tx.worldEvent.createMany({ data: p.worldEvents.map((e) => ({ ...e, worldId, createdAt: at(e.createdAt), resolvedAt: e.resolvedAt ? at(e.resolvedAt) : null })) });
+    await tx.worldEvent.createMany({
+      data: p.worldEvents.map((e) => ({ ...e, worldId, createdAt: at(e.createdAt), resolvedAt: atOrNull(e.resolvedAt), cancelledAt: atOrNull(e.cancelledAt) })),
+    });
+  }
+  if (p.eventPeriods.length) {
+    await tx.worldEventPeriod.createMany({ data: p.eventPeriods.map((x) => ({ ...x, worldId, firedAt: atOrNull(x.firedAt), createdAt: at(x.createdAt) })) });
+  }
+  if (p.characterConditions.length) {
+    await tx.characterCondition.createMany({ data: p.characterConditions.map((c) => ({ ...c, worldId, diedAt: atOrNull(c.diedAt) })) });
+  }
+  if (p.conditionChanges.length) {
+    await tx.characterConditionChange.createMany({ data: p.conditionChanges.map((c) => ({ ...c, worldId, createdAt: at(c.createdAt) })) });
   }
 
   // 4) GameState: 진행 값·실행 설정 복원 + 펜싱 토큰 증가

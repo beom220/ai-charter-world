@@ -88,8 +88,8 @@ describe("전체 마이그레이션 재현", () => {
   it("재현 DB의 카탈로그(컬럼·제약·인덱스·트리거·함수·enum·마이그레이션)가 개발 DB와 같다", async () => {
     const [replay, dev] = await Promise.all([catalog(replayDb), catalog(devDb)]);
     expect(replay).toEqual(dev);
-    expect(replay.triggers).toHaveLength(11);
-    expect(replay.constraints.filter((c) => c.includes(":CHECK ("))).toHaveLength(11);
+    expect(replay.triggers).toHaveLength(14); // Phase 7-2: 신체 상태 변화 이력(장면·사건)·자동 사건 구간(사건) 같은 세계관 트리거 3개
+    expect(replay.constraints.filter((c) => c.includes(":CHECK ("))).toHaveLength(15); // Phase 7-2: 사망 기록·부상 원인·구간 예약·사용자 사건 길이
     expect(replay.functions).toEqual([expect.stringMatching(/^enforce_same_scope:/)]);
   });
 

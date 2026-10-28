@@ -294,6 +294,7 @@ model GameState {
   worldId          String         @id
   stateVersion     Int            @default(0)      // 펜싱 토큰: 장면 커밋·종료·불러오기·초기화 시 +1
   changeSeq        Int            @default(0)      // 게임 상태 변경 카운터: 장면 커밋·설정 수정·기록 삭제·불러오기·초기화 시 +1 (복구 지점 판정, A13)
+  settingsSeq      Int            @default(0)      // 설정 펜싱 카운터: 세계관·캐릭터 설정 변경·불러오기 시만 +1 (Phase 7-2-0, 속도 변경·사건 등록 제외)
   nextSceneSeq     Int            @default(1)      // 기록 삭제와 무관하게 단조 증가
 
   // 실행 설정 (설정 계층이지만 1:1이므로 여기 둠; 스냅샷에 포함)
@@ -592,6 +593,14 @@ model SimulationEvent {                               // SSE outbox (A6)
 }
 ```
 
+### 3.5a 사건·신체 상태 (Phase 7-2-1, 마이그레이션 20261028140000)
+
+- `WorldEvent` 확장: `kind` + `RANDOM`, `status` + `PENDING`·`CANCELLED`, `presetId`, `intensity`(`EventIntensity` LOW·MEDIUM·HIGH), `requestId`(`@@unique([worldId, requestId])`), `startedSceneSeq`, `lastSceneSeq`, `resolvedSceneSeq`, `resolutionSummary`, `claimedAttemptId`, `cancelledAt`. 사용자 사건 원문은 `description`(CHECK `world_event_user_text_length` ≤ 200자).
+- `WorldEventPeriod(worldId, periodIndex)` PK: `won`, `scheduledSceneSeq`(CHECK `world_event_period_schedule`: 당첨 ⇔ 예약 장면), `presetId`, `eventId`(SetNull, 트리거 `event_period_event_same_world`), `firedAt`.
+- `CharacterCondition` 1:1 (`(characterId, worldId)` 복합 FK): `thermal`(`ThermalState`), `injury`(`InjurySeverity`, 통증 단계 겸용), `injuryCause`, `injurySceneSeq`, `injuryUpdatedSceneSeq`, `vital`(`VitalStatus`), `deathCause`, `deathSceneSeq`, `diedAt`. CHECK `character_condition_death_record`(사망이면 원인·장면·시각 필수), `character_condition_injury_cause`(부상이면 원인 필수). 기존 캐릭터는 마이그레이션에서 기본값 행을 만들고, 캐릭터 생성 트랜잭션이 함께 만든다.
+- `CharacterConditionChange`: `kind`(`ConditionChangeKind` THERMAL·INJURY·TREATMENT·RECOVERY·DEATH), `fromValue`·`toValue`, `reason`, `sceneId`·`eventId`(SetNull, 트리거 `condition_change_scene_same_world`·`condition_change_event_same_world`), `(characterId, worldId)` 복합 FK.
+- 사망은 `Character.deletedAt`과 무관하다. 사망자도 활성 슬롯(6명)에 포함된다.
+
 ### 3.6 세이브
 
 ```prisma
@@ -677,6 +686,7 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   --
 - 나이 상한 1000은 판타지 종족을 고려한 기술적 상한이다. 랜덤 생성 범위는 별도(성인 기본)이다.
 - `RelationshipBaseline`에도 같은 범위·자기 참조 금지 CHECK(`baseline_range`, `baseline_not_self`)를 둔다.
 - `Character`: 성년기 배경은 19세 이상만 `character_adulthood_age CHECK ("adulthoodBackgroundId" IS NULL OR "age" >= 19)` (Phase 7-1, 20261028120000). 배경 ID 값 자체(프리셋 44종)는 앱이 검증한다.
+- Phase 7-2-1(20261028140000): `character_condition_death_record`, `character_condition_injury_cause`, `world_event_period_schedule`, `world_event_user_text_length` (§3.5a). 프리셋 ID 값은 앱·스냅샷 검증이 확인한다. CHECK는 모두 15개.
 
 ### 4.2 주요 조회와 인덱스
 
@@ -710,6 +720,8 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   --
 | SceneParticipant | `sceneId` → ConversationScene, `characterId` → Character (`worldId` 컬럼 추가) |
 | Message | `sceneId` → ConversationScene |
 | CharacterMemory | `ownerCharacterId` → Character |
+| CharacterCondition | `characterId` → Character (Phase 7-2) |
+| CharacterConditionChange | `characterId` → Character (Phase 7-2) |
 
 `ON UPDATE RESTRICT` 때문에 참조되고 있는 캐릭터·장면의 `worldId`를 바꾸면 거부된다(다른 세계관으로 데이터를 옮기는 경로 차단).
 
@@ -727,6 +739,9 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   --
 | `world_event_source_scene_same_world` | WorldEvent.sourceSceneId → ConversationScene |
 | `scene_run_same_world` | ConversationScene.runId → SimulationRun |
 | `save_snapshot_same_world` | SaveGame.snapshotId → GameSnapshot |
+| `condition_change_scene_same_world` | CharacterConditionChange.sceneId → ConversationScene (Phase 7-2) |
+| `condition_change_event_same_world` | CharacterConditionChange.eventId → WorldEvent (Phase 7-2) |
+| `event_period_event_same_world` | WorldEventPeriod.eventId → WorldEvent (Phase 7-2) |
 
 **3) 사용자 범위 참조 → 소유자 일치 트리거** (같은 함수 사용)
 
@@ -744,7 +759,7 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   --
 
 검증:
 - `tests/integration/same-world-integrity.test.ts`: 사용자 A 세계관에서 사용자 B 세계관 레코드를 참조하는 시나리오
-- `tests/integration/scope-matrix.test.ts`: 복합 FK 11개 + 트리거 11개 각각을 **INSERT와 UPDATE 양쪽**에서 검증. DB 카탈로그의 제약이 표에 빠지면 실패한다(새 제약 추가 시 표도 갱신).
+- `tests/integration/scope-matrix.test.ts`: 복합 FK 13개 + 트리거 14개 각각을 **INSERT와 UPDATE 양쪽**에서 검증. DB 카탈로그의 제약이 표에 빠지면 실패한다(새 제약 추가 시 표도 갱신).
 - `tests/integration/migration-replay.test.ts`: 새 임시 DB에 전체 마이그레이션을 적용하고, Prisma가 관리하지 않는 CHECK·트리거·함수를 포함한 카탈로그가 개발 DB와 같은지, 재현 DB에서도 트리거가 동작하는지 확인한다.
 
 ---
@@ -815,7 +830,7 @@ type SnapshotV1 = {
 
 ### 5.3 schemaVersion 정책
 
-- **현재 버전**: `CURRENT_SNAPSHOT_VERSION = 1` (`lib/snapshot/index.ts`).
+- **현재 버전**: `SNAPSHOT_SCHEMA_VERSION = 3` (`config/limits.ts`, `lib/snapshot/v1.ts`·`v2.ts`·`v3.ts`). v2 = 캐릭터 배경(Phase 7-1), v3 = 사건 확장·자동 사건 구간·캐릭터 신체 상태와 이력(Phase 7-2). 읽기는 v1 → v2 → v3 순으로 변환한다.
 - **읽기 경로**: `parse(raw) → migrations[v→v+1]… → SnapshotCurrent.parse()`. 원본 행은 수정하지 않는다.
 - **버전을 올리는 경우**: 스냅샷 대상 테이블에 필드 추가·삭제·의미 변경이 있을 때 반드시 버전을 올린다.
 - 각 마이그레이터에 이전 버전 픽스처 기반 테스트를 붙인다.

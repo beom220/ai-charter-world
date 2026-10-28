@@ -33,7 +33,14 @@ async function seedRowsInA() {
   const log = await prisma.apiRequestLog.create({
     data: { userId: a.user.id, worldId: w, connectionId: a.connection.id, model: "mock", startedAt: new Date(), outcome: "SUCCESS" },
   });
-  return { baseline, relChange, emotion, emoChange, memory, event, sse, log };
+  // Phase 7-2: 신체 상태·변화 이력·자동 사건 구간 (B 세계관 사건은 다른 세계관 참조용)
+  const condition = await prisma.characterCondition.create({ data: { characterId: a.c1.id, worldId: w } });
+  const condChange = await prisma.characterConditionChange.create({
+    data: { worldId: w, characterId: a.c1.id, sceneId: a.scene.id, eventId: event.id, kind: "INJURY", fromValue: "NONE", toValue: "MILD" },
+  });
+  const period = await prisma.worldEventPeriod.create({ data: { worldId: w, periodIndex: 0, won: true, scheduledSceneSeq: 3, eventId: event.id } });
+  const eventB = await prisma.worldEvent.create({ data: { worldId: b.world.id, kind: "RANDOM", title: "t", description: "d" } });
+  return { baseline, relChange, emotion, emoChange, memory, event, sse, log, condition, condChange, period, eventB };
 }
 
 type Case = { constraint: string; insert: () => Promise<unknown>; update: () => Promise<unknown> };
@@ -193,6 +200,34 @@ function cases(): Case[] {
         }),
       update: () => prisma.saveGame.update({ where: { recoveryForWorldId: w }, data: { snapshotId: b.snapshot.id } }),
     },
+    // ── Phase 7-2
+    {
+      constraint: "CharacterCondition_characterId_worldId_fkey",
+      insert: () => prisma.characterCondition.create({ data: { characterId: b.c1.id, worldId: w } }),
+      update: () => prisma.characterCondition.update({ where: { characterId: rowsA.condition.characterId }, data: { characterId: b.c1.id } }),
+    },
+    {
+      constraint: "CharacterConditionChange_characterId_worldId_fkey",
+      insert: () => prisma.characterConditionChange.create({ data: { worldId: w, characterId: b.c1.id, kind: "THERMAL", fromValue: "NORMAL", toValue: "COLD" } }),
+      update: () => prisma.characterConditionChange.update({ where: { id: rowsA.condChange.id }, data: { characterId: b.c1.id } }),
+    },
+    {
+      constraint: "condition_change_scene_same_world",
+      insert: () =>
+        prisma.characterConditionChange.create({ data: { worldId: w, characterId: a.c1.id, sceneId: b.scene.id, kind: "THERMAL", fromValue: "NORMAL", toValue: "COLD" } }),
+      update: () => prisma.characterConditionChange.update({ where: { id: rowsA.condChange.id }, data: { sceneId: b.scene.id } }),
+    },
+    {
+      constraint: "condition_change_event_same_world",
+      insert: () =>
+        prisma.characterConditionChange.create({ data: { worldId: w, characterId: a.c1.id, eventId: rowsA.eventB.id, kind: "THERMAL", fromValue: "NORMAL", toValue: "COLD" } }),
+      update: () => prisma.characterConditionChange.update({ where: { id: rowsA.condChange.id }, data: { eventId: rowsA.eventB.id } }),
+    },
+    {
+      constraint: "event_period_event_same_world",
+      insert: () => prisma.worldEventPeriod.create({ data: { worldId: w, periodIndex: 9, won: false, eventId: rowsA.eventB.id } }),
+      update: () => prisma.worldEventPeriod.update({ where: { worldId_periodIndex: { worldId: w, periodIndex: 0 } }, data: { eventId: rowsA.eventB.id } }),
+    },
     // ── 같은 사용자 트리거
     {
       constraint: "sse_connection_world_owner",
@@ -241,6 +276,8 @@ describe("범위 제약 매트릭스 — INSERT·UPDATE", () => {
     "SceneParticipant_characterId_worldId_fkey",
     "Message_sceneId_worldId_fkey",
     "CharacterMemory_ownerCharacterId_worldId_fkey",
+    "CharacterCondition_characterId_worldId_fkey",
+    "CharacterConditionChange_characterId_worldId_fkey",
     "message_speaker_same_world",
     "memory_about_same_world",
     "memory_source_scene_same_world",
@@ -249,6 +286,9 @@ describe("범위 제약 매트릭스 — INSERT·UPDATE", () => {
     "world_event_source_scene_same_world",
     "scene_run_same_world",
     "save_snapshot_same_world",
+    "condition_change_scene_same_world",
+    "condition_change_event_same_world",
+    "event_period_event_same_world",
     "sse_connection_world_owner",
     "api_log_world_owner",
     "api_log_connection_owner",

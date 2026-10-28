@@ -5,6 +5,7 @@ import { prisma } from "@/server/db/client";
 import { BadRequestError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { assertSettingsEditable, lockOwnedWorld } from "@/server/domain/worlds";
+import { conditionSelect, toConditionView, type ConditionView } from "./conditions";
 import { randomAge } from "./random";
 
 // 캐릭터 CRUD (PRD FR-04, database.md §6.6·§6.7·§7). 런타임 독립 모듈.
@@ -28,6 +29,8 @@ export type CharacterView = {
   childhoodBackgroundId: string | null;
   adulthoodBackgroundId: string | null;
   emotion: { mood: string; intensity: number } | null;
+  /** 신체 상태 (Phase 7-2). 사망자도 목록에 남고 슬롯을 차지한다 */
+  condition: ConditionView;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -51,6 +54,7 @@ const viewSelect = {
   createdAt: true,
   updatedAt: true,
   emotionState: { select: { mood: true, intensity: true } },
+  condition: { select: conditionSelect },
 } as const;
 
 type Row = {
@@ -72,15 +76,17 @@ type Row = {
   createdAt: Date;
   updatedAt: Date;
   emotionState: { mood: string; intensity: number } | null;
+  condition: ConditionView | null;
 };
 
 function toView(r: Row): CharacterView {
-  const { extraversion, agreeableness, conscientiousness, emotionalStability, openness, emotionState, goal, ...rest } = r;
+  const { extraversion, agreeableness, conscientiousness, emotionalStability, openness, emotionState, goal, condition, ...rest } = r;
   return {
     ...rest,
     goal: goal ?? "",
     bigFive: { extraversion, agreeableness, conscientiousness, emotionalStability, openness },
     emotion: emotionState,
+    condition: toConditionView(condition),
   };
 }
 
@@ -137,7 +143,7 @@ export async function findDeletedCharacterName(userId: AuthenticatedUserId, worl
   return row?.name ?? null;
 }
 
-/** 캐릭터 생성 (database.md §6.6). World 행 잠금으로 동시 생성을 직렬화해 활성 6명 상한을 지킨다 */
+/** 캐릭터 생성 (database.md §6.6). World 행 잠금으로 동시 생성을 직렬화해 활성 6명 상한을 지킨다 (사망자도 활성 슬롯에 포함) */
 export async function createCharacter(userId: AuthenticatedUserId, worldId: string, input: CharacterInput): Promise<CharacterView> {
   const id = await prisma.$transaction(async (tx) => {
     await lockOwnedWorld(tx, userId, worldId);
@@ -152,6 +158,7 @@ export async function createCharacter(userId: AuthenticatedUserId, worldId: stri
     await tx.emotionState.create({
       data: { characterId: character.id, worldId, mood: character.initialMood, intensity: character.initialMoodIntensity },
     });
+    await tx.characterCondition.create({ data: { characterId: character.id, worldId } }); // 정상·부상 없음·생존
     return character.id;
   });
   return getCharacter(userId, worldId, id);
