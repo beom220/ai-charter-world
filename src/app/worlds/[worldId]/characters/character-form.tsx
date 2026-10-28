@@ -2,9 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ADULTHOOD_MIN_AGE, findBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
 import { CHARACTER_CONTEXT_MAX_LENGTH, PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN } from "../../../../../config/limits";
 import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
 import {
+  adulthoodBackgroundIssue,
+  CHILDHOOD_REQUIRED_MESSAGE,
   characterInputSchema,
   codePointLength,
   GENDER_INPUTS,
@@ -14,14 +17,27 @@ import {
 } from "@/lib/schemas/character";
 import { button } from "../../ui";
 import { send } from "../../world-form";
+import { BackgroundPicker } from "./background-picker";
 
 // 캐릭터 생성·수정 폼 (PRD FR-04). 🎲 전체 랜덤·항목별 랜덤과 필드 잠금을 지원한다.
 // 잠금은 클라이언트 상태이며 랜덤 요청에 lockedFields로 보낸다(architecture.md §13).
+// 배경(Phase 7-1): 유년기 필수, 성년기는 나이 19세 이상 필수·18세 이하 불가. 나이를 비우면 생성은 성인 자동, 수정은 현재 나이 기준이다.
+// 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비운다. 필수 배경을 고르기 전에는 저장할 수 없다(서버도 같은 규칙으로 거절).
 
 const input = "rounded-md border border-foreground/20 bg-transparent px-3 py-2";
 const small = "rounded border border-foreground/20 px-2 py-0.5 text-xs hover:bg-foreground/5 disabled:opacity-50";
 
-const EMPTY: CharacterDraft = { name: "", gender: "AUTO", genderCustom: null, age: null, personalityTags: [], goal: "", characterContext: "" };
+const EMPTY: CharacterDraft = {
+  name: "",
+  gender: "AUTO",
+  genderCustom: null,
+  age: null,
+  personalityTags: [],
+  goal: "",
+  characterContext: "",
+  childhoodBackgroundId: null,
+  adulthoodBackgroundId: null,
+};
 
 export function CharacterForm({ worldId, characterId, initial }: { worldId: string; characterId?: string; initial?: CharacterDraft }) {
   const router = useRouter();
@@ -31,6 +47,13 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const set = <K extends keyof CharacterDraft>(key: K, value: CharacterDraft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  /** 저장될 나이: 비우면 생성은 성인 자동, 수정은 현재 나이 */
+  const effectiveAge = (age: number | null) => age ?? initial?.age ?? null;
+  const isAdult = (age: number | null) => {
+    const a = effectiveAge(age);
+    return a === null || requiresAdulthood(a);
+  };
+  const setAge = (age: number | null) => setDraft((d) => ({ ...d, age, adulthoodBackgroundId: isAdult(age) ? d.adulthoodBackgroundId : null }));
   const toggleLock = (f: RandomField) =>
     setLocked((prev) => {
       const next = new Set(prev);
@@ -45,7 +68,12 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
     try {
       const { ok, json } = await send(`/api/worlds/${worldId}/characters/random`, "POST", { draft, lockedFields: [...locked], fields });
       if (!ok) return setNotice({ kind: "error", text: json?.error?.message ?? "랜덤 생성에 실패했습니다." });
-      setDraft(json.draft);
+      const next = json.draft as CharacterDraft;
+      // 나이 규칙이 잠금보다 우선한다: 잠근 성년기 배경이 비워졌으면 알린다
+      if (locked.has("adulthoodBackgroundId") && draft.adulthoodBackgroundId && !next.adulthoodBackgroundId) {
+        setNotice({ kind: "error", text: `나이가 ${ADULTHOOD_MIN_AGE - 1}세 이하가 되어 잠근 성년기 배경을 비웠습니다.` });
+      }
+      setDraft(next);
     } catch {
       setNotice({ kind: "error", text: "랜덤 생성에 실패했습니다." });
     } finally {
@@ -56,6 +84,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setNotice(null);
+    if (backgroundProblem) return setNotice({ kind: "error", text: backgroundProblem });
     const parsed = characterInputSchema.safeParse(draft);
     if (!parsed.success) return setNotice({ kind: "error", text: parsed.error.issues[0]?.message ?? "입력을 확인하세요." });
 
@@ -97,6 +126,11 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
   );
 
   const contextLength = codePointLength(draft.characterContext);
+  const adult = isAdult(draft.age);
+  const ageForRule = effectiveAge(draft.age);
+  const backgroundProblem = !findBackground(draft.childhoodBackgroundId, "CHILDHOOD")
+    ? CHILDHOOD_REQUIRED_MESSAGE
+    : adulthoodBackgroundIssue(ageForRule ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId);
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
@@ -134,7 +168,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
             min={0}
             placeholder="비우면 자동"
             value={draft.age ?? ""}
-            onChange={(e) => set("age", e.target.value === "" ? null : Number(e.target.value))}
+            onChange={(e) => setAge(e.target.value === "" ? null : Number(e.target.value))}
           />
         </label>
       </div>
@@ -170,6 +204,22 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
         ))}
       </fieldset>
 
+      <BackgroundPicker
+        key={`c-${draft.childhoodBackgroundId ?? "none"}`} // 랜덤으로 바뀌면 그 등급 탭을 연다
+        stage="CHILDHOOD"
+        value={draft.childhoodBackgroundId}
+        onChange={(id) => set("childhoodBackgroundId", id)}
+        controls={controls("childhoodBackgroundId")}
+      />
+      <BackgroundPicker
+        key={`a-${draft.adulthoodBackgroundId ?? "none"}`}
+        stage="ADULTHOOD"
+        value={draft.adulthoodBackgroundId}
+        onChange={(id) => set("adulthoodBackgroundId", id)}
+        disabledReason={adult ? null : `${ADULTHOOD_MIN_AGE - 1}세 이하는 성년기 배경을 설정할 수 없습니다. 나이를 ${ADULTHOOD_MIN_AGE}세 이상으로 하면 선택할 수 있습니다.`}
+        controls={controls("adulthoodBackgroundId")}
+      />
+
       <label className="flex flex-col gap-1 text-sm">
         {header("목표 (선택)", "goal")}
         <input className={input} value={draft.goal} onChange={(e) => set("goal", e.target.value)} />
@@ -185,9 +235,10 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       </label>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" className={button} disabled={busy || contextLength > CHARACTER_CONTEXT_MAX_LENGTH}>
+        <button type="submit" className={button} disabled={busy || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || backgroundProblem !== null}>
           {characterId ? "저장" : "만들기"}
         </button>
+        {backgroundProblem && <span className="text-xs text-foreground/60">{backgroundProblem}</span>}
         {notice && (
           <p role={notice.kind === "error" ? "alert" : "status"} className={notice.kind === "error" ? "text-sm text-red-600" : "text-sm"}>
             {notice.text}

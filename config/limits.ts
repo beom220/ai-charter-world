@@ -210,8 +210,8 @@ export const AUTO_SAVE_RETRY_MS = 10 * 60 * 1000;
 /** 저장 이름 최대 길이(코드 포인트). SaveGame.name VarChar(60) */
 export const SAVE_NAME_MAX_LENGTH = 60;
 
-/** 현재 스냅샷 payload 버전 (lib/snapshot) */
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+/** 현재 스냅샷 payload 버전 (lib/snapshot). v2 = 캐릭터 배경 추가 (Phase 7-1) */
+export const SNAPSHOT_SCHEMA_VERSION = 2;
 
 /** 저장·불러오기 트랜잭션 제한 시간 (대화 기록 전체를 캡처·복원하므로 기본 5초보다 길게) */
 export const SAVE_TRANSACTION_TIMEOUT_MS = 30_000;

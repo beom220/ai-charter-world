@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { SNAPSHOT_SCHEMA_VERSION } from "../../../../config/limits";
 import type { Prisma } from "@/generated/prisma/client";
-import { snapshotReferenceError, snapshotV1Schema, type SnapshotV1 } from "@/lib/snapshot/v1";
+import { snapshotReferenceError, snapshotV1Schema } from "@/lib/snapshot/v1";
+import { migrateV1ToV2, snapshotBackgroundError, snapshotV2Schema, type SnapshotV2 } from "@/lib/snapshot/v2";
 import { AppError } from "@/server/domain/errors";
 
 // 스냅샷 캡처·검증·복원 (architecture.md §9.1·§9.2·§9.6, Phase 6). 런타임 독립.
@@ -34,23 +35,36 @@ export const snapshotChecksum = (payload: unknown) => {
   return { checksum: createHash("sha256").update(text).digest("hex"), sizeBytes: Buffer.byteLength(text) };
 };
 
-/** 저장된 행 → 검증된 payload. 버전·checksum·구조·참조를 모두 확인한다 */
-export function parseSnapshot(row: { schemaVersion: number; payload: unknown; checksum: string }): SnapshotV1 {
+/** 현재 버전 payload */
+export type CurrentSnapshot = SnapshotV2;
+
+/**
+ * 저장된 행 → 검증된 현재 버전 payload. 버전 → checksum(저장된 원본 기준) → 버전별 Zod → 마이그레이션 → 참조 순으로 확인한다.
+ * 저장된 원본은 바꾸지 않는다(읽을 때 변환, §9.6).
+ */
+export function parseSnapshot(row: { schemaVersion: number; payload: unknown; checksum: string }): CurrentSnapshot {
   if (row.schemaVersion > SNAPSHOT_SCHEMA_VERSION) throw new SnapshotInvalidError("NEWER_VERSION");
   if (snapshotChecksum(row.payload).checksum !== row.checksum) throw new SnapshotInvalidError("CHECKSUM");
-  // v1이 현재 버전이다. v2를 만들면 여기서 migrate(payload, fromVersion)를 거친다 (§9.6)
-  const parsed = snapshotV1Schema.safeParse(row.payload);
-  if (!parsed.success) throw new SnapshotInvalidError("SCHEMA");
-  const refError = snapshotReferenceError(parsed.data);
+  let snapshot: CurrentSnapshot;
+  if (row.schemaVersion === 1) {
+    const v1 = snapshotV1Schema.safeParse(row.payload);
+    if (!v1.success) throw new SnapshotInvalidError("SCHEMA");
+    snapshot = migrateV1ToV2(v1.data);
+  } else {
+    const v2 = snapshotV2Schema.safeParse(row.payload);
+    if (!v2.success) throw new SnapshotInvalidError("SCHEMA");
+    snapshot = v2.data;
+  }
+  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot);
   if (refError) throw new SnapshotInvalidError(refError);
-  return parsed.data;
+  return snapshot;
 }
 
 const iso = (d: Date) => d.toISOString();
 const isoOrNull = (d: Date | null) => (d ? d.toISOString() : null);
 
 /** 현재 활성 상태를 payload로 만든다 (호출자가 World·GameState 잠금을 잡은 트랜잭션) */
-export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promise<SnapshotV1> {
+export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promise<CurrentSnapshot> {
   const where = { worldId };
   const [world, gs, characters, baselines, states, relChanges, emotions, emoChanges, memories, scenes, events] = await Promise.all([
     tx.world.findUniqueOrThrow({ where: { id: worldId } }),
@@ -67,7 +81,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
   ]);
   const rel = (r: { affinity: number; trust: number; respect: number; familiarity: number }) => ({ affinity: r.affinity, trust: r.trust, respect: r.respect, familiarity: r.familiarity });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: iso(now),
     world: {
       name: world.name,
@@ -103,6 +117,8 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       characterContext: c.characterContext,
       initialMood: c.initialMood,
       initialMoodIntensity: c.initialMoodIntensity,
+      childhoodBackgroundId: c.childhoodBackgroundId,
+      adulthoodBackgroundId: c.adulthoodBackgroundId,
       sortOrder: c.sortOrder,
       deletedAt: isoOrNull(c.deletedAt),
       createdAt: iso(c.createdAt),
@@ -117,7 +133,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       dTrust: c.dTrust,
       dRespect: c.dRespect,
       dFamiliarity: c.dFamiliarity,
-      proposed: c.proposed as SnapshotV1["relationshipChanges"][number]["proposed"],
+      proposed: c.proposed as CurrentSnapshot["relationshipChanges"][number]["proposed"],
       clamped: c.clamped,
       reason: c.reason,
       createdAt: iso(c.createdAt),
@@ -191,7 +207,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
  * 진행 상태를 모두 지운 뒤 스냅샷에 없는 캐릭터는 지우고, 설정·진행 상태를 원래 ID로 다시 만든다.
  * stateVersion·changeSeq를 1씩 올려 이전 시도의 늦은 커밋을 막는다. 새 changeSeq를 돌려준다.
  */
-export async function restoreSnapshot(tx: Tx, worldId: string, p: SnapshotV1): Promise<{ stateVersion: number; changeSeq: number }> {
+export async function restoreSnapshot(tx: Tx, worldId: string, p: CurrentSnapshot): Promise<{ stateVersion: number; changeSeq: number }> {
   const where = { worldId };
   // 1) 진행 상태 삭제 (FK 의존 순서)
   await tx.characterMemory.deleteMany({ where });

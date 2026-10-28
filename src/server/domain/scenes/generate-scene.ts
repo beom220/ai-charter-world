@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { SCENE_GENERATION_TIMEOUT_MS, SCENE_IN_FLIGHT_STALE_MS, SCENE_MAX_OUTPUT_TOKENS, SCENE_HISTORY_PAGE_SIZE, SCENE_PARTICIPANTS_MIN, SCENE_RECENT_HISTORY_SCENES, SCENE_TEMPERATURE } from "../../../../config/limits";
 import { getProviderKeyMaterial, type ProviderKeyMaterial } from "@/server/crypto/provider-key-crypto";
 import { prisma } from "@/server/db/client";
-import { buildStoryPrompt, type PromptCharacter, type PromptHistoryScene } from "@/server/engine/context/story-prompt";
+import { findBackground } from "../../../../config/character-backgrounds";
+import { buildStoryPrompt, type PromptBackground, type PromptCharacter, type PromptHistoryScene } from "@/server/engine/context/story-prompt";
 import { selectSceneParticipants } from "@/server/engine/director/select-participants";
 import { createUsageMeter } from "@/server/engine/usage/usage-guard";
 import { parseSceneOutput, SCENE_ALIASES, sceneResponseJsonSchema, SceneValidationError } from "@/server/engine/validation/scene-output";
@@ -162,6 +163,7 @@ export async function prepareScene(userId: AuthenticatedUserId, worldId: string,
       characterContext: r.characterContext,
       mood: r.emotionState?.mood ?? null,
       moodIntensity: r.emotionState?.intensity ?? null,
+      backgrounds: promptBackgrounds(r.childhoodBackgroundId, r.adulthoodBackgroundId),
     };
   });
   // 참가자 사이 관계와 각자의 기억 (Phase 5-5). 비참가자의 기억은 넣지 않는다
@@ -171,6 +173,16 @@ export async function prepareScene(userId: AuthenticatedUserId, worldId: string,
   const { modelId } = await requireUsableGeminiConnection(userId);
   const key = await loadKey(userId, deps.material ?? getProviderKeyMaterial());
   return { world, characters, characterIds, modelId, key };
+}
+
+/** 배경 ID → 프롬프트용 이름·설명 (알 수 없는 ID·NULL은 넣지 않는다) */
+function promptBackgrounds(childhoodId: string | null, adulthoodId: string | null): PromptBackground[] {
+  const out: PromptBackground[] = [];
+  const childhood = findBackground(childhoodId, "CHILDHOOD");
+  const adulthood = findBackground(adulthoodId, "ADULTHOOD");
+  if (childhood) out.push({ stage: "유년기", name: childhood.name, description: childhood.description });
+  if (adulthood) out.push({ stage: "성년기", name: adulthood.name, description: adulthood.description });
+  return out;
 }
 
 export async function generateScene(userId: AuthenticatedUserId, worldId: string, deps: SceneDeps = {}): Promise<SceneView> {

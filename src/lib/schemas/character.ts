@@ -7,6 +7,7 @@ import {
   PERSONALITY_TAGS_MAX,
   PERSONALITY_TAGS_MIN,
 } from "../../../config/limits";
+import { ADULTHOOD_BACKGROUND_IDS, ADULTHOOD_MIN_AGE, CHILDHOOD_BACKGROUND_IDS, requiresAdulthood } from "../../../config/character-backgrounds";
 import { PERSONALITY_TAG_CODES } from "../../../config/personality-map";
 
 // 캐릭터 생성·수정·랜덤 요청 스키마 (클라이언트·서버 공용, PRD FR-04, architecture.md §13).
@@ -34,6 +35,22 @@ const TAGS_MESSAGE = `성격 태그를 ${PERSONALITY_TAGS_MIN}~${PERSONALITY_TAG
 const AGE_MESSAGE = `나이는 0~${CHARACTER_AGE_MAX} 사이 정수이거나 비워 두세요(자동).`;
 const GENDER_CUSTOM_MESSAGE = `직접 입력 성별은 1~${CHARACTER_GENDER_CUSTOM_MAX_LENGTH}자로 입력하세요.`;
 
+export const CHILDHOOD_REQUIRED_MESSAGE = "유년기 배경을 선택하세요.";
+export const ADULTHOOD_REQUIRED_MESSAGE = `${ADULTHOOD_MIN_AGE}세 이상이면 성년기 배경을 선택해야 합니다.`;
+export const ADULTHOOD_FORBIDDEN_MESSAGE = `${ADULTHOOD_MIN_AGE - 1}세 이하는 성년기 배경을 설정할 수 없습니다.`;
+
+/**
+ * 확정된 나이 기준 성년기 배경 규칙 (Phase 7-1). 19세 이상이면 필수, 18세 이하면 없어야 한다. 위반이면 안내 문구, 아니면 null.
+ * 나이를 비워 둔 입력은 서버가 나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 이 함수로 다시 검사한다.
+ */
+export function adulthoodBackgroundIssue(age: number, adulthoodBackgroundId: string | null | undefined): string | null {
+  if (requiresAdulthood(age)) return adulthoodBackgroundId ? null : ADULTHOOD_REQUIRED_MESSAGE;
+  return adulthoodBackgroundId ? ADULTHOOD_FORBIDDEN_MESSAGE : null;
+}
+
+const childhoodId = z.string({ error: CHILDHOOD_REQUIRED_MESSAGE }).refine((id) => CHILDHOOD_BACKGROUND_IDS.includes(id), { error: "알 수 없는 유년기 배경입니다." });
+const adulthoodId = z.string().refine((id) => ADULTHOOD_BACKGROUND_IDS.includes(id), { error: "알 수 없는 성년기 배경입니다." });
+
 const tagCode = z.string().refine((c) => PERSONALITY_TAG_CODES.includes(c), { error: "알 수 없는 성격 태그입니다." });
 
 export const characterInputSchema = z
@@ -54,9 +71,16 @@ export const characterInputSchema = z
     characterContext: z
       .string({ error: CHARACTER_CONTEXT_MESSAGE })
       .refine((v) => codePointLength(v) <= CHARACTER_CONTEXT_MAX_LENGTH, { error: CHARACTER_CONTEXT_MESSAGE }),
+    // 고정 프리셋 ID만 받는다(직접 입력 없음). 유년기는 항상 필수, 성년기는 나이 규칙을 따른다
+    childhoodBackgroundId: childhoodId,
+    adulthoodBackgroundId: adulthoodId.nullable().default(null),
   })
   .strip() // worldId·deletedAt·Big Five 수치 등은 받지 않는다 (수치는 태그에서 계산)
   .superRefine((v, ctx) => {
+    if (v.age !== null) {
+      const issue = adulthoodBackgroundIssue(v.age, v.adulthoodBackgroundId);
+      if (issue) ctx.addIssue({ code: "custom", path: ["adulthoodBackgroundId"], message: issue });
+    }
     if (v.gender !== "CUSTOM") return;
     const len = codePointLength(v.genderCustom ?? "");
     if (len === 0 || len > CHARACTER_GENDER_CUSTOM_MAX_LENGTH) ctx.addIssue({ code: "custom", path: ["genderCustom"], message: GENDER_CUSTOM_MESSAGE });
@@ -65,7 +89,7 @@ export const characterInputSchema = z
 export type CharacterInput = z.infer<typeof characterInputSchema>;
 
 /** 랜덤 생성 대상 필드 */
-export const RANDOM_FIELDS = ["name", "gender", "age", "personalityTags", "goal", "characterContext"] as const;
+export const RANDOM_FIELDS = ["name", "gender", "age", "personalityTags", "goal", "characterContext", "childhoodBackgroundId", "adulthoodBackgroundId"] as const;
 export type RandomField = (typeof RANDOM_FIELDS)[number];
 
 /** 랜덤 초안. 아직 검증 전인 편집 중 값이므로 느슨하게 받는다 */
@@ -77,6 +101,8 @@ export const characterDraftSchema = z.object({
   personalityTags: z.array(z.string().max(64)).max(PERSONALITY_TAG_CODES.length).default([]),
   goal: z.string().max(10_000).default(""),
   characterContext: z.string().max(CHARACTER_CONTEXT_MAX_LENGTH * 4).default(""),
+  childhoodBackgroundId: z.string().max(64).nullable().default(null),
+  adulthoodBackgroundId: z.string().max(64).nullable().default(null),
 });
 
 export type CharacterDraft = z.infer<typeof characterDraftSchema>;

@@ -155,7 +155,7 @@ export type SnapshotV1 = z.infer<typeof snapshotV1Schema>;
  * 참조 관계 검사. 모든 캐릭터·장면·관계 참조가 스냅샷 안에 있어야 하고, ID·장면 번호가 중복되지 않으며,
  * 활성 캐릭터가 6명 이하여야 한다. 문제가 있으면 고정 코드, 없으면 null
  */
-export function snapshotReferenceError(p: SnapshotV1): string | null {
+export function snapshotReferenceError(p: Omit<SnapshotV1, "schemaVersion">): string | null {
   const characters = new Set(p.characters.map((c) => c.id));
   const scenes = new Set(p.scenes.map((s) => s.id));
   const states = new Set(p.relationshipStates.map((r) => r.id));

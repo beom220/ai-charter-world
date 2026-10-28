@@ -1,3 +1,4 @@
+import { pickRandomBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
 import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_ADULT_AGE_RANGE } from "../../../../../config/limits";
 import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
 import { RANDOM_FIELDS, type CharacterDraft, type GenderValue, type RandomField } from "@/lib/schemas/character";
@@ -39,6 +40,8 @@ function randomTags(rng: Rng): string[] {
 /**
  * 초안에 랜덤 값을 채운다. fields가 없으면 전체 랜덤, 있으면 그 필드만. 잠긴 필드는 언제나 유지한다.
  * 성별을 먼저 정해 이름 풀에 반영한다.
+ * 배경(Phase 7-1): 프리셋에서만 고른다(등급 가중 추첨, 추가 LLM 호출 없음). 성년기는 나이를 정한 뒤 19세 이상일 때만 고른다.
+ * 나이 규칙이 잠금보다 우선한다: 결과 나이가 18세 이하면 잠긴 성년기 배경도 비운다(화면이 안내한다). 나이를 비운 초안은 성인(자동)으로 본다.
  */
 export function randomizeCharacter(
   draft: CharacterDraft,
@@ -58,5 +61,9 @@ export function randomizeCharacter(
   if (targets.has("personalityTags")) next.personalityTags = randomTags(rng);
   if (targets.has("goal")) next.goal = pick(GOAL_TEMPLATES, rng);
   if (targets.has("characterContext")) next.characterContext = pick(CONTEXT_TEMPLATES, rng);
+  if (targets.has("childhoodBackgroundId")) next.childhoodBackgroundId = pickRandomBackground("CHILDHOOD", rng).id;
+  const adult = next.age === null || requiresAdulthood(next.age);
+  if (!adult) next.adulthoodBackgroundId = null;
+  else if (targets.has("adulthoodBackgroundId")) next.adulthoodBackgroundId = pickRandomBackground("ADULTHOOD", rng).id;
   return next;
 }

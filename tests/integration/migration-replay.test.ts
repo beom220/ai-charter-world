@@ -89,7 +89,7 @@ describe("전체 마이그레이션 재현", () => {
     const [replay, dev] = await Promise.all([catalog(replayDb), catalog(devDb)]);
     expect(replay).toEqual(dev);
     expect(replay.triggers).toHaveLength(11);
-    expect(replay.constraints.filter((c) => c.includes(":CHECK ("))).toHaveLength(10);
+    expect(replay.constraints.filter((c) => c.includes(":CHECK ("))).toHaveLength(11);
     expect(replay.functions).toEqual([expect.stringMatching(/^enforce_same_scope:/)]);
   });
 

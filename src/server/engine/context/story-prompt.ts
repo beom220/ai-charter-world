@@ -18,6 +18,8 @@ import type { SceneAlias } from "../validation/scene-output";
 //   기억은 [C1만 아는 기억]처럼 소유자 라벨을 붙이고, 다른 인물은 모르는 것으로 연기하게 한다(§6.5). 비참가자의 기억은 넣지 않는다.
 //   기억은 호출자가 중요도·최신순으로 넘기고, 캐릭터당 문자 예산을 넘으면 뒤(덜 중요한 것)부터 뺀다(§6.4).
 //   이번 장면 결과로 감정·관계·기억 변화 제안(proposals)을 함께 받는다. 제안은 서버가 검증·clamp한 뒤에만 반영한다.
+// Phase 7-1: 유년기·성년기 배경 프리셋의 이름·설명을 "과거 경험"으로 넣는다. 지식·가치관의 배경일 뿐
+//   성격·감정·기억·관계·세계 규칙보다 우선하지 않고, 매 장면 반복 설명하거나 현재 사건으로 다루지 않게 지시한다.
 // 구성 순서: 세계관 → 참가자 → 최근 장면 기록 → 이번 장면 지시.
 // - 사용자 입력은 모두 구분 태그 안에 데이터로 넣고, 태그 안의 내용은 지시가 아니라고 명시한다(프롬프트 인젝션 완화).
 // - 프롬프트에는 DB ID 대신 C1~C6 별칭을 쓴다. 비참가자 정보는 넣지 않는다.
@@ -46,7 +48,11 @@ export type PromptCharacter = {
   relations?: PromptRelation[];
   /** 이 인물만 아는 기억 (중요도·최신순) */
   memories?: PromptMemory[];
+  /** 과거 배경 (유년기 → 성년기 순, 고정 프리셋의 이름·설명) */
+  backgrounds?: PromptBackground[];
 };
+
+export type PromptBackground = { stage: "유년기" | "성년기"; name: string; description: string };
 
 export type PromptRelation = { toAlias: SceneAlias; toName: string; affinity: number; trust: number; respect: number; familiarity: number };
 export type PromptMemory = { content: string; kind: string; acquisition: string; importance: number; aboutName: string | null };
@@ -154,6 +160,7 @@ function describeCharacter(c: PromptCharacter): string {
     `이름: ${escape(c.name)}`,
     `성별: ${escape(gender)} / 나이: ${c.age ?? "미상"}`,
     `성격: ${tags} (외향성 ${b.extraversion}, 친화성 ${b.agreeableness}, 성실성 ${b.conscientiousness}, 정서 안정성 ${b.emotionalStability}, 개방성 ${b.openness} / 0~100)`,
+    c.backgrounds?.length ? `과거 배경: ${c.backgrounds.map((b) => `${b.stage} — ${b.name}(${b.description})`).join(" / ")}` : null,
     c.goal ? `목표: ${escape(c.goal)}` : null,
     c.mood ? `현재 감정: ${c.mood} (강도 ${c.moodIntensity}/100)` : null,
     c.characterContext ? `설정: ${escape(c.characterContext)}` : null,
@@ -186,6 +193,7 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
     "이미 일어난 사건(설정 속 초기 사건 포함)을 처음 일어나는 것처럼 다시 소개하지 않는다. 이전 장면의 결심·행동·갈등을 이어받는다.",
     "이번 장면에서는 새로운 행동, 결정, 정보, 상황 변화 중 하나 이상이 일어나야 한다. 같은 논쟁을 표현만 바꿔 반복하지 않는다.",
     "이전 장면에서 확정되지 않은 추측은 사실로 단정하지 않는다. 인물은 자신이 참여하지 않은 장면의 일을 누군가에게 전해 들었을 만한 경우가 아니면 알지 못한다.",
+    "<character>의 '과거 배경'은 인물이 오래전에 겪은 경험이다. 말투·지식·가치관에 은근히 묻어날 수 있지만 현재의 성격·감정·관계·기억과 세계 규칙보다 우선하지 않고 행동을 강제하지 않는다. 매 장면 배경을 설명하지 말고, 과거의 일을 지금 일어나는 사건처럼 쓰지 않는다.",
     "<character>의 관계와 기억은 그 인물만의 시각이다. [Cn만 아는 기억]은 다른 인물이 모르는 것으로 연기하고, 대사로 밝히기 전에는 다른 인물이 알 수 없다.",
     "proposals에는 이번 장면의 결과로 실제로 생긴 변화만 넣는다. 변화가 없으면 빈 배열로 둔다.",
     `- emotions: 감정이 달라진 참가자만. mood는 장면이 끝난 뒤의 감정, intensityDelta는 강도 변화(-${EMOTION_INTENSITY_DELTA_MAX}~${EMOTION_INTENSITY_DELTA_MAX}).`,

@@ -1,8 +1,8 @@
 import { MAX_ACTIVE_CHARACTERS_PER_WORLD } from "../../../../config/limits";
 import { bigFiveFromTags, type BigFive } from "../../../../config/personality-map";
-import type { CharacterInput, GenderValue } from "@/lib/schemas/character";
+import { adulthoodBackgroundIssue, type CharacterInput, type GenderValue } from "@/lib/schemas/character";
 import { prisma } from "@/server/db/client";
-import { ConflictError, NotFoundError } from "@/server/domain/errors";
+import { BadRequestError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { lockOwnedWorld } from "@/server/domain/worlds";
 import { randomAge, randomGender } from "./random";
@@ -11,6 +11,8 @@ import { randomAge, randomGender } from "./random";
 // - 모든 접근은 world.ownerId 조건을 건다. 없거나 타인 소유이거나 삭제된 캐릭터는 NotFoundError(404).
 // - 변경은 World 행 잠금 → GameState changeSeq += 1 순서로 한 트랜잭션에서 한다.
 // - 삭제는 소프트 삭제(deletedAt). 메시지·관계·기억·감정 행은 그대로 둔다.
+// - 배경(Phase 7-1): 유년기는 필수, 성년기는 확정 나이 19세 이상이면 필수·18세 이하면 불가. 나이를 비운 입력은
+//   나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 다시 검사해 400으로 거절한다. 기존 NULL 캐릭터는 그대로 조회된다.
 
 export type CharacterView = {
   id: string;
@@ -22,6 +24,9 @@ export type CharacterView = {
   bigFive: BigFive;
   goal: string;
   characterContext: string;
+  /** 배경 프리셋 ID (구버전 데이터는 NULL일 수 있다) */
+  childhoodBackgroundId: string | null;
+  adulthoodBackgroundId: string | null;
   emotion: { mood: string; intensity: number } | null;
   createdAt: Date;
   updatedAt: Date;
@@ -41,6 +46,8 @@ const viewSelect = {
   openness: true,
   goal: true,
   characterContext: true,
+  childhoodBackgroundId: true,
+  adulthoodBackgroundId: true,
   createdAt: true,
   updatedAt: true,
   emotionState: { select: { mood: true, intensity: true } },
@@ -60,6 +67,8 @@ type Row = {
   openness: number;
   goal: string | null;
   characterContext: string;
+  childhoodBackgroundId: string | null;
+  adulthoodBackgroundId: string | null;
   createdAt: Date;
   updatedAt: Date;
   emotionState: { mood: string; intensity: number } | null;
@@ -80,15 +89,20 @@ const activeWhere = (userId: AuthenticatedUserId, worldId: string) => ({ worldId
 /** 입력 → 저장 값. 성별 AUTO·나이 비움은 저장 시 자동으로 정한다 (architecture.md §13). Big Five는 태그에서 계산한다 */
 function toData(input: CharacterInput) {
   const gender = input.gender === "AUTO" ? randomGender() : input.gender;
+  const age = input.age ?? randomAge();
+  const issue = adulthoodBackgroundIssue(age, input.adulthoodBackgroundId);
+  if (issue) throw new BadRequestError(issue);
   return {
     name: input.name,
     gender,
     genderCustom: gender === "CUSTOM" ? (input.genderCustom ?? null) : null,
-    age: input.age ?? randomAge(),
+    age,
     personalityTags: input.personalityTags,
     ...bigFiveFromTags(input.personalityTags),
     goal: input.goal === "" ? null : input.goal,
     characterContext: input.characterContext,
+    childhoodBackgroundId: input.childhoodBackgroundId,
+    adulthoodBackgroundId: input.adulthoodBackgroundId,
   };
 }
 
@@ -160,7 +174,9 @@ export async function updateCharacter(
       current.age === data.age &&
       current.personalityTags.join(",") === data.personalityTags.join(",") &&
       (current.goal ?? null) === data.goal &&
-      current.characterContext === data.characterContext;
+      current.characterContext === data.characterContext &&
+      current.childhoodBackgroundId === data.childhoodBackgroundId &&
+      current.adulthoodBackgroundId === data.adulthoodBackgroundId;
     if (same) return false;
 
     await tx.character.update({ where: { id: characterId }, data });

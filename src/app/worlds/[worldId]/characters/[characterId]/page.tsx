@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { BACKGROUND_RARITY_LABEL, BACKGROUND_STAGE_LABEL, findBackground, requiresAdulthood, type BackgroundStage } from "../../../../../../config/character-backgrounds";
 import { BIG_FIVE_LABEL, type BigFiveAxis } from "../../../../../../config/personality-map";
 import { getCurrentSession } from "@/server/auth/session";
 import { getCharacter } from "@/server/domain/characters/characters";
@@ -58,6 +59,36 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         </p>
       </div>
 
+      <section className={panel}>
+        <h2 className="text-sm font-semibold">배경 (과거 경험)</h2>
+        <dl className="flex flex-col gap-1.5 text-sm">
+          {(
+            [
+              ["CHILDHOOD", c.childhoodBackgroundId],
+              ["ADULTHOOD", c.adulthoodBackgroundId],
+            ] as [BackgroundStage, string | null][]
+          ).map(([stage, id]) => {
+            const preset = findBackground(id, stage);
+            return (
+              <div key={stage} className="flex flex-col sm:flex-row sm:gap-3">
+                <dt className="w-14 shrink-0 text-foreground/70">{BACKGROUND_STAGE_LABEL[stage]}</dt>
+                <dd>
+                  {preset ? (
+                    <>
+                      <span className="font-medium">{preset.name}</span>
+                      <span className="text-xs text-foreground/60"> · {BACKGROUND_RARITY_LABEL[preset.rarity]}</span>
+                      <span className="block text-xs text-foreground/70">{preset.description}</span>
+                    </>
+                  ) : (
+                    <span className="text-foreground/60">{stage === "ADULTHOOD" && c.age !== null && !requiresAdulthood(c.age) ? "해당 없음 (18세 이하)" : "설정되지 않음 — 아래 설정 수정에서 선택하세요"}</span>
+                  )}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      </section>
+
       <CharacterLiveState
         key={`${c.id}-${eventCursor}`} // 불러오기 후 다시 그리면 커서가 바뀌어 새 값으로 다시 마운트된다
         worldId={worldId}
@@ -92,6 +123,8 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
             personalityTags: c.personalityTags,
             goal: c.goal,
             characterContext: c.characterContext,
+            childhoodBackgroundId: c.childhoodBackgroundId,
+            adulthoodBackgroundId: c.adulthoodBackgroundId,
           }}
         />
       </section>

@@ -1031,6 +1031,15 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **성별**: 남성 / 여성 / 논바이너리 / 직접 입력 / 미지정.
 - **글자 수 검증**: `characterContext` 300자는 클라이언트와 서버 모두 코드 포인트 기준(`Array.from(s).length`)으로 센다. PostgreSQL `VARCHAR(300)`의 문자 수 계산 방식과 같다.
 
+### 13.1 캐릭터 배경 (Phase 7-1, PRD v1.5)
+
+- **단일 소스**: `config/character-backgrounds.ts`의 고정 프리셋 44종 `{id, name, description, rarity, stage}`. DB(`Character.childhoodBackgroundId`·`adulthoodBackgroundId`, nullable)와 세이브에는 ID만 저장하고 이름·설명은 상수에서 찾는다.
+- **규칙**: 유년기 필수. 성년기는 확정 나이 19세 이상 필수·18세 이하 불가(`adulthoodBackgroundIssue`). Zod는 나이가 있을 때 검사하고, 나이를 비운 입력은 도메인이 나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 다시 검사해 400으로 거절한다. DB CHECK `character_adulthood_age`가 2차 방어. 기존 NULL 캐릭터는 조회·렌더링되고, 수정할 때 선택해야 저장된다.
+- **랜덤**: 등급 가중 추첨(일반 0.6·특수 0.3·희귀 0.1) → 등급 안 균등(`pickRandomBackground`). 항목 `childhoodBackgroundId`·`adulthoodBackgroundId`가 전체·항목별 랜덤과 잠금에 참여한다. 결과 나이가 18세 이하면 잠긴 성년기 배경도 비우고(나이 규칙 우선) 화면이 안내한다. LLM 호출 없음.
+- **화면**: 생성·수정 폼에 일반/특수/희귀 탭 + 카드 선택, 선택 미리보기, 🎲·잠금, 필수 안내. 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비우고 선택 영역을 잠근다. 필수 배경 전에는 저장 버튼이 비활성. 캐릭터 상세 프로필에 두 배경(이름·등급·설명)을 보여 준다.
+- **컨텍스트**: `<character>`에 `과거 배경: 유년기 — 이름(설명) / 성년기 — 이름(설명)` 한 줄. 시스템 지시로 과거 경험일 뿐 현재 성격·감정·관계·기억·세계 규칙보다 우선하지 않고, 매 장면 설명하거나 현재 사건처럼 쓰지 않게 한다. 호출 수·출력 스키마는 그대로.
+- **세이브**: 스냅샷 v2(`lib/snapshot/v2.ts`) = v1 + 캐릭터 배경 ID. v1은 저장된 원본·checksum 그대로 검증한 뒤 읽을 때 `migrateV1ToV2`로 배경 NULL을 채운다. v2는 알 수 없는 배경 ID·18세 이하 성년기를 `SAVE_INVALID`로 거절한다.
+
 ---
 
 ## 14. 테스트 전략

@@ -242,6 +242,8 @@ model Character {
   openness             Int
   goal                 String?   @db.Text
   characterContext     String    @default("") @db.VarChar(300)   // 코드 포인트 300자
+  childhoodBackgroundId String?  @db.VarChar(64)  // 유년기 배경 프리셋 ID (Phase 7-1, 신규·수정 시 필수, 구버전 NULL 허용)
+  adulthoodBackgroundId String?  @db.VarChar(64)  // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL — CHECK character_adulthood_age)
   initialMood          Mood      @default(NEUTRAL)   // 감정 초기화 기준값
   initialMoodIntensity Int       @default(50)        // 0..100
   sortOrder            Int       @default(0)
@@ -674,6 +676,7 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   --
 - 앱 검증이 1차 방어다. clamp는 앱에서 먼저 적용하므로, CHECK 위반은 곧 버그다. 트랜잭션이 롤백되어 장면 실패로 처리된다.
 - 나이 상한 1000은 판타지 종족을 고려한 기술적 상한이다. 랜덤 생성 범위는 별도(성인 기본)이다.
 - `RelationshipBaseline`에도 같은 범위·자기 참조 금지 CHECK(`baseline_range`, `baseline_not_self`)를 둔다.
+- `Character`: 성년기 배경은 19세 이상만 `character_adulthood_age CHECK ("adulthoodBackgroundId" IS NULL OR "age" >= 19)` (Phase 7-1, 20261028120000). 배경 ID 값 자체(프리셋 44종)는 앱이 검증한다.
 
 ### 4.2 주요 조회와 인덱스
 

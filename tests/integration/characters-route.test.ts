@@ -65,6 +65,8 @@ const valid = (name = "도윤") => ({
   personalityTags: ["sociable", "calm", "diligent"],
   goal: "동료를 찾는다",
   characterContext: "차분한 말투",
+  childhoodBackgroundId: "childhood_city",
+  adulthoodBackgroundId: "adulthood_doctor",
 });
 
 async function setup(label: string) {
