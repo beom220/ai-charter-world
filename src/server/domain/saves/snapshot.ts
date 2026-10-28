@@ -205,7 +205,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
 /**
  * 활성 상태를 payload로 교체한다 (호출자가 World → GameState → Runtime 잠금을 잡은 트랜잭션).
  * 진행 상태를 모두 지운 뒤 스냅샷에 없는 캐릭터는 지우고, 설정·진행 상태를 원래 ID로 다시 만든다.
- * stateVersion·changeSeq를 1씩 올려 이전 시도의 늦은 커밋을 막는다. 새 changeSeq를 돌려준다.
+ * stateVersion·changeSeq·settingsSeq를 1씩 올려 이전 시도의 늦은 커밋과 이전 설정으로 준비한 시도를 막는다. 새 changeSeq를 돌려준다.
  */
 export async function restoreSnapshot(tx: Tx, worldId: string, p: CurrentSnapshot): Promise<{ stateVersion: number; changeSeq: number }> {
   const where = { worldId };
@@ -284,6 +284,7 @@ export async function restoreSnapshot(tx: Tx, worldId: string, p: CurrentSnapsho
       lastCommittedAt: p.gameState.lastCommittedAt ? at(p.gameState.lastCommittedAt) : null,
       stateVersion: { increment: 1 },
       changeSeq: { increment: 1 },
+      settingsSeq: { increment: 1 },
     },
     select: { stateVersion: true, changeSeq: true },
   });

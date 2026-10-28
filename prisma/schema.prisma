@@ -359,6 +359,7 @@ model GameState {
   worldId      String @id
   stateVersion Int    @default(0) // 펜싱 토큰: 장면 커밋·종료·불러오기·초기화 시 +1
   changeSeq    Int    @default(0) // 게임 상태 변경 카운터 (복구 지점 판정, A13)
+  settingsSeq  Int    @default(0) // 설정 펜싱 카운터: 세계관·캐릭터 설정 변경·불러오기 때만 +1 (Phase 7-2-0, 속도 변경·사건 등록은 올리지 않음)
   nextSceneSeq Int    @default(1) // 기록 삭제와 무관하게 단조 증가
 
   // 실행 설정 (설정 계층이지만 1:1이므로 여기 둠; 스냅샷에 포함)

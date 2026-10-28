@@ -10,7 +10,7 @@ import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { saveGeminiApiKey } from "@/server/domain/providers/gemini-connection";
 import { createManualSave, loadSave } from "@/server/domain/saves/saves";
 import { generateScene, prepareScene } from "@/server/domain/scenes/generate-scene";
-import { runSimulationCommand } from "@/server/domain/simulation/control";
+import { runSimulationCommand, updateSimulationSettings } from "@/server/domain/simulation/control";
 import { getWorld, updateWorld } from "@/server/domain/worlds";
 import { claimAttempt, runWorldTick } from "@/server/engine/runner/world-tick";
 import type { GeminiKeyClient } from "@/server/llm/gemini/client";
@@ -111,10 +111,12 @@ describe("설정 수정 가능 상태 (장면 0개)", () => {
     if (allowed) {
       expect(w.name).toBe("무인도");
       expect(after.changeSeq).toBe(before.changeSeq + 4);
+      expect(after.settingsSeq).toBe(before.settingsSeq + 4);
     } else {
       expect(w.name).toBe("코로나19 도시");
       expect(await prisma.character.count({ where: { worldId: world.id, deletedAt: null } })).toBe(2);
       expect(after.changeSeq).toBe(before.changeSeq);
+      expect(after.settingsSeq).toBe(before.settingsSeq);
     }
   });
 });
@@ -189,14 +191,20 @@ describe("캐릭터 설정 변경 → 재개", () => {
     expect(await prisma.relationshipState.count({ where: { worldId: world.id } })).toBeGreaterThanOrEqual(relations);
   });
 
-  it("준비 이후 changeSeq가 바뀌면 시도를 기록하지 않는다 (이전 설정으로 호출 금지)", async () => {
+  it("준비 이후 settingsSeq가 바뀌면 시도를 기록하지 않는다. 속도 변경(changeSeq만 증가)은 막지 않는다", async () => {
     const { uid, world, deps } = await setup("claim-fence");
     await runSimulationCommand(uid, world.id, "start", deps.now);
     await prisma.simulationRuntime.update({ where: { worldId: world.id }, data: { leaseOwner: "host-a", leaseExpiresAt: new Date(Date.now() + 60_000) } });
     const rt = await prisma.simulationRuntime.findUniqueOrThrow({ where: { worldId: world.id } });
     const prepared = await prepareScene(uid, world.id, deps);
 
-    await prisma.$executeRaw`UPDATE "GameState" SET "changeSeq" = "changeSeq" + 1 WHERE "worldId" = ${world.id}`;
+    // 실행 속도 변경은 changeSeq만 올린다 → 같은 준비로 기록해도 된다 (기록 후 해제)
+    await updateSimulationSettings(uid, world.id, "FAST");
+    const claimedId = randomUUID();
+    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", prepared, claimedId, deps.now())).toBe(true);
+    await prisma.simulationRuntime.update({ where: { worldId: world.id }, data: { inFlightAttemptId: null, inFlightStartedAt: null } });
+
+    await prisma.$executeRaw`UPDATE "GameState" SET "settingsSeq" = "settingsSeq" + 1 WHERE "worldId" = ${world.id}`;
     expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", prepared, randomUUID(), deps.now())).toBe(false);
     expect((await prisma.simulationRuntime.findUniqueOrThrow({ where: { worldId: world.id } })).inFlightAttemptId).toBeNull();
 
@@ -225,5 +233,17 @@ describe("캐릭터 설정 변경 → 재개", () => {
     expect(prompts[1]).toContain("이름: 호출 중 수정");
     await runSimulationCommand(uid, world.id, "start", deps.now);
     await expect(generateScene(uid, world.id, deps)).rejects.toMatchObject({ code: "SCENE_IN_PROGRESS" });
+  });
+
+  it("수동 생성: 호출 중 실행 속도만 바뀌면(changeSeq만 증가) 장면을 그대로 저장한다", async () => {
+    const { uid, world, deps } = await setup("manual-speed");
+    const speedChanged: GeminiKeyClient = {
+      ...deps.client,
+      generateJson: async (apiKey, request, meter) => {
+        await updateSimulationSettings(uid, world.id, "SLOW");
+        return deps.client.generateJson(apiKey, request, meter);
+      },
+    };
+    await expect(generateScene(uid, world.id, { ...deps, client: speedChanged })).resolves.toMatchObject({ seq: 1 });
   });
 });

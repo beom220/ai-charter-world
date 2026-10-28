@@ -9,7 +9,7 @@ import { randomAge } from "./random";
 
 // 캐릭터 CRUD (PRD FR-04, database.md §6.6·§6.7·§7). 런타임 독립 모듈.
 // - 모든 접근은 world.ownerId 조건을 건다. 없거나 타인 소유이거나 삭제된 캐릭터는 NotFoundError(404).
-// - 변경은 World 행 잠금 → 실행 상태 확인(IDLE, 진행 중 장면 없는 PAUSED만) → GameState changeSeq += 1 순서로 한 트랜잭션에서 한다.
+// - 변경은 World 행 잠금 → 실행 상태 확인(IDLE, 진행 중 장면 없는 PAUSED만) → GameState changeSeq·settingsSeq += 1 순서로 한 트랜잭션에서 한다.
 // - 삭제는 소프트 삭제(deletedAt). 메시지·관계·기억·감정 행은 그대로 둔다.
 // - 배경(Phase 7-1): 유년기는 필수, 성년기는 확정 나이 19세 이상이면 필수·18세 이하면 불가. 나이를 비운 입력은
 //   나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 다시 검사해 400으로 거절한다. 기존 NULL 캐릭터는 그대로 조회된다.
@@ -106,8 +106,9 @@ function toData(input: CharacterInput) {
   };
 }
 
+/** 설정 변경: 복구 지점 판정(changeSeq)과 설정 펜싱(settingsSeq)을 함께 올린다 */
 const bumpChangeSeq = (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], worldId: string) =>
-  tx.$executeRaw`UPDATE "GameState" SET "changeSeq" = "changeSeq" + 1, "updatedAt" = now() WHERE "worldId" = ${worldId}`;
+  tx.$executeRaw`UPDATE "GameState" SET "changeSeq" = "changeSeq" + 1, "settingsSeq" = "settingsSeq" + 1, "updatedAt" = now() WHERE "worldId" = ${worldId}`;
 
 /** 세계관의 활성 캐릭터 목록. 세계관이 없거나 타인 소유면 404 */
 export async function listCharacters(userId: AuthenticatedUserId, worldId: string): Promise<CharacterView[]> {
