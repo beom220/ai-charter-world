@@ -69,6 +69,8 @@ const proposalsSchema = z.object({
         acquisition: z.enum(ACQUISITIONS).default("WITNESSED"),
         content: z.string().trim().min(1).refine(cp(MEMORY_CONTENT_MAX_LENGTH)),
         importance: delta, // 1..5 밖이면 clamp
+        /** 이 기억이 다루는 이번 장면의 사건 별칭 (E1…, 7-2-3). 없거나 모르는 별칭이면 사건과 잇지 않는다(서버가 사건 사실 기억을 보장) */
+        eventRef: z.string().nullable().catch(null).default(null),
       }),
     )
     .max(SCENE_ALIASES.length * 4)
@@ -186,8 +188,9 @@ export function sceneResponseJsonSchema(aliases: readonly SceneAlias[], maxTurns
                 acquisition: { type: "string", enum: [...ACQUISITIONS] },
                 content: { type: "string", maxLength: MEMORY_CONTENT_MAX_LENGTH },
                 importance: { type: "integer", minimum: 1, maximum: 5 },
+                ...(eventAliases.length ? { eventRef: { type: ["string", "null"], enum: [...eventAliases, null] } } : {}),
               },
-              required: ["owner", "about", "kind", "acquisition", "content", "importance"],
+              required: ["owner", "about", "kind", "acquisition", "content", "importance", ...(eventAliases.length ? ["eventRef"] : [])],
             },
           },
         },

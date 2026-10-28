@@ -29,10 +29,13 @@ import { EVENT_ALIASES, type EventAlias, type SceneAlias, type SceneOutput } fro
 // - 자동 사건: 시도 기록 트랜잭션(World 잠금·펜싱 안)에서 구간 추첨을 영속화하고(claimAutoEvent), 예약 장면이면 프리셋을 정해 구간 행에 남긴다
 //   (재시도해도 같은 프리셋). 사건 행은 장면 커밋 트랜잭션에서만 만든다 → 실패·펜싱된 시도는 사건을 남기지 않고, 다음 시도가 다시 발생시킨다.
 // - 사용자 사건: 시도 기록 때 점유한 PENDING 1건을 이번 장면의 새 사건으로 넣고, 커밋 트랜잭션에서 "PENDING이고 이 시도가 점유 중"일 때만
-//   발생 완료로 바꾼다(아니면 장면 전체를 SCENE_STALE로 버린다 → 취소된 사건이 대사에 남지 않는다). 원문은 그대로 두고 realization·대체 프리셋은 쓰지 않는다.
-// - 발생 완료 = status RESOLVED + startedSceneSeq = resolvedSceneSeq = 발생 장면 (새 상태값 없음, resolutionSummary 없음). 프롬프트에는 이번 장면의
+//   장면 반영 완료로 바꾼다(아니면 장면 전체를 SCENE_STALE로 버린다 → 취소된 사건이 대사에 남지 않는다). 원문은 그대로 두고 realization·대체 프리셋은 쓰지 않는다.
+// - 장면 반영 완료 = status RESOLVED + startedSceneSeq = resolvedSceneSeq = 발생 장면 (새 상태값 없음, resolutionSummary 없음). 신규 사건의 RESOLVED는
+//   "해결 완료"가 아니라 "그 장면에 반영됨"이다(해결 요약이 있는 RESOLVED는 v2.2 이전의 해결 기록). 프롬프트에는 이번 장면의
 //   새 사건만 넣고, 이미 발생한 사건(과거 ACTIVE 포함)은 다시 넣지 않는다. 해결 판정·지속 장면 수·우선순위는 관리하지 않는다.
-// - 기억: 사건을 겪은 참가자에게 그 장면의 EVENT 기억이 하나도 없으면 사실 기억 1개를 서버가 보완한다(비참가자에게는 전파하지 않음, 같은 내용 중복 방지).
+// - 기억(사건별): 모델 기억이 eventRef로 사건을 가리키면 그 기억의 shareGroupId를 사건 id로 잇는다. 살아 있는 참가자마다 발생한 사건 각각에
+//   대해 그 사건 id를 shareGroupId로 가진 기억이 없으면 사실 기억 1개를 서버가 만든다(사건을 가리키지 않는 모델 기억은 사건 기억으로 세지 않음).
+//   비참가자에게는 만들지 않는다. 장면 커밋 트랜잭션 안이므로 실패·펜싱이면 함께 롤백된다.
 // - 강도: 자동 HIGH 사건은 장면 전체 고강도 악화 한도. 사용자 사건은 기본 MEDIUM이며, 이번 장면 결과가 실제 위험(danger)을 보고하고 상태 제안이
 //   그 사건을 원인으로 가리킬 때만 그 캐릭터에게 고강도 한도. 위험이 확인되지 않은 사용자 사건을 원인으로 한 부상·사망 제안은 버린다.
 // - 신체 상태: 커밋 때 정산한 월드 시간으로 살아 있는 모든 캐릭터에 규칙을 적용한다(참가자만 제안 반영, 비참가자는 자연 변화·극심 지속만).
@@ -142,7 +145,7 @@ export async function applySceneWorld(
     worldSeconds: number;
     now: Date;
     participants: { id: string; alias: SceneAlias }[];
-    output: Pick<SceneOutput, "events" | "conditions">;
+    output: Pick<SceneOutput, "events" | "conditions" | "proposals">;
     refs: EventRef[];
     autoEvent: AutoEventClaim | null;
     userEvent?: UserEventClaim | null;
@@ -152,7 +155,7 @@ export async function applySceneWorld(
   const outcomeOf = new Map(output.events.map((e) => [e.ref, e]));
 
   const occurred = (description: string) => ({
-    status: "RESOLVED" as const, // 발생 완료 (해결 판정이 아니다)
+    status: "RESOLVED" as const, // 장면 반영 완료 (해결 완료가 아니다)
     sourceSceneId: scene.id,
     startedSceneSeq: scene.seq,
     lastSceneSeq: scene.seq,
@@ -162,9 +165,9 @@ export async function applySceneWorld(
     resolvedAt: now,
     description,
   });
-  const occurredEvents: { id: string; text: string; importance: number }[] = [];
+  const occurredEvents: OccurredEvent[] = [];
 
-  // 1) 사용자 사건: 이 시도가 점유한 대기 사건만 발생 완료로. 그사이 취소·점유 해제됐으면 이 장면(그 사건이 들어간 대사)을 저장하지 않는다
+  // 1) 사용자 사건: 이 시도가 점유한 대기 사건만 장면 반영 완료로. 그사이 취소·점유 해제됐으면 이 장면(그 사건이 들어간 대사)을 저장하지 않는다
   const userRef = refs.find((r) => r.kind === "USER_INTERVENTION");
   if (userRef && input.userEvent) {
     const event = await tx.worldEvent.findFirst({
@@ -178,10 +181,10 @@ export async function applySceneWorld(
         })
       : { count: 0 };
     if (started.count !== 1) throw new ConflictError("SCENE_STALE", "생성하는 동안 사건이 취소되어 이번 장면을 저장하지 않았습니다.");
-    occurredEvents.push({ id: userRef.id!, text: event!.description, importance: 3 });
+    occurredEvents.push({ id: userRef.id!, alias: userRef.alias, text: event!.description, importance: 3 });
   }
 
-  // 2) 자동 사건: 구간을 발생 처리(한 번만)하고 발생 완료 사건을 만든다. 생물이 불가능해 대체했다고 답하면 대체 프리셋으로 기록한다
+  // 2) 자동 사건: 구간을 발생 처리(한 번만)하고 장면 반영 완료 사건을 만든다. 생물이 불가능해 대체했다고 답하면 대체 프리셋으로 기록한다
   const newRef = refs.find((r) => r.kind === "RANDOM");
   let newEventId: string | null = null;
   if (autoEvent && newRef) {
@@ -198,15 +201,15 @@ export async function applySceneWorld(
         data: { worldId, kind: "RANDOM", presetId: preset.id, intensity: preset.intensity, title: preset.title, ...occurred(description) },
       });
       newEventId = event.id;
-      occurredEvents.push({ id: event.id, text: `${preset.title}: ${description}`, importance: preset.intensity === "HIGH" ? 4 : 3 });
+      occurredEvents.push({ id: event.id, alias: newRef.alias, text: `${preset.title}: ${description}`, importance: preset.intensity === "HIGH" ? 4 : 3 });
       await tx.worldEventPeriod.update({ where: { worldId_periodIndex: { worldId, periodIndex: autoEvent.periodIndex } }, data: { eventId: event.id } });
     }
   }
   const motiveRef = userRef?.id ?? newEventId;
   if (motiveRef) await tx.conversationScene.update({ where: { id: scene.id }, data: { motiveType: "WORLD_EVENT", motiveRef } });
 
-  // 3) 기억: 사건을 겪은 참가자(생존)에게 이 장면의 EVENT 기억이 없으면 사실 기억을 보완한다. 비참가자에게는 전파하지 않는다
-  if (occurredEvents.length) await supplementEventMemories(tx, worldId, scene.id, participants, occurredEvents);
+  // 3) 기억: 참가자(생존)마다 발생한 사건 각각의 기억을 보장한다(모델 기억을 사건에 잇고, 없는 사건만 서버 보완). 비참가자에게는 전파하지 않는다
+  if (occurredEvents.length) await rememberEvents(tx, worldId, scene.id, participants, output.proposals.memories, occurredEvents);
 
   // 4) 신체 상태: 살아 있는 모든 캐릭터 (행이 없으면 기본값으로 만든다)
   const highIntensityEvent = refs.some((r) => r.highIntensity);
@@ -281,33 +284,51 @@ const cutText = (text: string, max: number) => {
   return cps.length > max ? `${cps.slice(0, max - 1).join("")}…` : text;
 };
 
+type OccurredEvent = { id: string; alias: EventAlias; text: string; importance: number };
+
 /**
- * 사건 사실 기억 보완 (장면 커밋 트랜잭션). 모델이 이 장면에서 그 참가자의 EVENT 기억을 제안했으면 그대로 두고,
- * 없으면 발생한 사건마다 WITNESSED 기억 1개를 만든다(같은 사건 = 같은 shareGroupId). 같은 소유자에게 같은 내용이 이미 있으면 만들지 않는다.
+ * 사건별 기억 보장 (장면 커밋 트랜잭션, 감정·관계·기억 제안을 저장한 뒤).
+ * 1) 모델 기억 중 eventRef가 이번 장면의 사건을 가리키는 것은 shareGroupId = 사건 id로 잇는다(같은 장면·소유자·내용의 행).
+ * 2) 살아 있는 참가자 × 발생한 사건마다, 그 사건 id를 shareGroupId로 가진 그 소유자의 기억이 없으면 WITNESSED 사실 기억 1개를 만든다
+ *    → 모델이 그 사건 기억을 냈으면 중복 생성하지 않고, 어느 사건인지 알 수 없는 기억만 있으면 서버가 사건별 최소 기억을 보장한다.
  */
-async function supplementEventMemories(
+async function rememberEvents(
   tx: Tx,
   worldId: string,
   sceneId: string,
-  participants: { id: string }[],
-  events: { id: string; text: string; importance: number }[],
+  participants: { id: string; alias: SceneAlias }[],
+  memories: SceneOutput["proposals"]["memories"],
+  events: OccurredEvent[],
 ): Promise<void> {
   const ids = participants.map((p) => p.id);
+  const idOf = new Map(participants.map((p) => [p.alias as string, p.id]));
+  const eventOf = new Map(events.map((e) => [e.alias as string, e.id]));
+  for (const m of memories) {
+    const owner = idOf.get(m.owner);
+    const eventId = m.eventRef ? eventOf.get(m.eventRef) : undefined;
+    if (!owner || !eventId) continue;
+    await tx.characterMemory.updateMany({ where: { worldId, sourceSceneId: sceneId, ownerCharacterId: owner, content: m.content, shareGroupId: null }, data: { shareGroupId: eventId } });
+  }
   const alive = await tx.character.findMany({ where: { id: { in: ids }, worldId, OR: [{ condition: null }, { condition: { vital: "ALIVE" } }] }, select: { id: true } });
-  const remembered = await tx.characterMemory.findMany({ where: { worldId, sourceSceneId: sceneId, kind: "EVENT", ownerCharacterId: { in: ids } }, select: { ownerCharacterId: true } });
-  const covered = new Set(remembered.map((m) => m.ownerCharacterId));
-  const rows = alive
-    .filter((c) => !covered.has(c.id))
-    .flatMap((c) => events.map((e) => ({ owner: c.id, event: e, content: cutText(`이 사건을 직접 겪었다 — ${e.text}`, MEMORY_CONTENT_MAX_LENGTH) })));
-  if (!rows.length) return;
-  const existing = await tx.characterMemory.findMany({
-    where: { worldId, ownerCharacterId: { in: rows.map((r) => r.owner) }, content: { in: rows.map((r) => r.content) } },
-    select: { ownerCharacterId: true, content: true },
+  const linked = await tx.characterMemory.findMany({
+    where: { worldId, ownerCharacterId: { in: ids }, shareGroupId: { in: events.map((e) => e.id) } },
+    select: { ownerCharacterId: true, shareGroupId: true },
   });
-  const seen = new Set(existing.map((m) => `${m.ownerCharacterId}\u0000${m.content}`));
-  const data = rows
-    .filter((r) => !seen.has(`${r.owner}\u0000${r.content}`))
-    .map((r) => ({ worldId, ownerCharacterId: r.owner, kind: "EVENT" as const, acquisition: "WITNESSED" as const, content: r.content, importance: r.event.importance, sourceSceneId: sceneId, shareGroupId: r.event.id }));
+  const covered = new Set(linked.map((m) => `${m.ownerCharacterId}\u0000${m.shareGroupId}`));
+  const data = alive.flatMap((c) =>
+    events
+      .filter((e) => !covered.has(`${c.id}\u0000${e.id}`))
+      .map((e) => ({
+        worldId,
+        ownerCharacterId: c.id,
+        kind: "EVENT" as const,
+        acquisition: "WITNESSED" as const,
+        content: cutText(`이 사건을 직접 겪었다 — ${e.text}`, MEMORY_CONTENT_MAX_LENGTH),
+        importance: e.importance,
+        sourceSceneId: sceneId,
+        shareGroupId: e.id,
+      })),
+  );
   if (data.length) await tx.characterMemory.createMany({ data });
 }
 
@@ -361,7 +382,7 @@ export async function loadSceneNotes(db: Tx | typeof prisma, worldId: string, sc
         .get(idBySeq.get(e.startedSceneSeq)!)!
         .push(e.kind === "USER_INTERVENTION" ? { kind: "USER_EVENT_STARTED", text: `사용자가 일으킨 사건: ${e.description}` } : { kind: "EVENT_STARTED", text: `사건 발생: ${e.title} — ${e.description}` });
     }
-    // 해결 배너는 과거(7-2-2) 기록만: 발생 장면에 끝난 것은 발생 완료이므로 발생 배너 한 번만 보인다
+    // 해결 배너는 과거(7-2-2) 기록만: 발생 장면에 끝난 것은 장면 반영 완료이므로 발생 배너 한 번만 보인다
     if (e.resolvedSceneSeq !== null && e.resolvedSceneSeq !== e.startedSceneSeq && idBySeq.has(e.resolvedSceneSeq)) {
       notes.get(idBySeq.get(e.resolvedSceneSeq)!)!.push({ kind: "EVENT_RESOLVED", text: `사건 해결: ${e.title}${e.resolutionSummary ? ` — ${e.resolutionSummary}` : ""}` });
     }

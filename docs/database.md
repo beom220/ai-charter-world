@@ -609,7 +609,7 @@ model SimulationEvent {                               // SSE outbox (A6)
 - `CharacterConditionChange`: `kind`(`ConditionChangeKind` THERMAL·INJURY·TREATMENT·RECOVERY·DEATH), `fromValue`·`toValue`, `reason`, `sceneId`·`eventId`(SetNull, 트리거 `condition_change_scene_same_world`·`condition_change_event_same_world`), `(characterId, worldId)` 복합 FK.
 - 사망은 `Character.deletedAt`과 무관하다. 사망자도 활성 슬롯(6명)에 포함된다.
 - 사용자 사건(Phase 7-2-3, 스키마 변경 없음): `kind = USER_INTERVENTION`, `status = PENDING`, `intensity = MEDIUM`, `title` = 원문 앞 40자, `description` = 원문, `requestId` 멱등. 등록·취소·점유는 World 행 잠금 아래에서 하고, `claimedAttemptId`는 PENDING일 때만 값이 있으며 발생·취소·시도 종료 때 비운다. 대기 순서는 `createdAt`(30초 간격이라 등록 순과 같다).
-- 사건 1회 반영(PRD v2.2, 스키마 변경 없음): 자동·사용자 사건은 발생 장면 커밋에서 `status = RESOLVED`(발생 완료), `startedSceneSeq = resolvedSceneSeq = lastSceneSeq`, `resolutionSummary = NULL`로 기록한다. `ACTIVE`는 v2.2 이전 기록에만 남으며 더 이상 갱신하지 않는다. 사건 사실 기억은 기존 `CharacterMemory`(`kind EVENT`, `WITNESSED`, `shareGroupId = 사건 id`, `sourceSceneId = 발생 장면`)를 쓴다.
+- 사건 1회 반영(PRD v2.2, 스키마 변경 없음): 자동·사용자 사건은 발생 장면 커밋에서 `status = RESOLVED`(장면 반영 완료 — 신규 사건에서는 해결 완료가 아니다. 해결 요약이 있는 RESOLVED는 v2.2 이전 해결 기록), `startedSceneSeq = resolvedSceneSeq = lastSceneSeq`, `resolutionSummary = NULL`로 기록한다. `ACTIVE`는 v2.2 이전 기록에만 남으며 더 이상 갱신하지 않는다. 사건 기억은 기존 `CharacterMemory`를 쓰고 `shareGroupId = 사건 id`로 사건을 식별한다(모델 기억은 `eventRef`가 있으면 연결, 서버 사실 기억은 `kind EVENT`·`WITNESSED`·`sourceSceneId = 발생 장면`). 참가자 × 사건마다 하나 이상을 보장한다.
 
 ### 3.6 세이브
 

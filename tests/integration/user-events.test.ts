@@ -235,26 +235,75 @@ describe("사용자 사건 강도", () => {
   });
 });
 
-describe("사건 기억", () => {
-  it("사건을 겪은 참가자에게만 기억이 남고, 모델이 EVENT 기억을 낸 참가자는 보완하지 않으며, 실패한 시도는 기억을 남기지 않는다", async () => {
-    const { uid, world, chars, deps, submit } = await setup("ue-memory", 3);
-    await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 3 } });
-    await prisma.worldEventPeriod.create({ data: { worldId: world.id, periodIndex: 0, won: true, scheduledSceneSeq: 3, presetId: "discovery_traces" } });
-    const a = (await submit("숲에서 빛나는 알이 발견되었다", 0)).event;
-    const memory = { owner: "C1", about: null, kind: "EVENT", acquisition: "WITNESSED", content: "숲의 빛나는 알을 내 손으로 주웠다", importance: 4 };
+describe("사건 기억 (사건별 보장)", () => {
+  /** 장면 #3: 자동 사건(E1, discovery_traces) + 사용자 사건(E2)이 같은 장면에 발생하도록 준비. 참가자 C1·C2, 비참가자 1명 */
+  async function sameScene(label: string) {
+    const ctx = await setup(label, 3);
+    await prisma.gameState.update({ where: { worldId: ctx.world.id }, data: { nextSceneSeq: 3 } });
+    await prisma.worldEventPeriod.create({ data: { worldId: ctx.world.id, periodIndex: 0, won: true, scheduledSceneSeq: 3, presetId: "discovery_traces" } });
+    const user = (await ctx.submit("숲에서 빛나는 알이 발견되었다", 0)).event;
+    const auto = async () => (await prisma.worldEventPeriod.findFirstOrThrow({ where: { worldId: ctx.world.id } })).eventId;
+    /** 소유자별 사건 기억 (shareGroupId) */
+    const byOwner = async () => {
+      const rows = await prisma.characterMemory.findMany({ where: { worldId: ctx.world.id }, orderBy: { createdAt: "asc" } });
+      return ctx.chars.map((c) => rows.filter((m) => m.ownerCharacterId === c.id));
+    };
+    return { ...ctx, user, auto, byOwner };
+  }
+  const mem = (owner: string, content: string, eventRef: string | null) => ({ owner, about: null, kind: "EVENT", acquisition: "WITNESSED", content, importance: 4, eventRef });
+  const withMemories = (memories: unknown[]) => sceneJson({ proposals: { emotions: [], relationships: [], memories } });
 
+  it("자동+사용자 사건이 같은 장면에 발생하면 참가자마다 두 사건 모두의 기억이 남는다. 사건을 가리킨 모델 기억은 그 사건 보완을 대신하고, 사건을 모르는 기억은 세지 않는다", async () => {
+    const { uid, world, deps, user, auto, byOwner } = await sameScene("ue-mem-both");
+    await generateScene(uid, world.id, deps(withMemories([mem("C1", "빛나는 알을 내 손으로 주웠다", "E2"), mem("C2", "숲이 이상하게 조용했다", null)])));
+    const autoId = await auto();
+    const [c1, c2, c3] = await byOwner();
+    // C1: 모델 기억(E2 → 사용자 사건) + 자동 사건 서버 보완
+    expect(c1!.map((m) => [m.shareGroupId, m.content.startsWith("이 사건을 직접 겪었다")])).toEqual(
+      expect.arrayContaining([
+        [user.id, false],
+        [autoId, true],
+      ]),
+    );
+    expect(c1).toHaveLength(2);
+    // C2: 사건을 모르는 모델 기억은 그대로 두고 두 사건 모두 서버 보완
+    expect(c2!.filter((m) => m.shareGroupId === null).map((m) => m.content)).toEqual(["숲이 이상하게 조용했다"]);
+    expect(c2!.flatMap((m) => (m.shareGroupId ? [m.shareGroupId] : [])).sort()).toEqual([autoId, user.id].sort());
+    expect(c3).toEqual([]); // 비참가자
+  });
+
+  it("모델이 두 사건 기억을 모두 냈으면 서버 기억을 만들지 않고, 모르는 별칭(E9)은 사건과 잇지 않는다", async () => {
+    const { uid, world, deps, user, auto, byOwner } = await sameScene("ue-mem-dup");
+    await generateScene(uid, world.id, deps(withMemories([mem("C1", "흔적을 따라갔다", "E1"), mem("C1", "알이 따뜻했다", "E2"), mem("C2", "무언가 봤다", "E9")])));
+    const autoId = await auto();
+    const [c1, c2] = await byOwner();
+    expect(c1!.map((m) => m.shareGroupId).sort()).toEqual([autoId, user.id].sort());
+    expect(c1!.every((m) => !m.content.startsWith("이 사건을 직접 겪었다"))).toBe(true);
+    expect(c2!.find((m) => m.content === "무언가 봤다")?.shareGroupId).toBeNull();
+    expect(c2!.filter((m) => m.shareGroupId !== null)).toHaveLength(2);
+    // 사건·참가자마다 정확히 하나 (중복 없음)
+    const all = await prisma.characterMemory.findMany({ where: { worldId: world.id, shareGroupId: { not: null } } });
+    expect(new Set(all.map((m) => `${m.ownerCharacterId}:${m.shareGroupId}`)).size).toBe(all.length);
+  });
+
+  it("검증 실패·펜싱 실패면 사건·기억이 함께 롤백되고, 다시 시도해 성공하면 참가자×사건마다 기억이 정확히 하나다", async () => {
+    const { uid, world, deps, user, event, byOwner } = await sameScene("ue-mem-rollback");
     await expect(generateScene(uid, world.id, deps("not json"))).rejects.toMatchObject({ code: "SCENE_VALIDATION_FAILED" });
+    const fenced = deps(withMemories([mem("C1", "흔적을 따라갔다", "E1")]), async () => {
+      await prisma.$executeRaw`UPDATE "GameState" SET "settingsSeq" = "settingsSeq" + 1 WHERE "worldId" = ${world.id}`;
+    });
+    await expect(generateScene(uid, world.id, fenced)).rejects.toMatchObject({ code: "SETTINGS_CHANGED" });
     expect(await prisma.characterMemory.count({ where: { worldId: world.id } })).toBe(0);
+    expect(await prisma.worldEvent.count({ where: { worldId: world.id, status: "RESOLVED" } })).toBe(0);
+    expect(await event(user.id)).toMatchObject({ status: "PENDING", claimedAttemptId: null });
+    expect(await prisma.worldEventPeriod.findFirstOrThrow({ where: { worldId: world.id } })).toMatchObject({ firedAt: null, eventId: null });
 
-    await generateScene(uid, world.id, deps(sceneJson({ proposals: { emotions: [], relationships: [], memories: [memory] } })));
-    const [c1, c2, c3] = chars;
-    const rows = await prisma.characterMemory.findMany({ where: { worldId: world.id }, orderBy: { content: "asc" } });
-    expect(rows.filter((m) => m.ownerCharacterId === c1!.id).map((m) => m.content)).toEqual([memory.content]); // 모델 기억만
-    const c2Rows = rows.filter((m) => m.ownerCharacterId === c2!.id);
-    expect(c2Rows).toHaveLength(2); // 자동 사건·사용자 사건 하나씩 보완
-    expect(c2Rows.map((m) => m.shareGroupId).sort()).toEqual([a.id, (await prisma.worldEvent.findFirstOrThrow({ where: { worldId: world.id, kind: "RANDOM" } })).id].sort());
-    expect(c2Rows.find((m) => m.shareGroupId === a.id)).toMatchObject({ kind: "EVENT", acquisition: "WITNESSED", content: "이 사건을 직접 겪었다 — 숲에서 빛나는 알이 발견되었다" });
-    expect(rows.some((m) => m.ownerCharacterId === c3!.id)).toBe(false); // 비참가자에게 전파하지 않음
+    await generateScene(uid, world.id, deps(withMemories([mem("C1", "흔적을 따라갔다", "E1")])));
+    const [c1, c2, c3] = await byOwner();
+    expect(c1).toHaveLength(2);
+    expect(c2).toHaveLength(2);
+    expect(c3).toEqual([]);
+    expect(await prisma.worldEvent.count({ where: { worldId: world.id, status: "RESOLVED", startedSceneSeq: 3, resolvedSceneSeq: 3 } })).toBe(2);
   });
 });
 
