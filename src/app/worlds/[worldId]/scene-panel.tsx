@@ -42,7 +42,7 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
 // - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행 아이콘(시작·일시정지·재개·종료)과
-//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기], 생성 중 표시. 시작 안내·시스템 안내·오류는 바 바로 위에 함께 고정한다.
+//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기]. 생성 중 표시·시작 안내·시스템 안내·오류는 바 바로 위에 함께 고정한다.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
@@ -337,7 +337,7 @@ export function ScenePanel({
 
   const notice = statusNotice(view.state);
   const lacksCharacters = aliveCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE";
-  const hasDockText = lacksCharacters || view.state.status === "IDLE" || !!notice || (!!view.failure && view.state.status === "RUNNING") || !!error;
+  const hasDockText = !!generating || lacksCharacters || view.state.status === "IDLE" || !!notice || (!!view.failure && view.state.status === "RUNNING") || !!error;
 
   return (
     <section className="flex flex-col gap-3 pt-2" style={{ paddingBottom: dockHeight + 16 }}>
@@ -434,6 +434,11 @@ export function ScenePanel({
                 </p>
               )
             )}
+            {generating && (
+              <p role="status" className="text-sm text-foreground/70">
+                {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
+              </p>
+            )}
             {notice && (
               <p role="status" className={`rounded-md px-3 py-2 text-sm ${notice.tone === "warn" ? "border border-amber-600/40 bg-amber-600/5" : "bg-foreground/5"}`}>
                 <span className="font-semibold">시스템 · </span>
@@ -506,11 +511,6 @@ export function ScenePanel({
               )}
             </span>
             <span className="flex justify-self-end gap-2">{saveControls}</span>
-            {generating && (
-              <p role="status" className="col-span-2 truncate text-center text-xs text-foreground/70 sm:col-span-3">
-                {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
-              </p>
-            )}
           </div>
         </div>
       </div>
