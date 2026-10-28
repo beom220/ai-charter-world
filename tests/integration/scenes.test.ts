@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { testUtils } from "better-auth/plugins";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { POST } from "@/app/api/worlds/[worldId]/scenes/route";
+import { GET, POST } from "@/app/api/worlds/[worldId]/scenes/route";
 import { AUTH_ENV_KEYS, readAuthEnv } from "@/server/auth/env";
 import { authOptions } from "@/server/auth/options";
 import { readProviderKeyMaterial } from "@/server/crypto/provider-key-crypto";
@@ -11,7 +11,8 @@ import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { saveGeminiApiKey } from "@/server/domain/providers/gemini-connection";
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
-import { generateScene, SceneValidationFailedError } from "@/server/domain/scenes/generate-scene";
+import { generateScene, listScenes, SceneValidationFailedError } from "@/server/domain/scenes/generate-scene";
+import type { GeminiKeyClient } from "@/server/llm/gemini/client";
 import { createMockGeminiClient, type MockGeminiScript } from "@/server/llm/mock/gemini-mock";
 import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey } from "./helpers";
 
@@ -59,7 +60,7 @@ describe("장면 생성 서비스", () => {
   it("활성 2명: 2명 모두 참여하고, Gemini 1회 호출(UsageGuard 기록 1건)로 장면을 저장해 상태 버전·자동저장 메타를 갱신한다", async () => {
     const { uid, world, characters, mock, deps } = await setup("scene-ok", {}, { characters: 2 });
     const [a, b] = characters;
-    const scene = await generateScene(uid, world.id, deps);
+    const scene = await generateScene(uid, world.id, { ...deps, random: () => 0 }); // random 0 = 생성 순서 그대로 C1·C2
 
     expect(scene.messages.map((m) => [m.speakerCharacterId, m.speakerName])).toEqual([
       [a!.id, a!.name],
@@ -157,6 +158,49 @@ describe("장면 생성 서비스", () => {
   });
 });
 
+describe("이전 장면 컨텍스트·대화 기록 (Phase 5-2)", () => {
+  /** 보낸 프롬프트를 기록하는 클라이언트 (Mock 위임) */
+  const capturing = (client: GeminiKeyClient, prompts: string[]): GeminiKeyClient => ({
+    ...client,
+    generateJson: (apiKey, request, meter) => {
+      prompts.push(request.prompt);
+      return client.generateJson(apiKey, request, meter);
+    },
+  });
+
+  it("장면 #2부터 이전 장면이 오래된 순으로 프롬프트에 들어가고, 다른 세계관 장면은 섞이지 않는다", async () => {
+    const own = await setup("scene-hist", {}, { characters: 2 });
+    const other = await setup("scene-hist-other", {}, { characters: 2 });
+    await generateScene(other.uid, other.world.id, other.deps);
+
+    const prompts: string[] = [];
+    const deps = { ...own.deps, client: capturing(own.mock.client, prompts), random: () => 0 };
+    for (let i = 0; i < 3; i++) await generateScene(own.uid, own.world.id, deps);
+
+    expect(prompts[0]).not.toContain("<history>");
+    expect(prompts[1]).toContain("[장면 #1]");
+    const third = prompts[2]!;
+    expect(third.indexOf("[장면 #1]")).toBeGreaterThan(third.indexOf("<history>"));
+    expect(third.indexOf("[장면 #2]")).toBeGreaterThan(third.indexOf("[장면 #1]"));
+    expect(third).toContain(`${own.characters[0]!.name}: 여기서 뭘 하고 있었어?`);
+    expect(third.indexOf("다음 대화 장면")).toBeGreaterThan(third.indexOf("</history>"));
+    for (const p of prompts) for (const c of other.characters) expect(p).not.toContain(c.name);
+  });
+
+  it("'이전 기록 보기' seq 커서는 중간에 새 장면이 생겨도 중복·누락 없이 이어진다", async () => {
+    const { uid, world, deps } = await setup("scene-page", {}, { characters: 2 });
+    for (let i = 0; i < 12; i++) await generateScene(uid, world.id, deps);
+
+    const first = await listScenes(uid, world.id);
+    expect(first.scenes.map((s) => s.seq)).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
+    expect(first.hasMore).toBe(true);
+    await generateScene(uid, world.id, deps); // 읽는 도중 새 장면 #13
+    const second = await listScenes(uid, world.id, { beforeSeq: first.scenes.at(-1)!.seq });
+    expect(second).toMatchObject({ hasMore: false });
+    expect(second.scenes.map((s) => s.seq)).toEqual([2, 1]);
+  });
+});
+
 describe("POST /api/worlds/[worldId]/scenes", () => {
   const BASE_URL = "http://localhost:3000";
   const ENV = {
@@ -201,5 +245,22 @@ describe("POST /api/worlds/[worldId]/scenes", () => {
     expect(short.status).toBe(409);
     expect(short.body.error.code).toBe("NOT_ENOUGH_CHARACTERS");
     expect(await logs(owner.world.id)).toHaveLength(0);
+  });
+
+  it("GET 기록 조회: 비로그인 401, 타인 세계관 404, 잘못된 커서 400", async () => {
+    const owner = await setup("scene-route-get", {}, { characters: 2 });
+    const intruder = await createTestUser("scene-route-get-intruder");
+    const get = async (query: string, userId?: string) => {
+      const headers = new Headers();
+      if (userId) headers.set("cookie", (await (await testAuth.$context).test.login({ userId })).headers.get("cookie")!);
+      const res = await GET(new Request(`${BASE_URL}/api/worlds/${owner.world.id}/scenes${query}`, { headers }), {
+        params: Promise.resolve({ worldId: owner.world.id }),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    expect((await get("")).status).toBe(401);
+    expect((await get("", intruder.id)).status).toBe(404);
+    expect((await get("?before=abc", owner.user.id)).status).toBe(400);
+    expect(await get("?before=5", owner.user.id)).toMatchObject({ status: 200, body: { scenes: [], hasMore: false } });
   });
 });

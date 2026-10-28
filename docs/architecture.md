@@ -418,6 +418,10 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
 - 동시 실행 방지: `SimulationRuntime.status ∈ {IDLE, PAUSED}`이고 `inFlightAttemptId`가 비어 있을 때만 조건부 UPDATE로 점유한다(5분 지나면 만료). 같은 세계관의 중복 클릭은 409 `SCENE_IN_PROGRESS`이며 외부 호출을 하지 않는다.
 - 호출: `GeminiKeyClient.generateJson` 1회, UsageGuard `SIMULATION` meter(`attemptId`, `callIndex = 0`) 경유. 자동 재시도 없음.
 - 출력: §6.5 스키마 v1 중 `scene`·`turns`만 요청·검증한다. `proposals`(감정·관계·기억)는 엔진 단계에서 추가한다. 검증 실패 시 저장하지 않고 호출 기록을 `VALIDATION_ERROR`로 바꾼다.
+- 이전 장면 컨텍스트(Phase 5-2): 같은 세계관의 최근 완료 장면 `SCENE_RECENT_HISTORY_SCENES`(5)개를 오래된 것 → 최신 순으로 `<history>`에 넣는다(제목·참여자·요약·대사·행동). 순서는 세계관 → 참가자 → `<history>` → 이번 장면 지시. `SCENE_RECENT_HISTORY_BUDGET_CHARS`(8,000자)를 넘으면 오래된 턴부터 제외한다.
+  - §6.4의 참가자별 단기 기억(참가한 장면만)과 달리, Story 모드 1회 호출이므로 **세계 전체의 최근 장면**을 넣는다. 정보 비대칭은 "참여하지 않은 장면의 일은 전해 들었을 만한 경우가 아니면 모른다"는 지시로 대신한다. 엔진 단계의 `CharacterKnowledgeView`에서 참가 장면 기준으로 되돌린다.
+  - `<world>`의 현재 상황·세계관 설명은 시작 시점 설정이고 `<history>`가 현재 진행 상황이라고 지시해, 초기 사건을 매 장면 처음처럼 반복하지 않게 한다.
+- 대화 기록 조회: `GET /api/worlds/[worldId]/scenes?before=<seq>`가 최신순 `SCENE_HISTORY_PAGE_SIZE`(10)개와 `hasMore`를 준다. `seq`는 세계관 내 UNIQUE라 커서로 이어 받아도 중복·누락이 없다.
 - 커밋: §6.7에서 Run·lease 검사·관계/감정/기억·outbox를 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
 
 ### 6.9 AgentModeStrategy 확장 경로 (후속)

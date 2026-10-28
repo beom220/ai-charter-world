@@ -7,14 +7,47 @@ import { send } from "../world-form";
 
 // 대화 장면 생성 (Phase 5-1). 버튼을 누르면 서버가 활성 캐릭터 중 2~3명을 골라 Gemini가 장면 1개를 만든다.
 // 모든 발언은 왼쪽 정렬로 표시하고, 사용자 입력창·감정/관계/기억 변화 알림은 두지 않는다.
+// 기록은 최신순. '이전 기록 보기'는 지금 가진 가장 오래된 seq를 커서로 더 오래된 장면을 받아 id로 중복을 걸러 붙인다. 자동 스크롤은 하지 않는다.
 
 type Message = { turnIndex: number; speakerName: string; dialogue: string; actionIntent: string | null; emotionCue: string | null };
 export type SceneItem = { id: string; seq: number; title: string; summary: string; contextTruncated: boolean; messages: Message[] };
 
-export function ScenePanel({ worldId, activeCount, initialScenes }: { worldId: string; activeCount: number; initialScenes: SceneItem[] }) {
+export function ScenePanel({
+  worldId,
+  activeCount,
+  initialScenes,
+  initialHasMore,
+}: {
+  worldId: string;
+  activeCount: number;
+  initialScenes: SceneItem[];
+  initialHasMore: boolean;
+}) {
   const [scenes, setScenes] = useState<SceneItem[]>(initialScenes);
+  const [hasMore, setHasMore] = useState(initialHasMore);
   const [busy, setBusy] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function loadMore() {
+    const oldest = scenes.at(-1);
+    if (!oldest) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const { ok, json } = await send(`/api/worlds/${worldId}/scenes?before=${oldest.seq}`, "GET");
+      if (!ok) return setError(json?.error?.message ?? "이전 기록을 불러오지 못했습니다.");
+      setScenes((prev) => {
+        const seen = new Set(prev.map((s) => s.id));
+        return [...prev, ...(json.scenes as SceneItem[]).filter((s) => !seen.has(s.id))];
+      });
+      setHasMore(json.hasMore);
+    } catch {
+      setError("이전 기록을 불러오지 못했습니다. 네트워크 상태를 확인하세요.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function generate() {
     setBusy(true);
@@ -48,12 +81,13 @@ export function ScenePanel({ worldId, activeCount, initialScenes }: { worldId: s
               Gemini가 장면을 쓰고 있습니다. 최대 1분 정도 걸릴 수 있습니다.
             </p>
           )}
-          {error && (
-            <p role="alert" className="text-sm text-red-600">
-              {error}
-            </p>
-          )}
         </>
+      )}
+      {error && (
+        <p role="alert" className="rounded-md border border-red-600/40 bg-red-600/5 px-3 py-2 text-sm text-red-600">
+          <span className="font-semibold">시스템 · </span>
+          {error}
+        </p>
       )}
 
       {scenes.length > 0 && (
@@ -69,7 +103,7 @@ export function ScenePanel({ worldId, activeCount, initialScenes }: { worldId: s
               <ul className="flex flex-col gap-2 text-left">
                 {s.messages.map((m) => (
                   <li key={m.turnIndex} className="flex flex-col items-start">
-                    <span className="text-xs font-semibold text-foreground/70">
+                    <span className="text-sm font-semibold">
                       {m.speakerName}
                       {m.emotionCue && <span className="font-normal"> · {m.emotionCue}</span>}
                     </span>
@@ -82,6 +116,13 @@ export function ScenePanel({ worldId, activeCount, initialScenes }: { worldId: s
             </li>
           ))}
         </ol>
+      )}
+      {hasMore && (
+        <div>
+          <button type="button" className={button} onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "불러오는 중…" : "이전 기록 보기"}
+          </button>
+        </div>
       )}
     </section>
   );

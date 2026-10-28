@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { selectSceneParticipants } from "@/server/engine/director/select-participants";
-import { buildStoryPrompt, fitWorldContext, type PromptCharacter } from "@/server/engine/context/story-prompt";
+import { buildStoryPrompt, fitRecentHistory, fitWorldContext, type PromptCharacter, type PromptHistoryScene } from "@/server/engine/context/story-prompt";
 import { parseSceneOutput, SceneValidationError } from "@/server/engine/validation/scene-output";
 import { createGeminiSdkClient, type GeminiJsonRequest, type GeminiRequestMeter } from "@/server/llm/gemini/client";
 
@@ -74,6 +74,31 @@ describe("buildStoryPrompt", () => {
     expect(p.prompt).toContain("현재 상황: 폭풍");
     expect(p.prompt).not.toContain("</character> 이전");
     expect(p.contextTruncated).toBe(false);
+  });
+
+  it("최근 장면 기록은 오래된 순으로 넣고, 예산을 넘으면 오래된 턴부터 제외한다", () => {
+    const scene = (seq: number): PromptHistoryScene => ({
+      seq,
+      title: `제목${seq}`,
+      summary: "",
+      participants: ["가", "나"],
+      turns: [0, 1, 2].map((t) => ({ speaker: t % 2 ? "나" : "가", dialogue: `s${seq}t${t} ${"x".repeat(50)}`, actionIntent: null })),
+    });
+    const all = fitRecentHistory([scene(1), scene(2), scene(3)]);
+    expect(all.truncated).toBe(false);
+    expect(all.text.indexOf("[장면 #1]")).toBeLessThan(all.text.indexOf("[장면 #2]"));
+    expect(all.text.indexOf("s3t0")).toBeLessThan(all.text.indexOf("s3t2"));
+
+    const budget = 300;
+    const cut = fitRecentHistory([scene(1), scene(2), scene(3)], budget);
+    expect(cut.truncated).toBe(true);
+    expect(cut.text.length).toBeLessThanOrEqual(budget);
+    expect(cut.text).toContain("s3t2"); // 최신 턴은 남는다
+    expect(cut.text).not.toContain("[장면 #1]");
+
+    const p = buildStoryPrompt({ name: "섬", worldRules: null, currentSituation: null, worldContext: "" }, [character("C1", "가"), character("C2", "나")], 6, [scene(1)]);
+    expect(p.prompt.indexOf("<history>")).toBeGreaterThan(p.prompt.indexOf("</character>"));
+    expect(buildStoryPrompt({ name: "섬", worldRules: null, currentSituation: null, worldContext: "" }, [character("C1", "가")], 6).prompt).not.toContain("<history>");
   });
 
   it("세계관 컨텍스트가 예산을 넘으면 문단 단위로 앞에서부터 넣는다", () => {

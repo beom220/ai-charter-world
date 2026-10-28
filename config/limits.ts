@@ -104,5 +104,14 @@ export const SCENE_WORLD_CONTEXT_BUDGET_CHARS = 30_000;
 /** 세계 규칙·현재 상황 각각의 프롬프트 상한(문자 수). 넘으면 뒷부분 절단 */
 export const SCENE_WORLD_FIELD_BUDGET_CHARS = 4_000;
 
+/** 다음 장면 프롬프트에 넣는 최근 완료 장면 수 (Phase 5-2, MVP 초기값) */
+export const SCENE_RECENT_HISTORY_SCENES = 5;
+
+/** 최근 장면 기록의 프롬프트 상한(문자 수). 넘으면 오래된 턴부터 제외한다(architecture.md §6.4) */
+export const SCENE_RECENT_HISTORY_BUDGET_CHARS = 8_000;
+
+/** 세계관 상세의 대화 기록 한 페이지 장면 수 ('이전 기록 보기' 단위) */
+export const SCENE_HISTORY_PAGE_SIZE = 10;
+
 /** 수동 장면 생성 진행 표시(inFlightAttemptId)가 이 시간보다 오래되면 끝난 것으로 본다 (프로세스 종료 대비) */
 export const SCENE_IN_FLIGHT_STALE_MS = 5 * 60 * 1000;

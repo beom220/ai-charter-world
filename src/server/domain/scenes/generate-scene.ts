@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { SCENE_GENERATION_TIMEOUT_MS, SCENE_IN_FLIGHT_STALE_MS, SCENE_MAX_OUTPUT_TOKENS, SCENE_PARTICIPANTS_MIN, SCENE_TEMPERATURE } from "../../../../config/limits";
+import { SCENE_GENERATION_TIMEOUT_MS, SCENE_IN_FLIGHT_STALE_MS, SCENE_MAX_OUTPUT_TOKENS, SCENE_HISTORY_PAGE_SIZE, SCENE_PARTICIPANTS_MIN, SCENE_RECENT_HISTORY_SCENES, SCENE_TEMPERATURE } from "../../../../config/limits";
 import { getProviderKeyMaterial, type ProviderKeyMaterial } from "@/server/crypto/provider-key-crypto";
 import { prisma } from "@/server/db/client";
-import { buildStoryPrompt, type PromptCharacter } from "@/server/engine/context/story-prompt";
+import { buildStoryPrompt, type PromptCharacter, type PromptHistoryScene } from "@/server/engine/context/story-prompt";
 import { selectSceneParticipants } from "@/server/engine/director/select-participants";
 import { createUsageMeter } from "@/server/engine/usage/usage-guard";
 import { parseSceneOutput, SCENE_ALIASES, sceneResponseJsonSchema, SceneValidationError } from "@/server/engine/validation/scene-output";
@@ -17,6 +17,7 @@ import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/se
 // 사용자가 버튼을 누를 때만 Gemini를 1회 호출한다. Runner·자동 반복·SSE·감정/관계/기억 반영은 없다.
 //   1) 소유권 확인, 활성 캐릭터 중 참가자 2~3명 자동 선정(selectSceneParticipants), 연결(ACTIVE + 모델) 확인 — 외부 호출 없음
 //   2) SimulationRuntime.inFlightAttemptId로 세계관당 동시 생성 1건만 허용 (중복 클릭으로 인한 이중 과금 방지)
+//   2-1) 같은 세계관의 최근 완료 장면(최대 SCENE_RECENT_HISTORY_SCENES개)을 오래된 것부터 프롬프트에 넣는다 (Phase 5-2)
 //   3) UsageGuard meter를 거쳐 generateContent 1회 (자동 재시도 없음)
 //   4) Zod·별칭 검증 → 실패하면 아무것도 저장하지 않는다
 //   5) GameState 행 잠금 + stateVersion 펜싱 + attemptId UNIQUE로 단일 트랜잭션 커밋 (§6.7)
@@ -69,12 +70,47 @@ const toView = (row: SceneRow): SceneView => ({
   messages: row.messages.map(({ speakerNameSnapshot, ...m }) => ({ ...m, speakerName: speakerNameSnapshot })),
 });
 
-/** 최근 장면 (새 것부터). 세계관이 없거나 타인 소유면 404 */
-export async function listRecentScenes(userId: AuthenticatedUserId, worldId: string, take = 5): Promise<SceneView[]> {
+/**
+ * 대화 기록 한 페이지 (새 것부터). `beforeSeq`를 주면 그보다 오래된 장면만 준다.
+ * seq는 세계관 안에서 UNIQUE이므로 seq 커서로 이어 받으면 중복·누락이 없다. 세계관이 없거나 타인 소유면 404
+ */
+export async function listScenes(
+  userId: AuthenticatedUserId,
+  worldId: string,
+  { beforeSeq, take = SCENE_HISTORY_PAGE_SIZE }: { beforeSeq?: number; take?: number } = {},
+): Promise<{ scenes: SceneView[]; hasMore: boolean }> {
   const world = await prisma.world.findFirst({ where: { id: worldId, ownerId: userId }, select: { id: true } });
   if (!world) throw new NotFoundError();
-  const rows = await prisma.conversationScene.findMany({ where: { worldId }, orderBy: { seq: "desc" }, take, select: sceneSelect });
-  return rows.map(toView);
+  const rows = await prisma.conversationScene.findMany({
+    where: { worldId, ...(beforeSeq === undefined ? {} : { seq: { lt: beforeSeq } }) },
+    orderBy: { seq: "desc" },
+    take: take + 1,
+    select: sceneSelect,
+  });
+  return { scenes: rows.slice(0, take).map(toView), hasMore: rows.length > take };
+}
+
+/** 프롬프트용 최근 완료 장면 (오래된 것 → 최신). 커밋된 장면만 저장되므로 저장된 장면 = 완료 장면 */
+async function loadRecentHistory(userId: AuthenticatedUserId, worldId: string): Promise<PromptHistoryScene[]> {
+  const rows = await prisma.conversationScene.findMany({
+    where: { worldId, world: { ownerId: userId } },
+    orderBy: { seq: "desc" },
+    take: SCENE_RECENT_HISTORY_SCENES,
+    select: {
+      seq: true,
+      title: true,
+      summary: true,
+      participants: { select: { nameSnapshot: true, alias: true }, orderBy: { alias: "asc" } },
+      messages: { orderBy: { turnIndex: "asc" }, select: { speakerNameSnapshot: true, dialogue: true, actionIntent: true } },
+    },
+  });
+  return rows.reverse().map((r) => ({
+    seq: r.seq,
+    title: r.title,
+    summary: r.summary,
+    participants: r.participants.map((p) => p.nameSnapshot),
+    turns: r.messages.map((m) => ({ speaker: m.speakerNameSnapshot, dialogue: m.dialogue, actionIntent: m.actionIntent })),
+  }));
 }
 
 export async function generateScene(userId: AuthenticatedUserId, worldId: string, deps: Deps = {}): Promise<SceneView> {
@@ -132,7 +168,7 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
     const expected = await prisma.gameState.findUniqueOrThrow({ where: { worldId }, select: { stateVersion: true, maxTurnsPerScene: true } });
     const maxTurns = expected.maxTurnsPerScene;
     const aliases = characters.map((c) => c.alias);
-    const prompt = buildStoryPrompt(world, characters, maxTurns);
+    const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId));
 
     // 3) UsageGuard를 거친 Gemini 호출 1회
     const meter = createUsageMeter(

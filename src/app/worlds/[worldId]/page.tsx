@@ -8,7 +8,7 @@ import { getWorld } from "@/server/domain/worlds";
 import { listCharacters } from "@/server/domain/characters/characters";
 import { CharacterList } from "./characters/character-list";
 import { ScenePanel, type SceneItem } from "./scene-panel";
-import { listRecentScenes } from "@/server/domain/scenes/generate-scene";
+import { listScenes } from "@/server/domain/scenes/generate-scene";
 import { LoginRequired, STATUS_LABEL } from "../ui";
 import { DeleteWorldButton, WorldForm } from "../world-form";
 
@@ -35,7 +35,7 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
   const userId = asAuthenticatedUserId(session.user.id);
   let world, characters, scenes;
   try {
-    [world, characters, scenes] = await Promise.all([getWorld(userId, worldId), listCharacters(userId, worldId), listRecentScenes(userId, worldId)]);
+    [world, characters, scenes] = await Promise.all([getWorld(userId, worldId), listCharacters(userId, worldId), listScenes(userId, worldId)]);
   } catch (error) {
     if (error instanceof NotFoundError) notFound();
     throw error;
@@ -53,7 +53,8 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
       <ScenePanel
         worldId={world.id}
         activeCount={characters.length}
-        initialScenes={JSON.parse(JSON.stringify(scenes)) as SceneItem[]}
+        initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
+        initialHasMore={scenes.hasMore}
       />
       <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
         <h2 className="text-lg font-semibold">세계관 설정</h2>
