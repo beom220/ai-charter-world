@@ -1,104 +1,88 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN } from "../../../../../config/limits";
 import { PERSONALITY_TAGS } from "../../../../../config/personality-map";
 import { togglePersonalityTag } from "@/lib/character-form";
 
-// 성격 다중 선택 드롭다운 (UI 개선). 입력란을 누르면 분류 구분 없는 전체 태그 목록이 체크박스로 펼쳐진다.
-// 고른 태그는 입력란 안에 칩으로 보이고 ✕로 바로 지운다. 최대 개수에 도달하면 나머지 항목은 고를 수 없다(데이터 구조·서버 검증은 그대로).
+// 성격 다중 선택 모달 (UI 개선, 배경 선택 모달과 같은 방식). 버튼에 고른 성격이 보이고, 누르면 <dialog>로
+// 분류 구분 없는 전체 태그를 보여 준다. 항목을 누를 때마다 선택·해제되고(다중 선택), [완료]나 닫기로 닫는다.
+// 최대 개수에 도달하면 나머지 항목은 고를 수 없다(데이터 구조·서버 검증은 그대로).
 
 export function PersonalitySelect({ value, onChange, controls }: { value: string[]; onChange: (tags: string[]) => void; controls?: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
   const labelOf = (code: string) => PERSONALITY_TAGS.find((t) => t.code === code)?.label ?? code;
   const full = value.length >= PERSONALITY_TAGS_MAX;
-
-  // 목록 밖을 누르거나 Esc를 누르면 닫는다
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const count = `${value.length}/${PERSONALITY_TAGS_MIN}~${PERSONALITY_TAGS_MAX}개`;
 
   return (
     <div className="flex flex-col gap-1 text-sm">
       <span className="flex items-center justify-between gap-2">
-        <span id="personality-label" className="font-medium">
-          성격 ({value.length}/{PERSONALITY_TAGS_MIN}~{PERSONALITY_TAGS_MAX}개)
+        <span className="font-medium">
+          성격 <span className="text-xs font-normal text-foreground/60">({count})</span>
         </span>
         {controls}
       </span>
-      <div ref={box} className="relative">
-        <div
-          role="combobox"
-          tabIndex={0}
-          aria-labelledby="personality-label"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-controls="personality-options"
-          onClick={() => setOpen((o) => !o)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
-              e.preventDefault();
-              setOpen(true);
-            }
-          }}
-          className="flex min-h-10 cursor-pointer flex-wrap items-center gap-1.5 rounded-md border border-foreground/20 bg-background py-1.5 pr-8 pl-2"
-        >
-          {value.length === 0 && <span className="px-1 text-foreground/50">성격을 선택하세요</span>}
-          {value.map((code) => (
-            <span key={code} className="flex items-center gap-1 rounded-full bg-foreground/10 px-2.5 py-0.5 text-xs">
-              {labelOf(code)}
-              <button
-                type="button"
-                aria-label={`${labelOf(code)} 제거`}
-                onClick={(e) => {
-                  e.stopPropagation(); // 칩 제거는 드롭다운을 열고 닫지 않는다
-                  onChange(value.filter((c) => c !== code));
-                }}
-                className="text-foreground/60 hover:text-foreground"
-              >
-                ✕
-              </button>
-            </span>
-          ))}
-          <span aria-hidden className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-xs text-foreground/60">
-            {open ? "▲" : "▼"}
-          </span>
-        </div>
-        {open && (
-          <ul
-            id="personality-options"
-            role="listbox"
-            aria-multiselectable="true"
-            aria-labelledby="personality-label"
-            className="absolute top-full right-0 left-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-foreground/20 bg-background p-1 shadow-lg"
-          >
-            {full && <li className="px-2 py-1 text-xs text-foreground/60">최대 {PERSONALITY_TAGS_MAX}개까지 고를 수 있습니다. 바꾸려면 하나를 해제하세요.</li>}
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        onClick={() => dialog.current?.showModal()}
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-left hover:bg-foreground/5"
+      >
+        <span className={value.length ? "" : "text-foreground/50"}>{value.length ? value.map(labelOf).join(", ") : "성격을 선택하세요"}</span>
+        <span aria-hidden className="shrink-0 text-xs text-foreground/60">
+          변경
+        </span>
+      </button>
+      <p className="text-xs text-foreground/60">
+        {PERSONALITY_TAGS_MIN}~{PERSONALITY_TAGS_MAX}개를 고르세요. 여러 개를 함께 선택할 수 있습니다.
+      </p>
+
+      <dialog
+        ref={dialog}
+        aria-label="성격 선택"
+        className="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-foreground/20 bg-background p-0 text-foreground backdrop:bg-black/40"
+      >
+        <div className="flex max-h-[80vh] flex-col">
+          <div className="flex items-center justify-between gap-2 border-b border-foreground/10 px-4 py-3">
+            <h2 className="text-base font-semibold">
+              성격 선택 <span className="text-xs font-normal text-foreground/60">({count})</span>
+            </h2>
+            <button type="button" className="rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-foreground/5" onClick={() => dialog.current?.close()}>
+              닫기
+            </button>
+          </div>
+          {full && <p className="px-4 pt-2 text-xs text-foreground/60">최대 {PERSONALITY_TAGS_MAX}개까지 고를 수 있습니다. 바꾸려면 하나를 해제하세요.</p>}
+          <ul role="listbox" aria-multiselectable="true" aria-label="성격" className="grid gap-1 overflow-y-auto p-2 sm:grid-cols-2">
             {PERSONALITY_TAGS.map((t) => {
               const selected = value.includes(t.code);
               const disabled = !selected && full;
               return (
                 <li key={t.code} role="option" aria-selected={selected} aria-disabled={disabled}>
-                  <label className={`flex w-full items-center gap-2 rounded px-2 py-1.5 ${disabled ? "opacity-40" : "cursor-pointer hover:bg-foreground/5"} ${selected ? "font-medium" : ""}`}>
-                    <input type="checkbox" checked={selected} disabled={disabled} onChange={() => onChange(togglePersonalityTag(value, t.code))} />
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onChange(togglePersonalityTag(value, t.code))}
+                    className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left disabled:opacity-40 ${
+                      selected ? "border-foreground bg-foreground/10 font-medium" : "border-transparent hover:bg-foreground/5"
+                    }`}
+                  >
+                    <span aria-hidden className="w-4">
+                      {selected ? "✓" : ""}
+                    </span>
                     {t.label}
-                  </label>
+                  </button>
                 </li>
               );
             })}
           </ul>
-        )}
-      </div>
+          <div className="flex justify-end border-t border-foreground/10 px-4 py-3">
+            <button type="button" className="rounded-md border border-foreground/20 px-4 py-1.5 text-sm font-medium hover:bg-foreground/5" onClick={() => dialog.current?.close()}>
+              완료
+            </button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }
