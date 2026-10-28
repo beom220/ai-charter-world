@@ -604,7 +604,7 @@ function Toast({ tone, role, children }: { tone: ToastTone; role?: "status" | "a
   return (
     <div
       role={role}
-      className={`pointer-events-auto flex w-full max-w-xl items-start gap-2.5 rounded-xl border bg-background/95 px-4 py-2.5 text-sm shadow-lg backdrop-blur ${
+      className={`pointer-events-auto flex w-full max-w-3xl items-start gap-2.5 rounded-xl border bg-background/95 px-4 py-2.5 text-sm shadow-lg backdrop-blur ${
         tone === "error" ? "border-red-600/40 text-red-600" : tone === "warn" ? "border-amber-500/50 text-foreground" : "border-foreground/10 text-foreground/80"
       }`}
     >
