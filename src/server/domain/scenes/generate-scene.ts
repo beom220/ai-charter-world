@@ -290,7 +290,6 @@ export async function runSceneAttempt(
   const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId, settingsChangedAt), {
     worldSeconds: world.gameState!.worldSeconds,
     events: promptEvents.events,
-    omittedEvents: promptEvents.omitted,
   });
 
   // 3) UsageGuard를 거친 Gemini 호출 1회

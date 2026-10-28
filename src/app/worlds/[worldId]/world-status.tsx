@@ -10,8 +10,8 @@ import { send } from "../world-form";
 // 대화 화면의 세계 정보 (Phase 7-2-2). 캐릭터 말풍선과 분리된 시스템 영역.
 // - 월드 시각: 서버 상태(worldClock: asOf 시각의 월드 초·흐르는 중)에서 지금까지를 계산해 1초마다 표시한다.
 //   폴링·SSE·재연결로 새 값이 와도 화면 값은 뒤로 가지 않는다(서버 값이 더 크면 따라간다).
-// - 진행 중 사건: 오래된 것부터. 장면이 커밋될 때마다(refreshKey) 다시 읽는다.
-// - 사용자 사건(7-2-3): [사건 일으키기] 모달, 대기 목록·취소. 사용자 사건의 발생 배너는 자동 사건과 다른 색(USER_EVENT_STARTED)으로 보인다.
+// - 사건(7-2-3): 사건은 장면에 한 번 일어나며 발생 배너는 그 장면에만 보인다(진행 중 사건 목록 없음).
+//   [사건 일으키기] 모달, 대기 목록·취소. 사용자 사건의 발생 배너는 자동 사건과 다른 색(USER_EVENT_STARTED)으로 보인다.
 
 type Clock = { seconds: number; running: boolean; asOf: string };
 
@@ -38,18 +38,16 @@ export function WorldClock({ clock }: { clock: Clock }) {
   );
 }
 
-type ActiveEvent = { id: string; kind: "RANDOM" | "USER_INTERVENTION"; title: string; description: string; startedSceneSeq: number | null; startedWorldSeconds: number | null; urgent: boolean };
 type PendingEvent = { id: string; text: string; createdAt: string; claimed: boolean };
 
 const newRequestId = () => crypto.randomUUID();
 
 /**
- * 진행 중 사건 + 사용자 사건(7-2-3): [사건 일으키기] 모달(200자, 남은 글자 수), 대기 사건 목록과 취소.
+ * 사용자 사건(7-2-3): [사건 일으키기] 모달(200자, 남은 글자 수), 대기 사건 목록과 취소.
  * 목록은 서버 기준이다. 등록·취소·장면 시작/커밋/실패·world_event.updated(SSE)·재연결 때(refreshKey) 다시 읽는다.
  * 같은 입력을 다시 보내면(네트워크 오류 후 재시도) 같은 requestId를 써서 중복 등록되지 않는다. 등록에 성공하면 새 requestId를 만든다.
  */
 export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshKey: string }) {
-  const [events, setEvents] = useState<ActiveEvent[]>([]);
   const [pending, setPending] = useState<PendingEvent[]>([]);
   const [reload, setReload] = useState(0);
   const [text, setText] = useState("");
@@ -63,7 +61,6 @@ export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshK
     send(`/api/worlds/${worldId}/events`, "GET")
       .then(({ ok, json }) => {
         if (!alive || !ok) return;
-        setEvents(json.active as ActiveEvent[]);
         setPending(json.pending as PendingEvent[]);
       })
       .catch(() => undefined);
@@ -145,36 +142,10 @@ export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshK
           사건 일으키기
         </button>
       </div>
-      {(events.length > 0 || pending.length > 0) && (
-        <div className="flex flex-col gap-2">
-          {events.length > 0 && (
-            <div className="rounded-md border border-amber-600/30 bg-amber-600/5 px-3 py-2 text-sm" aria-label="진행 중 사건">
-              <p className="text-xs font-semibold text-foreground/70">진행 중 사건 (오래된 것부터)</p>
-              <ul className="mt-1 flex flex-col gap-1">
-                {events.map((e) => (
-                  <li key={e.id}>
-                    {e.urgent && <span className="mr-1 text-red-600">긴급</span>}
-                    {e.kind === "USER_INTERVENTION" ? (
-                      <span className="mr-1 rounded bg-sky-600/15 px-1 text-xs text-sky-700 dark:text-sky-300">사용자 사건</span>
-                    ) : null}
-                    <span className="font-medium">{e.kind === "USER_INTERVENTION" ? e.description : e.title}</span>
-                    <span className="text-xs text-foreground/60">
-                      {" "}
-                      · {e.startedSceneSeq ? `장면 #${e.startedSceneSeq}` : ""}
-                      {e.startedWorldSeconds !== null ? `, ${formatWorldTime(e.startedWorldSeconds)}` : ""}부터
-                    </span>
-                    {e.kind !== "USER_INTERVENTION" && <span className="block text-xs text-foreground/70">{e.description}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {pending.length > 0 && (
-            <div className="rounded-md border border-sky-600/30 bg-sky-600/5 px-3 py-2 text-sm" aria-label="대기 중 사건">
-              <p className="text-xs font-semibold text-foreground/70">대기 중 사건 (다음 장면부터 등록 순서대로 하나씩 일어남)</p>
-              {pendingList}
-            </div>
-          )}
+      {pending.length > 0 && (
+        <div className="rounded-md border border-sky-600/30 bg-sky-600/5 px-3 py-2 text-sm" aria-label="대기 중 사건">
+          <p className="text-xs font-semibold text-foreground/70">대기 중 사건 (다음 장면부터 등록 순서대로 하나씩 일어남)</p>
+          {pendingList}
         </div>
       )}
 

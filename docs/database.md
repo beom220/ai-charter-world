@@ -608,7 +608,8 @@ model SimulationEvent {                               // SSE outbox (A6)
 - `CharacterCondition` 1:1 (`(characterId, worldId)` 복합 FK): `thermal`(`ThermalState`), `injury`(`InjurySeverity`, 통증 단계 겸용), `injuryCause`, `injurySceneSeq`, `injuryUpdatedSceneSeq`, `vital`(`VitalStatus`), `deathCause`, `deathSceneSeq`, `diedAt`. CHECK `character_condition_death_record`(사망이면 원인·장면·시각 필수), `character_condition_injury_cause`(부상이면 원인 필수). 기존 캐릭터는 마이그레이션에서 기본값 행을 만들고, 캐릭터 생성 트랜잭션이 함께 만든다.
 - `CharacterConditionChange`: `kind`(`ConditionChangeKind` THERMAL·INJURY·TREATMENT·RECOVERY·DEATH), `fromValue`·`toValue`, `reason`, `sceneId`·`eventId`(SetNull, 트리거 `condition_change_scene_same_world`·`condition_change_event_same_world`), `(characterId, worldId)` 복합 FK.
 - 사망은 `Character.deletedAt`과 무관하다. 사망자도 활성 슬롯(6명)에 포함된다.
-- 사용자 사건(Phase 7-2-3, 스키마 변경 없음): `kind = USER_INTERVENTION`, `status = PENDING`, `intensity = MEDIUM`, `title` = 원문 앞 40자, `description` = 원문, `requestId` 멱등. 등록·취소·점유는 World 행 잠금 아래에서 하고, `claimedAttemptId`는 PENDING일 때만 값이 있으며 ACTIVE 전환·취소·시도 종료 때 비운다. 대기 순서는 `createdAt`(30초 간격이라 등록 순과 같다).
+- 사용자 사건(Phase 7-2-3, 스키마 변경 없음): `kind = USER_INTERVENTION`, `status = PENDING`, `intensity = MEDIUM`, `title` = 원문 앞 40자, `description` = 원문, `requestId` 멱등. 등록·취소·점유는 World 행 잠금 아래에서 하고, `claimedAttemptId`는 PENDING일 때만 값이 있으며 발생·취소·시도 종료 때 비운다. 대기 순서는 `createdAt`(30초 간격이라 등록 순과 같다).
+- 사건 1회 반영(PRD v2.2, 스키마 변경 없음): 자동·사용자 사건은 발생 장면 커밋에서 `status = RESOLVED`(발생 완료), `startedSceneSeq = resolvedSceneSeq = lastSceneSeq`, `resolutionSummary = NULL`로 기록한다. `ACTIVE`는 v2.2 이전 기록에만 남으며 더 이상 갱신하지 않는다. 사건 사실 기억은 기존 `CharacterMemory`(`kind EVENT`, `WITNESSED`, `shareGroupId = 사건 id`, `sourceSceneId = 발생 장면`)를 쓴다.
 
 ### 3.6 세이브
 

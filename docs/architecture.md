@@ -1070,16 +1070,17 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **화면**: 대화 피드의 말풍선은 캐릭터 발화만. 사건 발생은 장면 대사 앞, 해결·상태 변화·사망은 대사 공개 뒤에 시스템 줄로(`SceneView.notes`), 진행 중 사건 목록(`GET /api/worlds/[id]/events`)과 월드 시각은 피드 위. 캐릭터 목록 배지·상세 신체 상태 패널(실시간 갱신).
 - **세이브**: 스냅샷 v4(`lib/snapshot/v4.ts`) = v3 + `gameState.worldSeconds`·장면/사건/변화의 월드 시각·신체 상태 재구성. `migrateV3ToV4`는 DB 마이그레이션 20261028150000과 같은 보존적 매핑. 시계 기준(anchor)은 담지 않는다.
 
-**Phase 7-2-3 사용자 지정 사건 (PRD v2.1)** — `domain/events/user-events.ts`, `engine/commit/event-rules.ts`.
+**Phase 7-2-3 사용자 지정 사건·사건 1회 반영 (PRD v2.1·v2.2)** — `domain/events/user-events.ts`, `domain/scenes/scene-world.ts`, `engine/commit/event-rules.ts`. 위 7-2-2의 "사건 진행·해결"(진행 중 사건 주입·`pickPromptEvents`·해결 요약)은 v2.2에서 폐지됐다.
 
-- **API**: `GET /api/worlds/[id]/events` → `{ active, pending[{id, text, createdAt, claimed}] }`, `POST` `{ text ≤200자, requestId }` → 201(새) / 200(같은 requestId 재전송), `DELETE /api/worlds/[id]/events/[eventId]` → 대기 사건 취소. 오류: 409 `USER_EVENT_PENDING_LIMIT`·`USER_EVENT_REQUEST_REUSED`·`USER_EVENT_NOT_CANCELLABLE`·`USER_EVENT_IN_PROGRESS`, 429 `USER_EVENT_TOO_SOON`·`USER_EVENT_DAILY_LIMIT`(Retry-After), 타인 세계관·사건 404.
+- **사건 1회 반영**: `<events>`에는 이번 장면의 새 사건(자동 사건 프리셋, 점유한 사용자 사건)만 E1·E2로 넣는다. 출력 `events[{ref, realization, usedFallback, danger}]`(선택, 해결 필드 없음 — 예전 `status`·`resolutionSummary`·`resolutionKind`가 와도 버림). 장면 커밋 트랜잭션에서 사건을 **발생 완료**로 기록: 새 상태값 없이 `status = RESOLVED`, `startedSceneSeq = resolvedSceneSeq = lastSceneSeq = 장면`, `resolutionSummary = NULL`. 이후 프롬프트에 다시 넣지 않는다. 과거 ACTIVE 사건은 그대로 두되 주입·갱신하지 않고, 과거 RESOLVED(해결 요약 있음)는 기록으로 남는다. 해결 배너는 `resolvedSceneSeq ≠ startedSceneSeq`인 과거 기록만.
+- **사건 기억**: 같은 트랜잭션에서 `supplementEventMemories` — 살아 있는 참가자 중 이 장면의 `EVENT` 기억(모델 제안)이 없는 인물에게 발생 사건마다 `WITNESSED` 기억 1개(`이 사건을 직접 겪었다 — …`, 중요도 3·고강도 4, `shareGroupId = 사건 id`). 같은 소유자·같은 내용이 있으면 만들지 않는다. 비참가자에게는 만들지 않는다. 실패·펜싱이면 장면과 함께 롤백.
+- **API**: `GET /api/worlds/[id]/events` → `{ pending[{id, text, createdAt, claimed}] }`, `POST` `{ text ≤200자, requestId }` → 201(새) / 200(같은 requestId 재전송), `DELETE /api/worlds/[id]/events/[eventId]` → 대기 사건 취소. 오류: 409 `USER_EVENT_PENDING_LIMIT`·`USER_EVENT_REQUEST_REUSED`·`USER_EVENT_NOT_CANCELLABLE`·`USER_EVENT_IN_PROGRESS`, 429 `USER_EVENT_TOO_SOON`·`USER_EVENT_DAILY_LIMIT`(Retry-After), 타인 세계관·사건 404.
 - **등록·취소**: World 행 잠금(소유자 조건) 아래에서 멱등 키 → 대기 3건 → 30초 간격 → KST 하루 30건(취소 포함) 순으로 검사한다. 설정 변경이 아니므로 첫 장면 이후에도 허용하고 `settingsSeq`는 그대로, `changeSeq`만 +1. outbox `world_event.updated`(submitted·cancelled·started).
-- **점유**: Runner `claimAttempt`·수동 생성 점유 트랜잭션(World 잠금, `inFlightAttemptId` 기록 직후)에서 `claimUserEvent`가 다른 시도 ID로 남은 점유를 풀고 가장 오래된 PENDING 1건에 `claimedAttemptId`를 단다. 실패·펜싱·건너뜀은 `finishAttempt`·수동 `finally`의 `releaseUserEventClaim`으로 해제. 커밋 트랜잭션은 "PENDING이고 이 시도가 점유 중"일 때만 ACTIVE로 바꾸고, 아니면 장면 전체를 `SCENE_STALE`로 버린다(취소된 사건이 대사에 남지 않음).
+- **점유**: Runner `claimAttempt`·수동 생성 점유 트랜잭션(World 잠금, `inFlightAttemptId` 기록 직후)에서 `claimUserEvent`가 다른 시도 ID로 남은 점유를 풀고 가장 오래된 PENDING 1건에 `claimedAttemptId`를 단다. 실패·펜싱·건너뜀은 `finishAttempt`·수동 `finally`의 `releaseUserEventClaim`으로 해제. 커밋 트랜잭션은 "PENDING이고 이 시도가 점유 중"일 때만 발생 완료로 바꾸고, 아니면 장면 전체를 `SCENE_STALE`로 버린다(취소된 사건이 대사에 남지 않음).
 - **취소**: PENDING이고 점유한 시도가 지금 진행 중(`inFlightAttemptId` 일치, `SCENE_IN_FLIGHT_STALE_MS` 이내)이 아닐 때만. 오래된 점유는 취소하며 점유를 지운다(늦은 커밋은 위 확인으로 거부).
-- **프롬프트·강도**: 새 사용자 사건은 `<events>`에 원문 그대로 「」로(자르지 않음, 제목 없이) 넣고 `<events>`도 데이터 태그로 명시한다. `intensity = MEDIUM`, `EventRef.highIntensity`(장면 전체 고강도)는 자동 HIGH 사건에만. 출력 `events[].danger`(NONE·ATTACK·DISASTER·ACCIDENT)가 그 사건의 실제 위험을 보고하고 캐릭터 `conditions[].eventRef`가 그 사건이면 그 캐릭터에게만 고강도 한도, 위험이 없는 사용자 사건을 가리키는 부상·사망 제안은 버린다.
-- **해결 판정** (`acceptResolution`, 자동·사용자 공통): `status RESOLVED` + `resolutionKind`(SOLVED·MITIGATED·FAILED·COMPROMISE·THREAT_GONE) + 요약. 요약이 발생·발견·논의 표현이나 계획·시도 어절(…하기로·…려고·시도·할)을 담으면 그 어절을 뺀 나머지에 결과 표현(해결했·쫓아냈·실패했·마무리됐 등)이 있어야 한다. 새 사건은 LOW만 첫 장면 해결. 형식이 틀린 `resolutionKind`·`danger`는 그 값만 비운다.
-- **화면**: 대화 탭 `[사건 일으키기]` 모달(200자·남은 글자 수·명령이 아니라는 안내), 대기 목록·취소(점유 중이면 "장면에 반영 중"), 진행 중 사건의 사용자 사건 배지, 장면 노트 `USER_EVENT_STARTED`(자동 사건과 다른 색). 목록은 `scene.started`·`scene.committed`·`scene.failed`·`world_event.updated`·재연결 때 다시 읽는다.
-- **세이브**: 스냅샷 v4 그대로(사용자 사건 필드는 v3부터 포함, `claimedAttemptId` 제외 → 복원 시 점유 없음).
+- **강도**: 사용자 사건 `intensity = MEDIUM`, 장면 전체 고강도는 자동 HIGH 사건만. `danger`(NONE·ATTACK·DISASTER·ACCIDENT)가 사용자 사건의 실제 위험을 보고하고 캐릭터 `conditions[].eventRef`가 그 사건이면 그 캐릭터에게만 고강도 한도, 위험이 없는 사용자 사건을 가리키는 부상·사망 제안은 버린다. 사건이 지나도 신체 상태는 초기화하지 않는다.
+- **화면**: 대화 탭 `[사건 일으키기]` 모달(200자·남은 글자 수·명령이 아니라는 안내), 대기 목록·취소(점유 중이면 "장면에 반영 중"). 진행 중 사건 목록은 없다. 장면 노트 `EVENT_STARTED`·`USER_EVENT_STARTED`(다른 색)는 발생 장면에 한 번. 대기 목록은 `scene.started`·`scene.committed`·`scene.failed`·`world_event.updated`·재연결 때 다시 읽는다.
+- **세이브**: 스냅샷 v4 그대로(사건 필드는 v3부터 포함, `claimedAttemptId` 제외 → 복원 시 점유 없음). 구조 변경·DB 마이그레이션 없음.
 
 ### 13.3 사건 시스템과 캐릭터 신체 상태 (Phase 7-2, PRD v1.9)
 

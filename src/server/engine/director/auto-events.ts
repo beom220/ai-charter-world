@@ -3,7 +3,6 @@ import {
   AUTO_EVENT_FIRST_SCENE_SEQ,
   AUTO_EVENT_PERIOD_SCENES,
   AUTO_EVENT_RECENT_PRESET_EXCLUDE,
-  EVENT_PROMPT_ROTATING_SLOTS,
 } from "../../../../config/limits";
 import { EVENT_PRESETS, type EventCategory } from "../../../../config/world-events";
 
@@ -50,21 +49,4 @@ export function pickAutoEventPreset(recent: RecentEvent[], random: () => number)
   ];
   const pool = stages.find((s) => s.length > 0)!;
   return pool[Math.min(pool.length - 1, Math.floor(random() * pool.length))]!.id;
-}
-
-/**
- * 별칭 칸(slots)에 넣을 진행 중 사건. 입력은 오래된 순. 넘치면 오래된 사건 (slots − 순환 칸)개 + 나머지 중 lastSceneSeq가 가장 작은
- * (가장 오래 다루지 않은) 순환 칸 개를 고르고, 결과는 다시 오래된 순으로 둔다. 순수 함수.
- */
-export function pickPromptEvents<T extends { lastSceneSeq: number | null }>(active: T[], slots: number): T[] {
-  if (active.length <= slots) return active;
-  const rotating = Math.min(EVENT_PROMPT_ROTATING_SLOTS, slots);
-  const fixed = active.slice(0, slots - rotating);
-  const rest = active
-    .slice(slots - rotating)
-    .map((e, i) => ({ e, i }))
-    .sort((a, b) => (a.e.lastSceneSeq ?? 0) - (b.e.lastSceneSeq ?? 0) || a.i - b.i)
-    .slice(0, rotating);
-  const picked = new Set([...fixed, ...rest.map((x) => x.e)]);
-  return active.filter((e) => picked.has(e));
 }

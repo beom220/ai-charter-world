@@ -14,8 +14,8 @@ import type { GeminiKeyClient } from "@/server/llm/gemini/client";
 import { createMockGeminiClient } from "@/server/llm/mock/gemini-mock";
 import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey } from "./helpers";
 
-// Phase 7-2-3 사용자 지정 사건: 등록 한도·멱등·소유권, 등록 순 1건씩 발생·자동 사건과 동시 진행, 점유·취소 경쟁(실패·오래된 시도·늦은 커밋),
-// 사용자 사건 강도(위험 확인 없이는 부상·사망 불가), 해결 판정, 세이브 v4 복원, SSE(outbox), Gemini 호출 수. 실제 DB + Mock Gemini.
+// Phase 7-2-3 사용자 지정 사건: 등록 한도·멱등·소유권, 등록 순 1건씩 한 번 발생(발생 완료)·자동 사건과 같은 장면, 점유·취소 경쟁(실패·오래된 시도·늦은 커밋),
+// 사용자 사건 강도(위험 확인 없이는 부상·사망 불가), 사건 사실 기억 보완(참가자만·중복 없음), 세이브 v4 복원, SSE(outbox), Gemini 호출 수. 실제 DB + Mock Gemini.
 
 const material = readProviderKeyMaterial({
   PROVIDER_KEY_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
@@ -31,17 +31,17 @@ const turns = [
 ];
 const sceneJson = (extra: Record<string, unknown> = {}) =>
   JSON.stringify({ scene: { title: "t", summary: "s", endReason: "RESOLVED" }, turns, proposals: { emotions: [], relationships: [], memories: [] }, ...extra });
-const outcome = (ref: string, extra: Record<string, unknown> = {}) => ({ ref, status: "ONGOING", resolutionSummary: null, realization: null, usedFallback: false, resolutionKind: null, danger: "NONE", ...extra });
+const outcome = (ref: string, extra: Record<string, unknown> = {}) => ({ ref, realization: null, usedFallback: false, danger: "NONE", ...extra });
 const condition = (character: string, extra: Record<string, unknown>) => ({ character, thermal: null, pain: null, injury: null, treatment: null, death: null, eventRef: null, ...extra });
 
-async function setup(label: string) {
+async function setup(label: string, characters = 2) {
   const user = await createTestUser(label);
   const uid = asAuthenticatedUserId(user.id);
   await saveGeminiApiKey(uid, fakeGeminiKey(label), material);
   await prisma.aiProviderConnection.updateMany({ where: { userId: user.id }, data: { status: "ACTIVE", defaultModel: "gemini-mock-flash" } });
   const world = await createTestWorld(user.id, `${label} 세계`);
   const chars = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < characters; i++) {
     const c = await prisma.character.create({ data: characterData(world.id, `${label}-${i + 1}`) });
     await prisma.characterCondition.create({ data: { characterId: c.id, worldId: world.id } });
     chars.push(c);
@@ -119,8 +119,8 @@ describe("등록 한도·멱등·소유권", () => {
   });
 });
 
-describe("발생 순서·자동 사건과 동시 진행", () => {
-  it("대기 사건은 등록 순으로 장면마다 1건씩 발생하고, 같은 장면의 자동 사건·기존 사건과 함께 진행되며, Gemini 호출은 장면당 1회다", async () => {
+describe("발생 순서·자동 사건과 같은 장면", () => {
+  it("대기 사건은 등록 순으로 장면마다 1건씩 한 번 발생하고(자동 사건과 같은 장면 가능), 이후 장면에 다시 주입하지 않으며, Gemini 호출은 장면당 1회다", async () => {
     const { uid, world, deps, prompts, submit, event } = await setup("ue-order");
     await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 3 } });
     await prisma.worldEventPeriod.create({ data: { worldId: world.id, periodIndex: 0, won: true, scheduledSceneSeq: 3 } });
@@ -130,16 +130,17 @@ describe("발생 순서·자동 사건과 동시 진행", () => {
     const first = await generateScene(uid, world.id, deps(sceneJson()));
     expect(prompts.at(-1)).toContain("「하늘에서 거대한 호랑이 석상이 떨어졌다」"); // 원문 그대로
     expect(prompts.at(-1)).not.toContain("먼 곳에서 편지");
-    expect(await event(a.id)).toMatchObject({ status: "ACTIVE", startedSceneSeq: 3, claimedAttemptId: null, intensity: "MEDIUM", description: "하늘에서 거대한 호랑이 석상이 떨어졌다" });
+    expect(await event(a.id)).toMatchObject({ status: "RESOLVED", startedSceneSeq: 3, resolvedSceneSeq: 3, resolutionSummary: null, claimedAttemptId: null, intensity: "MEDIUM", description: "하늘에서 거대한 호랑이 석상이 떨어졌다" });
     expect(await event(b.id)).toMatchObject({ status: "PENDING", claimedAttemptId: null });
-    expect(await prisma.worldEvent.count({ where: { worldId: world.id, kind: "RANDOM", status: "ACTIVE" } })).toBe(1); // 자동 사건도 같은 장면에 발생
+    expect(await prisma.worldEvent.count({ where: { worldId: world.id, kind: "RANDOM", status: "RESOLVED", startedSceneSeq: 3 } })).toBe(1); // 자동 사건도 같은 장면에 발생
     expect(first.notes).toContainEqual({ kind: "USER_EVENT_STARTED", text: "사용자가 일으킨 사건: 하늘에서 거대한 호랑이 석상이 떨어졌다" });
     expect(first.notes.filter((n) => n.kind === "EVENT_STARTED")).toHaveLength(1);
 
     await generateScene(uid, world.id, deps(sceneJson()));
-    expect(await event(b.id)).toMatchObject({ status: "ACTIVE", startedSceneSeq: 4 });
-    expect(await event(a.id)).toMatchObject({ status: "ACTIVE", lastSceneSeq: 4 }); // 기존 사건 유지
-    expect(prompts.at(-1)).toMatch(/\[E\d\] \(진행 중 · 장면 #3[^\n]*사용자가 일으킨 사건\) 「하늘에서/);
+    expect(await event(b.id)).toMatchObject({ status: "RESOLVED", startedSceneSeq: 4 });
+    expect(await event(a.id)).toMatchObject({ status: "RESOLVED", lastSceneSeq: 3 }); // 발생한 사건은 다시 다루지 않는다
+    expect(prompts.at(-1)).toContain("「먼 곳에서 편지 한 통이 도착했다」");
+    expect(prompts.at(-1)).not.toContain("「하늘에서");
     expect(prompts).toHaveLength(2); // 장면 2개 = Gemini 호출 2회
     expect(await prisma.apiRequestLog.count({ where: { worldId: world.id } })).toBe(2);
     expect(await prisma.simulationEvent.count({ where: { worldId: world.id, type: "world_event.updated", payload: { path: ["reason"], equals: "started" } } })).toBe(2);
@@ -147,7 +148,7 @@ describe("발생 순서·자동 사건과 동시 진행", () => {
 });
 
 describe("점유와 취소 경쟁", () => {
-  it("생성 중에는 점유된 사건을 취소할 수 없고 커밋되면 ACTIVE가 되어 역시 취소할 수 없다. 점유되지 않은 다음 사건은 취소된다", async () => {
+  it("생성 중에는 점유된 사건을 취소할 수 없고 커밋되면 발생 완료라 역시 취소할 수 없다. 점유되지 않은 다음 사건은 취소된다", async () => {
     const { uid, world, deps, submit, event, clock } = await setup("ue-cancel-busy");
     const a = (await submit("폭풍이 몰아친다", 0)).event;
     const b = (await submit("배가 난파했다", 30)).event;
@@ -162,7 +163,7 @@ describe("점유와 취소 경쟁", () => {
     );
     expect(during[0]).toMatchObject({ status: "rejected", reason: { code: "USER_EVENT_IN_PROGRESS" } });
     expect(during[1]).toMatchObject({ status: "fulfilled" });
-    expect(await event(a.id)).toMatchObject({ status: "ACTIVE" });
+    expect(await event(a.id)).toMatchObject({ status: "RESOLVED", startedSceneSeq: 1 });
     expect(await event(b.id)).toMatchObject({ status: "CANCELLED", claimedAttemptId: null });
     await expect(cancelUserEvent(uid, world.id, a.id, new Date(clock.ms))).rejects.toMatchObject({ code: "USER_EVENT_NOT_CANCELLABLE" });
     expect(await prisma.simulationEvent.count({ where: { worldId: world.id, type: "world_event.updated", payload: { path: ["reason"], equals: "cancelled" } } })).toBe(1);
@@ -209,74 +210,72 @@ describe("점유와 취소 경쟁", () => {
     clock.ms += 10 * 60 * 1000;
     const ok = deps(sceneJson());
     await runWorldTick(world.id, { owner: "host-a", deps: ok, state: { failures: 0 } });
-    expect(await event(a.id)).toMatchObject({ status: "ACTIVE", startedSceneSeq: 1 });
+    expect(await event(a.id)).toMatchObject({ status: "RESOLVED", startedSceneSeq: 1 });
   });
 });
 
-describe("사용자 사건 강도와 해결 판정", () => {
+describe("사용자 사건 강도", () => {
   it("위험이 확인되지 않은 사용자 사건을 원인으로 한 부상·사망은 무시하고, 실제 공격이 보고되면 고강도 악화·치명적 결과를 허용한다", async () => {
     const { uid, world, chars, deps, submit } = await setup("ue-danger");
     await prisma.characterCondition.update({ where: { characterId: chars[0]!.id }, data: { injury: "MODERATE", injuryCause: "넘어짐", injuryUpdatedAtSeconds: 0 } });
     await submit("낯선 방문자가 찾아왔다", 0);
+    await submit("무장한 도적 떼가 마을을 덮쳤다", 30);
     const fatal = (danger: string) =>
       sceneJson({
         events: [outcome("E1", { danger })],
-        conditions: [condition("C1", { injury: { level: "CRITICAL", cause: "방문자에게 습격당함" }, death: { cause: "치명상" }, eventRef: "E1" })],
+        conditions: [condition("C1", { injury: { level: "CRITICAL", cause: "습격당함" }, death: { cause: "치명상" }, eventRef: "E1" })],
       });
-    // 1) 방문만(danger NONE): 그 사건을 원인으로 한 부상·사망 제안은 버린다
+    // 1) 방문(danger NONE): 그 사건을 원인으로 한 부상·사망 제안은 버린다
     await generateScene(uid, world.id, deps(fatal("NONE")));
     expect(await prisma.characterCondition.findUniqueOrThrow({ where: { characterId: chars[0]!.id } })).toMatchObject({ injury: "MODERATE", vital: "ALIVE" });
-    // 2) 실제 공격이 보고되면(danger ATTACK) 고강도 한도: 아픔 → 위독, 이번 장면의 치명적 결과로 사망 인정
+    // 2) 다음 사건에서 실제 공격이 보고되면(danger ATTACK) 고강도 한도: 아픔 → 위독, 이번 장면의 치명적 결과로 사망 인정
     await generateScene(uid, world.id, deps(fatal("ATTACK")));
     expect(await prisma.characterCondition.findUniqueOrThrow({ where: { characterId: chars[0]!.id } })).toMatchObject({ injury: "CRITICAL", vital: "DEAD", deathCause: "치명상" });
+    expect(await prisma.worldEvent.count({ where: { worldId: world.id, status: "RESOLVED" } })).toBe(2); // 사건이 지나도 상태는 그대로
   });
+});
 
-  it("발생·발견만 말하는 해결, 결과 종류 없는 해결, 중강도 새 사건의 첫 장면 해결은 받지 않고 ACTIVE로 둔다", async () => {
-    const { uid, world, deps, submit, event } = await setup("ue-resolve");
+describe("사건 기억", () => {
+  it("사건을 겪은 참가자에게만 기억이 남고, 모델이 EVENT 기억을 낸 참가자는 보완하지 않으며, 실패한 시도는 기억을 남기지 않는다", async () => {
+    const { uid, world, chars, deps, submit } = await setup("ue-memory", 3);
     await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 3 } });
     await prisma.worldEventPeriod.create({ data: { worldId: world.id, periodIndex: 0, won: true, scheduledSceneSeq: 3, presetId: "discovery_traces" } });
     const a = (await submit("숲에서 빛나는 알이 발견되었다", 0)).event;
-    // 장면 #3: 저강도 자동 사건(E1, 새)과 사용자 사건(E2, 새, MEDIUM) 모두 첫 장면 해결 시도
-    await generateScene(
-      uid,
-      world.id,
-      deps(sceneJson({ events: [outcome("E1", { status: "RESOLVED", resolutionKind: "SOLVED", resolutionSummary: "수상한 흔적을 발견했다" }), outcome("E2", { status: "RESOLVED", resolutionKind: "SOLVED", resolutionSummary: "알을 안전한 곳에 옮겨 해결했다" })] })),
-    );
-    const auto = await prisma.worldEvent.findFirstOrThrow({ where: { worldId: world.id, kind: "RANDOM" } });
-    expect(auto).toMatchObject({ presetId: "discovery_traces", status: "ACTIVE" });
-    expect(await event(a.id)).toMatchObject({ status: "ACTIVE" });
-    await prisma.worldEvent.update({ where: { id: auto.id }, data: { createdAt: at(-100) } }); // 같은 장면에 시작한 두 사건의 순서 고정: E1 자동, E2 사용자
-    // 장면 #4: 결과 종류 없음 → 무시, 계획만 → 무시
-    await generateScene(
-      uid,
-      world.id,
-      deps(sceneJson({ events: [outcome("E1", { status: "RESOLVED", resolutionSummary: "흔적의 주인을 찾아냈다" }), outcome("E2", { status: "RESOLVED", resolutionKind: "SOLVED", resolutionSummary: "알을 숲에 돌려보내기로 했다" })] })),
-    );
-    expect(await prisma.worldEvent.count({ where: { worldId: world.id, status: "ACTIVE" } })).toBe(2);
-    // 장면 #5: 명시적인 결과 → 해결 (각자 자기 사건만)
-    await generateScene(uid, world.id, deps(sceneJson({ events: [outcome("E2", { status: "RESOLVED", resolutionKind: "SOLVED", resolutionSummary: "알을 숲 속 둥지에 돌려놓아 일이 마무리됐다" })] })));
-    expect(await event(a.id)).toMatchObject({ status: "RESOLVED", resolvedSceneSeq: 5 });
-    expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: auto.id } })).toMatchObject({ status: "ACTIVE" });
+    const memory = { owner: "C1", about: null, kind: "EVENT", acquisition: "WITNESSED", content: "숲의 빛나는 알을 내 손으로 주웠다", importance: 4 };
+
+    await expect(generateScene(uid, world.id, deps("not json"))).rejects.toMatchObject({ code: "SCENE_VALIDATION_FAILED" });
+    expect(await prisma.characterMemory.count({ where: { worldId: world.id } })).toBe(0);
+
+    await generateScene(uid, world.id, deps(sceneJson({ proposals: { emotions: [], relationships: [], memories: [memory] } })));
+    const [c1, c2, c3] = chars;
+    const rows = await prisma.characterMemory.findMany({ where: { worldId: world.id }, orderBy: { content: "asc" } });
+    expect(rows.filter((m) => m.ownerCharacterId === c1!.id).map((m) => m.content)).toEqual([memory.content]); // 모델 기억만
+    const c2Rows = rows.filter((m) => m.ownerCharacterId === c2!.id);
+    expect(c2Rows).toHaveLength(2); // 자동 사건·사용자 사건 하나씩 보완
+    expect(c2Rows.map((m) => m.shareGroupId).sort()).toEqual([a.id, (await prisma.worldEvent.findFirstOrThrow({ where: { worldId: world.id, kind: "RANDOM" } })).id].sort());
+    expect(c2Rows.find((m) => m.shareGroupId === a.id)).toMatchObject({ kind: "EVENT", acquisition: "WITNESSED", content: "이 사건을 직접 겪었다 — 숲에서 빛나는 알이 발견되었다" });
+    expect(rows.some((m) => m.ownerCharacterId === c3!.id)).toBe(false); // 비참가자에게 전파하지 않음
   });
 });
 
 describe("세이브 v4", () => {
-  it("대기·진행 중 사용자 사건을 저장하고, 불러오면 원문·requestId·상태가 복원되며 점유는 비어 있다", async () => {
+  it("대기·발생 완료 사용자 사건을 저장하고, 불러오면 원문·requestId·상태·사건 기억이 복원되며 점유는 비어 있다", async () => {
     const { uid, world, deps, submit, event, clock } = await setup("ue-save");
     const a = (await submit("용이 산 위를 날아갔다", 0, "req-save-a")).event;
-    await generateScene(uid, world.id, deps(sceneJson())); // a → ACTIVE
+    await generateScene(uid, world.id, deps(sceneJson())); // a 발생 완료
     const b = (await submit("왕국에서 사절단이 왔다", 30, "req-save-b")).event;
     const save = await createManualSave(uid, world.id, "사건 저장", new Date(clock.ms));
 
     await cancelUserEvent(uid, world.id, b.id, new Date(clock.ms));
-    await generateScene(uid, world.id, deps(sceneJson({ events: [outcome("E1", { status: "RESOLVED", resolutionKind: "THREAT_GONE", resolutionSummary: "용이 멀리 떠났다" })] })));
-    expect(await event(a.id)).toMatchObject({ status: "RESOLVED" });
+    await generateScene(uid, world.id, deps(sceneJson()));
+    expect(await prisma.characterMemory.count({ where: { worldId: world.id } })).toBe(2);
 
     await loadSave(uid, world.id, save.id, new Date(clock.ms));
-    expect(await event(a.id)).toMatchObject({ status: "ACTIVE", requestId: "req-save-a", description: "용이 산 위를 날아갔다", resolvedSceneSeq: null });
+    expect(await event(a.id)).toMatchObject({ status: "RESOLVED", requestId: "req-save-a", description: "용이 산 위를 날아갔다", startedSceneSeq: 1, resolvedSceneSeq: 1 });
     expect(await event(b.id)).toMatchObject({ status: "PENDING", requestId: "req-save-b", claimedAttemptId: null, cancelledAt: null });
+    expect(await prisma.characterMemory.count({ where: { worldId: world.id, shareGroupId: a.id } })).toBe(2); // 사건 기억도 복원
     // 복원 뒤 다음 장면에서 대기 사건이 발생한다
     await generateScene(uid, world.id, deps(sceneJson()));
-    expect(await event(b.id)).toMatchObject({ status: "ACTIVE", startedSceneSeq: 2 });
+    expect(await event(b.id)).toMatchObject({ status: "RESOLVED", startedSceneSeq: 2 });
   });
 });

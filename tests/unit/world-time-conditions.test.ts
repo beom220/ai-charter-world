@@ -3,7 +3,6 @@ import { EXTREME_LETHAL_WORLD_SECONDS, EXTREME_LIFE_RISK_WORLD_SECONDS } from ".
 import { conditionBadges, painLabel, thermalLabel } from "@/lib/condition-labels";
 import { formatWorldTime, liveWorldSeconds, realMsForWorldSeconds, worldSecondsForRealMs } from "@/lib/world-clock";
 import { DEFAULT_CONDITION_STATE, planConditionChange, type ConditionProposal, type ConditionState } from "@/server/engine/commit/condition-rules";
-import { pickPromptEvents } from "@/server/engine/director/auto-events";
 import { parseSceneOutput, SceneValidationError } from "@/server/engine/validation/scene-output";
 
 // Phase 7-2-2: 월드 시간 배율(실제 1시간 = 월드 36시간), 표시, 온도 불편·고통 단계 표시, 상태 규칙(악화 상한·치료·자연 회복·극심 지속·사망),
@@ -183,29 +182,5 @@ describe("자연 회복 하한 경계 (7-2-2 검증)", () => {
     const coldPain = { ...base, painLevel: "SEVERE" as const, painCause: "동상 기운", painSinceSeconds: 0, thermalCause: "COLD" as const, thermalLevel: "SEVERE" as const, thermalSinceSeconds: 0 };
     const r = planConditionChange(coldPain, null, ctx(12 * HOUR));
     expect(r.next).toMatchObject({ painLevel: "MILD", thermalLevel: "SEVERE" });
-  });
-});
-
-describe("진행 중 사건 프롬프트 칸 (9개 초과, 7-2-2 검증)", () => {
-  type E = { id: number; lastSceneSeq: number | null };
-  const events = (n: number): E[] => Array.from({ length: n }, (_, i) => ({ id: i + 1, lastSceneSeq: i + 1 }));
-
-  it("칸 이하이면 모두, 넘치면 오래된 7개 + 가장 오래 다루지 않은 2개를 오래된 순으로 고른다", () => {
-    expect(pickPromptEvents(events(9), 9).map((e) => e.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    const list = events(12).map((e) => (e.id >= 10 ? { ...e, lastSceneSeq: null } : e));
-    expect(pickPromptEvents(list, 9).map((e) => e.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 10, 11]);
-  });
-
-  it("다룬 사건의 lastSceneSeq를 갱신하며 장면을 이어 가면 넘친 사건도 모두 차례로 프롬프트에 들어간다 (영구 누락 없음)", () => {
-    let list: E[] = events(15);
-    const seen = new Set<number>();
-    for (let scene = 100; scene < 106; scene++) {
-      const shown = pickPromptEvents(list, 9);
-      expect(shown).toHaveLength(9);
-      shown.forEach((e) => seen.add(e.id));
-      const ids = new Set(shown.map((e) => e.id));
-      list = list.map((e) => (ids.has(e.id) ? { ...e, lastSceneSeq: scene } : e));
-    }
-    expect([...seen].sort((a, b) => a - b)).toEqual(events(15).map((e) => e.id));
   });
 });

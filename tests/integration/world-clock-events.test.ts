@@ -115,60 +115,55 @@ describe("월드 시계", () => {
 });
 
 describe("자동 사건", () => {
-  it("예약 장면에서 한 번만 발생하고, 실패한 시도는 사건을 남기지 않으며, 해결 요약이 있을 때만 그 사건만 해결된다", async () => {
-    const { uid, world, deps, prompts } = await setup("auto-event");
+  it("예약 장면에서 한 번만 발생하고(발생 완료로 기록), 실패한 시도는 사건을 남기지 않으며, 이후 장면에 다시 주입하지 않는다", async () => {
+    const { uid, world, chars, deps, prompts } = await setup("auto-event");
     await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 3 } });
     await prisma.worldEventPeriod.create({ data: { worldId: world.id, periodIndex: 0, won: true, scheduledSceneSeq: 3 } });
 
-    // 1) 응답 검증 실패 → 사건·발생 기록 없음 (프리셋은 구간에 고정되어 재시도에도 같다)
+    // 1) 응답 검증 실패 → 사건·발생 기록·기억 없음 (프리셋은 구간에 고정되어 재시도에도 같다)
     await expect(generateScene(uid, world.id, deps("not json"))).rejects.toMatchObject({ code: "SCENE_VALIDATION_FAILED" });
     expect(await prisma.worldEvent.count({ where: { worldId: world.id } })).toBe(0);
+    expect(await prisma.characterMemory.count({ where: { worldId: world.id } })).toBe(0);
     const period = await prisma.worldEventPeriod.findUniqueOrThrow({ where: { worldId_periodIndex: { worldId: world.id, periodIndex: 0 } } });
     expect(period).toMatchObject({ firedAt: null, eventId: null });
     expect(period.presetId).not.toBeNull();
-    expect(prompts.at(-1)).toContain("새 사건 — 이번 장면에서 시작");
+    expect(prompts.at(-1)).toContain("<events>");
 
-    // 2) 다시 시도 → 사건 발생 (결과 필드가 없어도 미해결로 기록)
-    await generateScene(uid, world.id, deps(sceneJson()));
+    // 2) 다시 시도 → 사건 발생 완료 (결과 필드가 없어도 기록), 참가자에게 사실 기억 보완
+    const view = await generateScene(uid, world.id, deps(sceneJson()));
     const event = await prisma.worldEvent.findFirstOrThrow({ where: { worldId: world.id } });
-    expect(event).toMatchObject({ kind: "RANDOM", status: "ACTIVE", presetId: period.presetId, startedSceneSeq: 3, lastSceneSeq: 3, startedWorldSeconds: 0 });
+    expect(event).toMatchObject({ kind: "RANDOM", status: "RESOLVED", presetId: period.presetId, startedSceneSeq: 3, resolvedSceneSeq: 3, resolutionSummary: null, startedWorldSeconds: 0 });
     expect((await prisma.worldEventPeriod.findFirstOrThrow({ where: { worldId: world.id } })).eventId).toBe(event.id);
+    expect(view.notes.filter((n) => n.kind.startsWith("EVENT"))).toEqual([expect.objectContaining({ kind: "EVENT_STARTED" })]); // 배너 한 번
+    const memories = await prisma.characterMemory.findMany({ where: { worldId: world.id } });
+    expect(memories.map((m) => m.ownerCharacterId).sort()).toEqual(chars.map((c) => c.id).sort());
+    expect(memories.every((m) => m.kind === "EVENT" && m.acquisition === "WITNESSED" && m.shareGroupId === event.id)).toBe(true);
 
-    // 3) 다음 장면: 같은 구간에서 다시 발생하지 않고, 진행 중 사건(E1)으로 이어진다. 요약 없는 RESOLVED·없는 별칭은 무시
-    await generateScene(uid, world.id, deps(sceneJson({ events: [{ ref: "E1", status: "RESOLVED", resolutionSummary: null, realization: null, usedFallback: false }, { ref: "E7", status: "RESOLVED", resolutionSummary: "x", realization: null, usedFallback: false }] })));
-    expect(prompts.at(-1)).toContain("[E1] (진행 중 · 장면 #3");
-    expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ status: "ACTIVE", lastSceneSeq: 4 });
+    // 3) 다음 장면: 같은 구간에서 다시 발생하지 않고, 사건을 프롬프트에 다시 넣지 않는다
+    await generateScene(uid, world.id, deps(sceneJson()));
+    expect(prompts.at(-1)).not.toContain("<events>");
     expect(await prisma.worldEvent.count({ where: { worldId: world.id } })).toBe(1);
-
-    // 4) 결과 종류·요약이 있는 RESOLVED → 해결 (7-2-3: 결과 종류 필수), 대화 기록에 발생·해결 시스템 정보
-    await generateScene(uid, world.id, deps(sceneJson({ events: [{ ref: "E1", status: "RESOLVED", resolutionSummary: "모두 힘을 모아 위기를 넘겼다", realization: null, usedFallback: false, resolutionKind: "SOLVED" }] })));
-    expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ status: "RESOLVED", resolvedSceneSeq: 5, resolutionSummary: "모두 힘을 모아 위기를 넘겼다" });
+    expect(await prisma.characterMemory.count({ where: { worldId: world.id } })).toBe(2);
     const scenes = await prisma.conversationScene.findMany({ where: { worldId: world.id }, orderBy: { seq: "asc" } });
-    expect(scenes.map((s) => s.motiveType)).toEqual(["WORLD_EVENT", "WORLD_EVENT", "WORLD_EVENT"]);
+    expect(scenes.map((s) => s.motiveType)).toEqual(["WORLD_EVENT", "MIXED"]);
   });
 });
 
-describe("진행 중 사건 9개 초과 (7-2-2 검증)", () => {
-  it("오래된 사건을 우선 넣고 나머지는 차례로 돌려 넣어, 장면을 이어 가면 모든 사건이 다뤄진다", async () => {
-    const { uid, world, deps, prompts } = await setup("event-rotation");
-    for (let i = 1; i <= 12; i++) {
-      await prisma.worldEvent.create({
-        data: { worldId: world.id, kind: "RANDOM", status: "ACTIVE", presetId: "discovery_traces", intensity: "LOW", title: `사건${String(i).padStart(2, "0")}`, description: "d", startedSceneSeq: i, lastSceneSeq: i },
-      });
-    }
-    await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 13 } });
-    const covered = new Set<string>();
-    for (let i = 0; i < 3; i++) {
-      await generateScene(uid, world.id, deps(sceneJson()));
-      const prompt = prompts.at(-1)!;
-      expect(prompt).toContain("[E9]");
-      expect(prompt).toMatch(/그 밖에 진행 중인 사건 \d+건이 더 있다/); // 자동 사건이 발생하면 한 칸을 더 쓴다
-      expect(prompt.indexOf("사건01")).toBeLessThan(prompt.indexOf("사건02")); // 오래된 순
-      for (const m of prompt.matchAll(/사건\d{2}/g)) covered.add(m[0]);
-    }
-    expect(covered.size).toBe(12);
-    // 넣은 사건만 이번 장면으로 이어졌다고 기록, 모두 미해결 유지
-    expect(await prisma.worldEvent.count({ where: { worldId: world.id, status: "ACTIVE", title: { startsWith: "사건" } } })).toBe(12);
+describe("과거 진행 중(ACTIVE)·해결(RESOLVED) 사건 호환", () => {
+  it("기존 기록은 그대로 두고 프롬프트에 다시 넣지 않으며, 장면에서 상태를 바꾸지 않는다", async () => {
+    const { uid, world, deps, prompts } = await setup("legacy-events");
+    const legacy = await prisma.worldEvent.create({
+      data: { worldId: world.id, kind: "RANDOM", status: "ACTIVE", presetId: "discovery_traces", intensity: "LOW", title: "옛 사건", description: "오래된 진행 중 사건", startedSceneSeq: 1, lastSceneSeq: 1 },
+    });
+    const old = await prisma.worldEvent.create({
+      data: { worldId: world.id, kind: "RANDOM", status: "RESOLVED", presetId: "discovery_object", intensity: "LOW", title: "해결된 사건", description: "d", startedSceneSeq: 1, resolvedSceneSeq: 2, resolutionSummary: "끝남" },
+    });
+    await prisma.gameState.update({ where: { worldId: world.id }, data: { nextSceneSeq: 2 } });
+    await generateScene(uid, world.id, deps(sceneJson({ events: [{ ref: "E1", status: "RESOLVED", resolutionSummary: "x", realization: null, usedFallback: false }] })));
+    expect(prompts.at(-1)).not.toContain("옛 사건");
+    expect(prompts.at(-1)).not.toContain("<events>");
+    expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: legacy.id } })).toMatchObject({ status: "ACTIVE", lastSceneSeq: 1 });
+    expect(await prisma.worldEvent.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({ status: "RESOLVED", resolutionSummary: "끝남" });
   });
 });
 
