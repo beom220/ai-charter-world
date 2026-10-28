@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conditionTone, josa, noteText, noteTone } from "@/lib/scene-notes";
+import { conditionTone, emotionCueText, josa, noteText, noteTone } from "@/lib/scene-notes";
 
 // 대화 피드 사건·상태 메시지 분류와 표시 문구 (Phase 7-4)
 
@@ -38,5 +38,17 @@ describe("표시 문구", () => {
   it("이름 받침에 맞는 조사", () => {
     expect(`한서윤${josa("한서윤", "이", "가")} 사망했다.`).toBe("한서윤이 사망했다.");
     expect(`민아${josa("민아", "이", "가")} 사망했다.`).toBe("민아가 사망했다.");
+  });
+});
+
+describe("발언자 감정 표시", () => {
+  it("영어 감정 코드·단어는 한국어로, 모르는 영어는 숨기고 한국어는 그대로", () => {
+    expect(emotionCueText("ANXIOUS")).toBe("불안");
+    expect(emotionCueText("nervous, curious")).toBe("긴장, 궁금함");
+    expect(emotionCueText("slightly worried")).toBe("약간 걱정");
+    expect(emotionCueText("궁금함")).toBe("궁금함");
+    expect(emotionCueText("FEARFUL / 떨림")).toBe("두려움, 떨림");
+    expect(emotionCueText("zxqv")).toBeNull();
+    expect(emotionCueText(null)).toBeNull();
   });
 });

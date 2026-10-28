@@ -52,3 +52,39 @@ export function josa(word: string, a: string, b: string): string {
   const code = word.charCodeAt(word.length - 1) - 0xac00;
   return code >= 0 && code <= 11171 && code % 28 !== 0 ? a : b;
 }
+
+// ── 발언자 이름 옆 감정 표시(emotionCue). 모델이 영어(ANXIOUS, nervous, slightly worried 등)로 낸 값을 화면에서만 한국어로 바꾼다.
+// 아는 영어 감정은 한국어로, 모르는 영어 단어는 숨긴다(한국어가 섞인 조각은 그대로 둔다). 원본 기록은 바꾸지 않는다.
+const EMOTION_KO: Record<string, string> = {
+  neutral: "평온", happy: "기쁨", excited: "들뜸", calm: "차분", sad: "슬픔", anxious: "불안", angry: "분노", fearful: "두려움",
+  embarrassed: "당황", lonely: "외로움", hopeful: "기대", tired: "지침",
+  joy: "기쁨", joyful: "기쁨", cheerful: "명랑", glad: "기쁨", delighted: "기쁨", sadness: "슬픔", anger: "분노", fear: "두려움",
+  afraid: "두려움", scared: "겁먹음", terrified: "공포", panic: "공포", panicked: "공포", nervous: "긴장", tense: "긴장",
+  uneasy: "불안", worried: "걱정", worry: "걱정", concerned: "걱정", curious: "궁금함", surprised: "놀람", surprise: "놀람",
+  shocked: "충격", confused: "혼란", determined: "단호함", resolute: "단호함", firm: "단호함", relieved: "안도", frustrated: "답답함",
+  annoyed: "짜증", irritated: "짜증", playful: "장난스러움", serious: "진지함", gentle: "다정함", warm: "따뜻함", cold: "냉담",
+  suspicious: "의심", cautious: "조심스러움", hesitant: "망설임", thoughtful: "생각에 잠김", pensive: "생각에 잠김", sarcastic: "비꼼",
+  desperate: "절박함", urgent: "다급함", grateful: "고마움", guilty: "죄책감", ashamed: "부끄러움", shy: "수줍음", proud: "자부심",
+  jealous: "질투", disappointed: "실망", bored: "지루함", amused: "재미있어함", hurt: "상처받음", pained: "고통", painful: "고통",
+  exhausted: "지침", sleepy: "졸림", encouraging: "격려", reassuring: "안심시킴", hope: "기대", love: "애정", loving: "애정",
+  affectionate: "애정", friendly: "친근함", sincere: "진심", defiant: "반항", resigned: "체념", bitter: "씁쓸함",
+};
+const EMOTION_DEGREE: Record<string, string> = { slightly: "약간", somewhat: "약간", mildly: "약간", little: "약간", bit: "약간", very: "매우", extremely: "매우", deeply: "매우", really: "매우", quite: "꽤" };
+const HANGUL = /[가-힣]/;
+
+function emotionPart(part: string): string | null {
+  if (HANGUL.test(part)) return part.trim();
+  const words = part.toLowerCase().replace(/[_-]+/g, " ").match(/[a-z]+/g) ?? [];
+  const degree = words.map((w) => EMOTION_DEGREE[w]).find(Boolean);
+  const feelings = words.map((w) => EMOTION_KO[w]).filter((k): k is string => !!k);
+  if (!feelings.length) return null;
+  return `${degree ? `${degree} ` : ""}${feelings.join("·")}`;
+}
+
+/** 감정 표시 문구. 보여 줄 것이 없으면 null */
+export function emotionCueText(cue: string | null): string | null {
+  if (!cue?.trim()) return null;
+  const parts = cue.split(/\s*(?:[,/&;·]|\band\b|\bwith\b)\s*/i).filter((p) => p.trim());
+  const out = [...new Set(parts.map(emotionPart).filter((p): p is string => !!p))];
+  return out.length ? out.join(", ") : null;
+}

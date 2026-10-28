@@ -21,12 +21,12 @@ import {
   type SimulationStateView,
   type SimulationView,
 } from "@/lib/simulation-view";
-import { button, MOOD_LABEL, STATUS_LABEL } from "../ui";
+import { button, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 import { worldCalendar } from "@/lib/world-clock";
 import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
-import type { SceneNote } from "@/lib/scene-notes";
+import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
 // - 실행 상태의 기준은 서버 SimulationRuntime이다. 버튼은 start/pause/resume/stop API만 부르고, 화면 상태는 응답과
@@ -377,7 +377,7 @@ export function ScenePanel({
                   <div key={m.id} className="flex flex-col items-start">
                     <span className="text-sm font-semibold">
                       <SpeakerName worldId={worldId} message={m} activeIds={activeIds} />
-                      {m.emotionCue && <span className="font-normal text-foreground/60"> · {MOOD_LABEL[m.emotionCue.trim().toUpperCase()] ?? m.emotionCue}</span>}
+                      {emotionCueText(m.emotionCue) && <span className="font-normal text-foreground/60"> · {emotionCueText(m.emotionCue)}</span>}
                     </span>
                     <p className={`${bubble} break-words whitespace-pre-wrap`}>{m.dialogue}</p>
                     {m.actionIntent && <span className="text-xs text-foreground/60 italic">({m.actionIntent})</span>}
