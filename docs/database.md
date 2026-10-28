@@ -4,6 +4,7 @@
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
+> **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). Phase 7 마이그레이션은 7-1(20261028120000)·7-2-1(20261028140000)·7-2-2(20261028150000), 스냅샷 v4. 7-2-3·7-4는 스키마 변경 없음. 단계별 현황은 PRD §10.1
 
 아래 Prisma 코드 블록은 **설계 기준**이다. 실제 구현은 `prisma/schema.prisma`와 `prisma/migrations/`에 있다(Phase 2-1). 구현에서 확정된 차이는 다음과 같다.
 

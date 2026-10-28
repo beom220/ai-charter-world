@@ -4,6 +4,7 @@
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), 2026-10-27 확정 기술 결정 D1~D9, A1~A17
 > **관련 문서:** `docs/database.md` (데이터 모델 상세)
 > **작성일:** 2026-10-27
+> **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). 7-1·7-2·7-4 완료, 7-3 캐릭터 직접 명령은 기획 제외. 단계별 현황과 남은 QA는 PRD §10.1
 
 이 문서는 PRD의 요구사항을 바꾸지 않고, 구현 방법을 정의한다. 버전 번호가 필요한 라이브러리는 설치 시점(Phase 1)에 최신 안정 버전으로 확정하고 이 문서를 갱신한다.
 
@@ -1085,7 +1086,7 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 
 ### 13.3 사건 시스템과 캐릭터 신체 상태 (Phase 7-2, PRD v1.9)
 
-실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터(완료) → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 스파이크.
+실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터 → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 스파이크. **7-2-0~7-2-3 완료, 7-2-4는 미실시(PRD §10.1 남은 QA).** 이 절의 자연 회복(장면 수 기준)·사건 진행/해결 서술은 당시 설계이며, 현행 규칙은 §13.4(월드 시간 기준 회복, 사건 1회 반영)가 우선한다.
 
 - **모델**: 기존 `WorldEvent`를 확장한다(별도 Incident 없음). `kind`에 `RANDOM`(자동)·`USER_INTERVENTION`(사용자), `status`에 `PENDING`·`CANCELLED` 추가. `presetId`·`intensity`·`requestId`(`(worldId, requestId)` UNIQUE)·`startedSceneSeq`·`lastSceneSeq`·`resolvedSceneSeq`·`resolutionSummary`·`claimedAttemptId`(진행 중 시도 점유, 스냅샷 제외)·`cancelledAt`. 진행 순서는 `startedSceneSeq → createdAt → id`.
 - **자동 사건 구간**: `WorldEventPeriod(worldId, periodIndex)` PK = 구간당 1행. 순수 함수 `engine/director/auto-events.ts`(`autoEventPeriodOf`·`rollAutoEventPeriod`·`pickAutoEventPreset`)와 영속화 `domain/events/auto-periods.ts`(`ensureAutoEventPeriod`: `ON CONFLICT DO NOTHING` 후 저장된 결과를 읽음). 7-2-2에서 Runner·수동 생성의 시도 기록 트랜잭션(World 잠금·펜싱 안)에서 호출하고, 발생(프리셋 확정·사건 생성·`firedAt`)은 장면 커밋 트랜잭션에서 한다. 구간 중간에 처음 판정하면(기존 진행 세계관·v1·v2 불러오기) 지난 장면에는 예약하지 않는다.
@@ -1105,6 +1106,8 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 | 엔진 시나리오 | MockProvider 스크립트(정상, 잘못된 JSON, 잘못된 참조, 범위 초과, 429 연속, 네트워크 오류, 지연 후 취소) | Vitest |
 | E2E | PRD §11 MVP 승인 시나리오 1~16 (Google 로그인은 테스트용 세션 주입) | Playwright + MockProvider |
 | 수동 | 실제 Gemini 키 연결, 구조화 출력 품질, 비용 표시, 토큰 예산·기본 모델 확정 | Phase 3·5 스파이크 |
+
+**Phase 7 종료 시점 검증 현황 (2026-10-29)**: 단위·통합 테스트로 확인했다. `tests/integration/simulation-soak.test.ts`가 가짜 시계·Mock Gemini로 여러 장면을 연속 실행해 실행 제어·월드 시계·연결 보류·자동/사용자 사건·기억·신체 상태·저장/불러오기·실패·lease를 함께 검증한다. E2E(Playwright)와 실제 브라우저 최종 검증, 실제 Gemini 스파이크(7-2-4)는 미실시다(PRD §10.1).
 
 **필수 복구 테스트 (A14)**. Phase 7a 완료 조건에 포함한다.
 1. **서버 재시작 복구**: `RUNNING` 중 프로세스 강제 종료 → 재시작 → 스위퍼가 lease 만료 후 재획득하고 루프를 재개한다. 커밋된 장면 수와 `stateVersion`이 일관된지 확인한다.
