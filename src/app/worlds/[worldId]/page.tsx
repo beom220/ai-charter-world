@@ -9,6 +9,7 @@ import { listCharacters } from "@/server/domain/characters/characters";
 import { CharacterList } from "./characters/character-list";
 import { ScenePanel, type SceneItem } from "./scene-panel";
 import { listScenes } from "@/server/domain/scenes/generate-scene";
+import { currentWorldEventCursor } from "@/server/events/world-stream";
 import { LoginRequired, STATUS_LABEL } from "../ui";
 import { DeleteWorldButton, WorldForm } from "../world-form";
 
@@ -33,8 +34,10 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
   const { worldId } = await params;
 
   const userId = asAuthenticatedUserId(session.user.id);
-  let world, characters, scenes;
+  let world, characters, scenes, eventCursor;
   try {
+    // 커서를 먼저 읽는다: 이후에 커밋된 장면은 SSE로 다시 오고, 화면에서 id로 중복을 거른다
+    eventCursor = await currentWorldEventCursor(userId, worldId);
     [world, characters, scenes] = await Promise.all([getWorld(userId, worldId), listCharacters(userId, worldId), listScenes(userId, worldId)]);
   } catch (error) {
     if (error instanceof NotFoundError) notFound();
@@ -55,6 +58,7 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
         activeCount={characters.length}
         initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
         initialHasMore={scenes.hasMore}
+        eventCursor={eventCursor}
       />
       <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
         <h2 className="text-lg font-semibold">세계관 설정</h2>

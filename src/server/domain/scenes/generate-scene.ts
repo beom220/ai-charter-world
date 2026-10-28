@@ -6,6 +6,7 @@ import { buildStoryPrompt, type PromptCharacter, type PromptHistoryScene } from 
 import { selectSceneParticipants } from "@/server/engine/director/select-participants";
 import { createUsageMeter } from "@/server/engine/usage/usage-guard";
 import { parseSceneOutput, SCENE_ALIASES, sceneResponseJsonSchema, SceneValidationError } from "@/server/engine/validation/scene-output";
+import { notifyWorld, publishEvents } from "@/server/events/event-bus";
 import { getGeminiKeyClient } from "@/server/llm";
 import { GeminiCallError, type GeminiKeyClient } from "@/server/llm/gemini/client";
 import { logServerError } from "@/server/logging/log";
@@ -21,10 +22,12 @@ import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/se
 //   3) UsageGuard meter를 거쳐 generateContent 1회 (자동 재시도 없음)
 //   4) Zod·별칭 검증 → 실패하면 아무것도 저장하지 않는다
 //   5) GameState 행 잠금 + stateVersion 펜싱 + attemptId UNIQUE로 단일 트랜잭션 커밋 (§6.7)
+//   6) 같은 트랜잭션에서 outbox에 scene.committed를 기록하고, 커밋 후 SSE 구독자에게 알린다 (Phase 5-3, §10.3)
 
 type Deps = { client?: GeminiKeyClient; material?: ProviderKeyMaterial; now?: () => Date; random?: () => number };
 
 export type SceneMessageView = {
+  id: string;
   turnIndex: number;
   speakerCharacterId: string | null;
   speakerName: string;
@@ -59,7 +62,7 @@ const sceneSelect = {
   createdAt: true,
   messages: {
     orderBy: { turnIndex: "asc" },
-    select: { turnIndex: true, speakerCharacterId: true, speakerNameSnapshot: true, dialogue: true, actionIntent: true, emotionCue: true },
+    select: { id: true, turnIndex: true, speakerCharacterId: true, speakerNameSnapshot: true, dialogue: true, actionIntent: true, emotionCue: true },
   },
 } as const;
 
@@ -210,7 +213,7 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
 
     // 5) 커밋
     const aliasMap = new Map(characters.map((c) => [c.alias, c]));
-    const sceneId = await prisma.$transaction(async (tx) => {
+    const committed = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UPDATE`;
       const gs = await tx.gameState.findUnique({ where: { worldId } });
       if (!gs || gs.stateVersion !== expected.stateVersion) {
@@ -274,11 +277,15 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
         });
         if (auto.snapshotId) await tx.gameSnapshot.delete({ where: { id: auto.snapshotId } });
       }
-      return scene.id;
+
+      // 검증·저장된 내용만 이벤트로 보낸다 (프롬프트·키·응답 원문 없음)
+      const view = toView(await tx.conversationScene.findUniqueOrThrow({ where: { id: scene.id }, select: sceneSelect }));
+      await publishEvents(tx, worldId, [{ type: "scene.committed", payload: { scene: JSON.parse(JSON.stringify(view)) } }]);
+      return view;
     });
 
-    const row = await prisma.conversationScene.findUniqueOrThrow({ where: { id: sceneId }, select: sceneSelect });
-    return toView(row);
+    notifyWorld(worldId);
+    return committed;
   } finally {
     await prisma.simulationRuntime
       .updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } })

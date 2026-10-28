@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { testUtils } from "better-auth/plugins";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GET, POST } from "@/app/api/worlds/[worldId]/scenes/route";
+import { GET as STREAM } from "@/app/api/worlds/[worldId]/simulation/stream/route";
 import { AUTH_ENV_KEYS, readAuthEnv } from "@/server/auth/env";
 import { authOptions } from "@/server/auth/options";
 import { readProviderKeyMaterial } from "@/server/crypto/provider-key-crypto";
@@ -262,5 +263,91 @@ describe("POST /api/worlds/[worldId]/scenes", () => {
     expect((await get("", intruder.id)).status).toBe(404);
     expect((await get("?before=abc", owner.user.id)).status).toBe(400);
     expect(await get("?before=5", owner.user.id)).toMatchObject({ status: 200, body: { scenes: [], hasMore: false } });
+  });
+
+  describe("GET /simulation/stream (SSE, Phase 5-3)", () => {
+    type Frame = { id: string | null; event: string; data: string };
+    /** SSE 연결을 열고, 받은 프레임을 모아 둔다 */
+    const connect = async (worldId: string, userId?: string, lastEventId?: string) => {
+      const headers = new Headers();
+      if (userId) headers.set("cookie", (await (await testAuth.$context).test.login({ userId })).headers.get("cookie")!);
+      if (lastEventId) headers.set("last-event-id", lastEventId);
+      const abort = new AbortController();
+      const res = await STREAM(new Request(`${BASE_URL}/api/worlds/${worldId}/simulation/stream`, { headers, signal: abort.signal }), {
+        params: Promise.resolve({ worldId }),
+      });
+      const frames: Frame[] = [];
+      if (res.status === 200) {
+        const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        void (async () => {
+          for (;;) {
+            const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
+            if (done) return;
+            buffer += value;
+            let end;
+            while ((end = buffer.indexOf("\n\n")) >= 0) {
+              const block = buffer.slice(0, end);
+              buffer = buffer.slice(end + 2);
+              const field = (k: string) => block.split("\n").find((l) => l.startsWith(`${k}: `))?.slice(k.length + 2) ?? null;
+              const event = field("event");
+              if (event) frames.push({ id: field("id"), event, data: field("data") ?? "" });
+            }
+          }
+        })();
+      }
+      const waitFor = async (n: number) => {
+        for (let i = 0; i < 100 && frames.length < n; i++) await new Promise((r) => setTimeout(r, 20));
+        return frames;
+      };
+      return { res, frames, waitFor, close: () => abort.abort() };
+    };
+
+    it("비로그인 401, 타인 세계관 404 (스트림을 열지 않는다)", async () => {
+      const owner = await setup("sse-owner", {}, { characters: 2 });
+      const intruder = await createTestUser("sse-intruder");
+      expect((await connect(owner.world.id)).res.status).toBe(401);
+      expect((await connect(owner.world.id, intruder.id)).res.status).toBe(404);
+      expect(await prisma.sseConnection.count({ where: { worldId: owner.world.id } })).toBe(0);
+    });
+
+    it("저장된 장면을 turnIndex 순서로 보내고, 재연결은 Last-Event-ID 이후만 보내며, 실패한 장면은 보내지 않는다", async () => {
+      const { uid, user, world, mock, deps } = await setup("sse-flow", {}, { characters: 2 });
+      const first = await connect(world.id, user.id);
+      expect(first.res.headers.get("content-type")).toContain("text/event-stream");
+      expect(await prisma.sseConnection.count({ where: { worldId: world.id } })).toBe(1);
+
+      const scene1 = await generateScene(uid, world.id, deps);
+      const [f1] = await first.waitFor(1);
+      expect(f1!.event).toBe("scene.committed");
+      const payload = JSON.parse(f1!.data) as { scene: { id: string; messages: { id: string; turnIndex: number }[] } };
+      expect(payload.scene.id).toBe(scene1.id);
+      expect(payload.scene.messages.map((m) => m.turnIndex)).toEqual([0, 1, 2]);
+      expect(payload.scene.messages.map((m) => m.id)).toEqual(scene1.messages.map((m) => m.id));
+      expect(f1!.data).not.toContain(fakeGeminiKey("sse-flow"));
+      expect(mock.calls).toHaveLength(1); // SSE 연결은 호출을 만들지 않는다
+      first.close();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(await prisma.sseConnection.count({ where: { worldId: world.id } })).toBe(0);
+
+      // 끊긴 동안 장면 #2 저장 → 재연결하면 #2만 받는다 (#1 중복 없음)
+      const scene2 = await generateScene(uid, world.id, deps);
+      const again = await connect(world.id, user.id, f1!.id!);
+      const frames = await again.waitFor(1);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(frames.map((f) => (JSON.parse(f.data) as { scene: { id: string } }).scene.id)).toEqual([scene2.id]);
+
+      // 검증 실패 장면은 이벤트를 만들지 않는다
+      const failing = await setup("sse-fail", { generateText: "장면입니다" }, { characters: 2 });
+      await expect(generateScene(failing.uid, failing.world.id, failing.deps)).rejects.toBeInstanceOf(SceneValidationFailedError);
+      expect(await prisma.simulationEvent.count({ where: { worldId: failing.world.id } })).toBe(0);
+      again.close();
+
+      // 다른 세계관의 이벤트 id로 재연결하면 재전송하지 않고 sync.required
+      const other = await setup("sse-other", {}, { characters: 2 });
+      const forged = await connect(other.world.id, other.user.id, f1!.id!);
+      expect((await forged.waitFor(1)).map((f) => f.event)).toEqual(["sync.required"]);
+      forged.close();
+    });
   });
 });

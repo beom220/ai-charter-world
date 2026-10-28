@@ -113,5 +113,20 @@ export const SCENE_RECENT_HISTORY_BUDGET_CHARS = 8_000;
 /** 세계관 상세의 대화 기록 한 페이지 장면 수 ('이전 기록 보기' 단위) */
 export const SCENE_HISTORY_PAGE_SIZE = 10;
 
+/** SSE 연결 유지 주석(`: ping`) 간격 (architecture.md §10.1). 이때 outbox도 한 번 따라잡는다 */
+export const SSE_PING_INTERVAL_MS = 15_000;
+
+/** SseConnection.lastSeenAt 갱신 간격 (§7.5) */
+export const SSE_HEARTBEAT_INTERVAL_MS = 10_000;
+
+/** 재연결 시 한 번에 재전송하는 outbox 이벤트 상한. 넘으면 sync.required */
+export const SSE_REPLAY_MAX_EVENTS = 100;
+
+/**
+ * 새 장면 발언을 브라우저에서 하나씩 보여 주는 간격(UI 연출 전용).
+ * 장면 사이 간격(SLOW 15s / NORMAL 5s / FAST 1s, Runner)과는 별개다.
+ */
+export const SCENE_MESSAGE_REVEAL_INTERVAL_MS = 1_000;
+
 /** 수동 장면 생성 진행 표시(inFlightAttemptId)가 이 시간보다 오래되면 끝난 것으로 본다 (프로세스 종료 대비) */
 export const SCENE_IN_FLIGHT_STALE_MS = 5 * 60 * 1000;

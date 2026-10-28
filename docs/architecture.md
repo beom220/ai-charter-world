@@ -422,7 +422,11 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
   - §6.4의 참가자별 단기 기억(참가한 장면만)과 달리, Story 모드 1회 호출이므로 **세계 전체의 최근 장면**을 넣는다. 정보 비대칭은 "참여하지 않은 장면의 일은 전해 들었을 만한 경우가 아니면 모른다"는 지시로 대신한다. 엔진 단계의 `CharacterKnowledgeView`에서 참가 장면 기준으로 되돌린다.
   - `<world>`의 현재 상황·세계관 설명은 시작 시점 설정이고 `<history>`가 현재 진행 상황이라고 지시해, 초기 사건을 매 장면 처음처럼 반복하지 않게 한다.
 - 대화 기록 조회: `GET /api/worlds/[worldId]/scenes?before=<seq>`가 최신순 `SCENE_HISTORY_PAGE_SIZE`(10)개와 `hasMore`를 준다. `seq`는 세계관 내 UNIQUE라 커서로 이어 받아도 중복·누락이 없다.
-- 커밋: §6.7에서 Run·lease 검사·관계/감정/기억·outbox를 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
+- 실시간 전달(Phase 5-3): 커밋 트랜잭션 안에서 outbox(`SimulationEvent`)에 `scene.committed { scene(id, seq, title, summary, contextTruncated, messages[id, turnIndex, speakerName, dialogue, actionIntent, emotionCue]) }`를 기록하고, 커밋 후 프로세스 내 EventBus로 SSE 구독자를 깨운다(`server/events/event-bus.ts`, §10.3).
+  - SSE `GET /api/worlds/[worldId]/simulation/stream`(`server/events/world-stream.ts`): 소유권 확인 후 열고, `SseConnection`을 등록·10초 갱신·종료 시 삭제한다. 첫 연결은 페이지 렌더 시점 커서(`?lastEventId`), 재연결은 `Last-Event-ID` 이후만 재전송한다. 커서가 이 세계관 이벤트가 아니거나 밀린 이벤트가 `SSE_REPLAY_MAX_EVENTS`(100)를 넘으면 `sync.required`. 15초 ping 때 outbox를 따라잡는다. 보류(`clientHoldSince`) 처리는 Runner 단계에서 추가한다.
+  - 서버는 저장된 장면을 한 번에 보내고, 브라우저가 발언을 `SCENE_MESSAGE_REVEAL_INTERVAL_MS`(1초) 간격으로 순차 표시한다(연출 전용, 장면 간격 15/5/1초와 별개). POST 응답과 SSE가 같은 장면을 줄 수 있으므로 화면은 장면 id로 한 번만 넣는다.
+  - 아직 없는 이벤트: `scene.started`·`scene.failed`(실패는 POST 응답으로만 알린다), outbox 24시간 정리 작업.
+- 커밋: §6.7에서 Run·lease 검사·관계/감정/기억을 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
 
 ### 6.9 AgentModeStrategy 확장 경로 (후속)
 
