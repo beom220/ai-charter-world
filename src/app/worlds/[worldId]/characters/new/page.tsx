@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { MAX_ACTIVE_CHARACTERS_PER_WORLD } from "../../../../../../config/limits";
 import { getCurrentSession } from "@/server/auth/session";
 import { listCharacters } from "@/server/domain/characters/characters";
@@ -13,11 +12,9 @@ import { CharacterForm } from "../character-form";
 
 export default function NewCharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/new">) {
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 p-4 sm:p-8">
-      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
-        <NewCharacter params={params} />
-      </Suspense>
-    </main>
+    <div className="flex flex-col gap-6">
+      <NewCharacter params={params} />
+    </div>
   );
 }
 
@@ -36,10 +33,10 @@ async function NewCharacter({ params }: { params: Promise<{ worldId: string }> }
 
   return (
     <>
-      <Link href={`/worlds/${worldId}`} className="text-sm text-foreground/70 underline">
-        ← 세계관으로
+      <Link href={`/worlds/${worldId}/characters`} className="text-sm text-foreground/70 underline">
+        ← 캐릭터 목록
       </Link>
-      <h1 className="text-2xl font-semibold">새 캐릭터</h1>
+      <h2 className="text-xl font-semibold">새 캐릭터</h2>
       {count >= MAX_ACTIVE_CHARACTERS_PER_WORLD ? (
         <p role="alert" className="text-sm">
           캐릭터는 세계관당 최대 {MAX_ACTIVE_CHARACTERS_PER_WORLD}명입니다. 추가하려면 기존 캐릭터를 삭제하세요.

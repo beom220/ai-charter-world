@@ -14,11 +14,22 @@ import { subscribeWorld } from "./event-bus";
 // - 이 스트림은 Gemini 호출·장면 생성을 시작하지 않는다(생성은 POST /scenes와 Runner).
 // - SseConnection 등록부에 연결을 기록한다(A12, 연결마다 행 1개, 10초 heartbeat, 종료 시 삭제).
 //   등록 직후·삭제 직후 reconcileClientHold로 SSE 연결 보류를 해제·시작한다(§7.5, Phase 5-4-3). 재연결로 자동 재개하지는 않는다.
+// - 보기 전용 구독(presence: false, 캐릭터 상세)은 등록부에 기록하지 않는다. 대화 화면 연결은 시작 직후 stream.ready로 연결 ID를 알려 준다.
 
 const INSTANCE_ID = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
 const encoder = new TextEncoder();
 
-type StreamOptions = { userId: AuthenticatedUserId; worldId: string; lastEventId: string | null; signal: AbortSignal };
+type StreamOptions = {
+  userId: AuthenticatedUserId;
+  worldId: string;
+  lastEventId: string | null;
+  signal: AbortSignal;
+  /**
+   * 대화 화면 연결이면 true(기본): 연결 등록부에 기록해 연결 보류·이탈 판정에 쓴다.
+   * 캐릭터 상세 같은 보기 전용 구독은 false: 이벤트만 받고 시뮬레이션을 계속 돌리게 하지 않는다.
+   */
+  presence?: boolean;
+};
 
 const frame = (id: bigint | null, type: string, data: unknown) =>
   encoder.encode(`${id === null ? "" : `id: ${id}\n`}event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -48,11 +59,11 @@ async function resolveCursor(worldId: string, raw: string | null): Promise<{ cur
   return { cursor, syncRequired: false };
 }
 
-export async function openWorldStream({ userId, worldId, lastEventId, signal }: StreamOptions): Promise<ReadableStream<Uint8Array>> {
+export async function openWorldStream({ userId, worldId, lastEventId, signal, presence = true }: StreamOptions): Promise<ReadableStream<Uint8Array>> {
   await requireOwnedWorld(userId, worldId);
   const start = await resolveCursor(worldId, lastEventId);
-  const connection = await prisma.sseConnection.create({ data: { worldId, userId, instanceId: INSTANCE_ID }, select: { id: true } });
-  await reconcileClientHold(worldId).catch((e: unknown) => logServerError("sse.hold-release", e)); // 보류 중이면 해제 (RUNNING 유지)
+  const connection = presence ? await prisma.sseConnection.create({ data: { worldId, userId, instanceId: INSTANCE_ID }, select: { id: true } }) : null;
+  if (connection) await reconcileClientHold(worldId).catch((e: unknown) => logServerError("sse.hold-release", e)); // 보류 중이면 해제 (RUNNING 유지)
 
   let cursor = start.cursor;
   let closed = false;
@@ -62,6 +73,7 @@ export async function openWorldStream({ userId, worldId, lastEventId, signal }: 
     if (closed) return;
     closed = true;
     for (const fn of cleanups) fn();
+    if (!connection) return;
     // 마지막 활성 연결이었으면 보류를 시작한다 (다른 탭이 연결돼 있으면 아무것도 바꾸지 않음)
     prisma.sseConnection
       .deleteMany({ where: { id: connection.id } })
@@ -105,6 +117,8 @@ export async function openWorldStream({ userId, worldId, lastEventId, signal }: 
       };
 
       send(encoder.encode("retry: 3000\n\n"));
+      // 이 연결의 ID (outbox 이벤트가 아니므로 id 줄 없이 보낸다). 대화 화면을 떠날 때 이 연결만 정리하는 데 쓴다
+      if (connection) send(frame(null, "stream.ready", { connectionId: connection.id }));
       if (start.syncRequired) send(frame(cursor, "sync.required", {}));
       cleanups.push(subscribeWorld(worldId, drain));
       drain();
@@ -114,6 +128,7 @@ export async function openWorldStream({ userId, worldId, lastEventId, signal }: 
         drain(); // 알림이 유실돼도 따라잡는다
       }, SSE_PING_INTERVAL_MS);
       const heartbeat = setInterval(() => {
+        if (!connection) return;
         prisma.sseConnection
           .updateMany({ where: { id: connection.id }, data: { lastSeenAt: new Date() } })
           .catch((e: unknown) => logServerError("sse.heartbeat", e));

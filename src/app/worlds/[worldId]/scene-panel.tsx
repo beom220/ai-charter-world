@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SCENE_PARTICIPANTS_MIN, SCENE_PLAYBACK_TIMING } from "../../../../config/limits";
+import { speakerHref } from "@/lib/character-form";
 import { anchoredScrollTop, isNearBottom, mergeScenes, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
 import {
   applySimEvent,
@@ -39,7 +41,15 @@ import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 // - 스크롤: 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 
-type Message = { id: string; turnIndex: number; speakerName: string; dialogue: string; actionIntent: string | null; emotionCue: string | null };
+type Message = {
+  id: string;
+  turnIndex: number;
+  speakerCharacterId: string | null;
+  speakerName: string;
+  dialogue: string;
+  actionIntent: string | null;
+  emotionCue: string | null;
+};
 export type SceneItem = { id: string; seq: number; title: string; summary: string; contextTruncated: boolean; messages: Message[] };
 
 type StreamStatus = "connecting" | "open" | "reconnecting" | "closed";
@@ -56,13 +66,19 @@ const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
 export function ScenePanel({
   worldId,
   activeCount,
+  activeCharacterIds,
   initialScenes,
   initialHasMore,
   eventCursor,
   initialState,
+  saveControls,
 }: {
   worldId: string;
   activeCount: number;
+  /** 이 세계관의 활성 캐릭터 ID: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분) */
+  activeCharacterIds: string[];
+  /** 실행 제어 줄에 놓을 [저장]·[불러오기] */
+  saveControls: React.ReactNode;
   initialScenes: SceneItem[];
   initialHasMore: boolean;
   eventCursor: string;
@@ -78,6 +94,7 @@ export function ScenePanel({
   const router = useRouter();
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeIds] = useState(() => new Set(activeCharacterIds));
 
   const scenesRef = useRef(scenes);
   const playbackRef = useRef<ScenePlayback | null>(null);
@@ -110,6 +127,15 @@ export function ScenePanel({
   // 세계관 이벤트 구독. 이 연결은 장면 생성·실행 명령을 시작하지 않는다 (연결 자체가 서버의 연결 보류를 해제할 뿐)
   useEffect(() => {
     const es = new EventSource(`/api/worlds/${worldId}/simulation/stream?lastEventId=${encodeURIComponent(eventCursor)}`);
+    // 이 화면의 연결 ID (서버가 연결 직후 알려 준다). 화면을 떠날 때 이 연결만 정리하도록 보낸다
+    let connectionId: string | null = null;
+    es.addEventListener("stream.ready", (e) => {
+      try {
+        connectionId = (JSON.parse((e as MessageEvent<string>).data) as { connectionId?: string }).connectionId ?? null;
+      } catch {
+        connectionId = null;
+      }
+    });
     es.onopen = () => setStream("open");
     es.onerror = () => {
       setStream(es.readyState === EventSource.CLOSED ? "closed" : "reconnecting");
@@ -146,7 +172,20 @@ export function ScenePanel({
       const { ok, json } = await send(`/api/worlds/${worldId}/scenes`, "GET").catch(() => ({ ok: false, json: null }));
       if (ok) addScenes(json.scenes as SceneItem[], false);
     });
-    return () => es.close();
+    // 대화 화면 이탈(다른 탭·페이지로 이동, 언마운트, <Activity>로 숨김): 연결을 닫고 서버에 알린다.
+    // 서버는 DB 기준으로 이 세계관에 남은 대화 화면 연결이 없을 때만 일시정지한다(다른 탭이 보고 있으면 그대로).
+    // 새로고침·탭 닫기는 여기 오지 않을 수 있으므로 SSE 연결 종료 → 연결 보류(신규 호출 즉시 중단, 60초 뒤 PAUSED)가 맡는다.
+    // 연결 ID를 받기 전(개발 모드 StrictMode의 즉시 cleanup 등)에는 보내지 않는다: 서버에 등록된 적 없는 연결로 일시정지하지 않게.
+    return () => {
+      es.close();
+      if (!connectionId) return;
+      void fetch(`/api/worlds/${worldId}/simulation/leave`, {
+        method: "POST",
+        keepalive: true,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectionId }),
+      }).catch(() => undefined);
+    };
   }, [worldId, eventCursor, addScenes, refreshState, router]);
 
   // 피드 내용이 바뀐 직후(그리기 전) 스크롤 위치를 맞춘다: 이전 기록 추가 → 위치 유지, 하단 근처 → 맨 아래
@@ -282,7 +321,7 @@ export function ScenePanel({
                 ) : (
                   <div key={m.id} className="flex flex-col items-start">
                     <span className="text-sm font-semibold">
-                      {m.speakerName}
+                      <SpeakerName worldId={worldId} message={m} activeIds={activeIds} />
                       {m.emotionCue && <span className="font-normal text-foreground/60"> · {m.emotionCue}</span>}
                     </span>
                     <p className={`${bubble} break-words whitespace-pre-wrap`}>{m.dialogue}</p>
@@ -299,10 +338,21 @@ export function ScenePanel({
       </div>
 
       {activeCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE" ? (
-        <p className="text-sm text-foreground/70">대화하려면 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm text-foreground/70">
+            대화하려면 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
+            <Link href={`/worlds/${worldId}/characters`} className="underline">
+              캐릭터 탭
+            </Link>
+            에서 추가하세요.
+          </p>
+          <span className="ml-auto flex gap-2">{saveControls}</span>
+        </div>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
+            {saveControls}
+            <span aria-hidden className="mx-1 h-5 w-px bg-foreground/15" />
             {controlsFor(view.state.status).map((c) => (
               <button
                 key={c.label}
@@ -369,5 +419,22 @@ export function ScenePanel({
         </p>
       )}
     </section>
+  );
+}
+
+/** 발화자 이름: 이 세계관의 활성 캐릭터면 상세 페이지 링크, 삭제된 캐릭터면 안내만 */
+function SpeakerName({ worldId, message, activeIds }: { worldId: string; message: Message; activeIds: ReadonlySet<string> }) {
+  const href = speakerHref(worldId, message.speakerCharacterId, activeIds);
+  if (href) {
+    return (
+      <Link href={href} className="hover:underline">
+        {message.speakerName}
+      </Link>
+    );
+  }
+  return (
+    <span title="삭제된 캐릭터라 상세 정보를 볼 수 없습니다.">
+      {message.speakerName} <span className="font-normal text-foreground/50">(삭제된 캐릭터)</span>
+    </span>
   );
 }

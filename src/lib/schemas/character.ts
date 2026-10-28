@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   CHARACTER_AGE_MAX,
   CHARACTER_CONTEXT_MAX_LENGTH,
-  CHARACTER_GENDER_CUSTOM_MAX_LENGTH,
   CHARACTER_NAME_MAX_LENGTH,
   PERSONALITY_TAGS_MAX,
   PERSONALITY_TAGS_MIN,
@@ -15,25 +14,26 @@ import { PERSONALITY_TAG_CODES } from "../../../config/personality-map";
 
 export const codePointLength = (s: string) => Array.from(s).length;
 
+/** DB에 있을 수 있는 성별 값 (기존 데이터 호환, 마이그레이션 없음) */
 export const GENDERS = ["MALE", "FEMALE", "NONBINARY", "CUSTOM", "UNSPECIFIED"] as const;
 export type GenderValue = (typeof GENDERS)[number];
-/** AUTO는 입력 전용: 저장 시 서버가 성별을 정한다 */
-export const GENDER_INPUTS = [...GENDERS, "AUTO"] as const;
+/** 신규 생성·수정 요청이 받는 성별 (UI 선택지와 같다). 그 밖의 값은 기존 데이터 표시용으로만 남는다 */
+export const GENDER_INPUTS = ["MALE", "FEMALE"] as const;
+export type GenderInput = (typeof GENDER_INPUTS)[number];
 
-export const GENDER_LABEL: Record<(typeof GENDER_INPUTS)[number], string> = {
-  AUTO: "자동",
-  MALE: "남성",
-  FEMALE: "여성",
+export const GENDER_LABEL: Record<GenderValue, string> = {
+  MALE: "남자",
+  FEMALE: "여자",
   NONBINARY: "논바이너리",
   CUSTOM: "직접 입력",
   UNSPECIFIED: "미지정",
 };
+export const GENDER_REQUIRED_MESSAGE = "성별을 남자 또는 여자 중에서 선택하세요.";
 
 export const CHARACTER_CONTEXT_MESSAGE = `캐릭터 컨텍스트는 최대 ${CHARACTER_CONTEXT_MAX_LENGTH}자입니다.`;
 const NAME_MESSAGE = `이름은 1~${CHARACTER_NAME_MAX_LENGTH}자로 입력하세요.`;
 const TAGS_MESSAGE = `성격 태그를 ${PERSONALITY_TAGS_MIN}~${PERSONALITY_TAGS_MAX}개 선택하세요.`;
 const AGE_MESSAGE = `나이는 0~${CHARACTER_AGE_MAX} 사이 정수이거나 비워 두세요(자동).`;
-const GENDER_CUSTOM_MESSAGE = `직접 입력 성별은 1~${CHARACTER_GENDER_CUSTOM_MAX_LENGTH}자로 입력하세요.`;
 
 export const CHILDHOOD_REQUIRED_MESSAGE = "유년기 배경을 선택하세요.";
 export const ADULTHOOD_REQUIRED_MESSAGE = `${ADULTHOOD_MIN_AGE}세 이상이면 성년기 배경을 선택해야 합니다.`;
@@ -59,8 +59,7 @@ export const characterInputSchema = z
       .string({ error: NAME_MESSAGE })
       .trim()
       .refine((v) => v.length > 0 && codePointLength(v) <= CHARACTER_NAME_MAX_LENGTH, { error: NAME_MESSAGE }),
-    gender: z.enum(GENDER_INPUTS, { error: "성별 값이 올바르지 않습니다." }),
-    genderCustom: z.string().trim().nullish(),
+    gender: z.enum(GENDER_INPUTS, { error: GENDER_REQUIRED_MESSAGE }),
     age: z.number({ error: AGE_MESSAGE }).int({ error: AGE_MESSAGE }).min(0, { error: AGE_MESSAGE }).max(CHARACTER_AGE_MAX, { error: AGE_MESSAGE }).nullable(),
     personalityTags: z
       .array(tagCode)
@@ -81,9 +80,6 @@ export const characterInputSchema = z
       const issue = adulthoodBackgroundIssue(v.age, v.adulthoodBackgroundId);
       if (issue) ctx.addIssue({ code: "custom", path: ["adulthoodBackgroundId"], message: issue });
     }
-    if (v.gender !== "CUSTOM") return;
-    const len = codePointLength(v.genderCustom ?? "");
-    if (len === 0 || len > CHARACTER_GENDER_CUSTOM_MAX_LENGTH) ctx.addIssue({ code: "custom", path: ["genderCustom"], message: GENDER_CUSTOM_MESSAGE });
   });
 
 export type CharacterInput = z.infer<typeof characterInputSchema>;
@@ -95,8 +91,8 @@ export type RandomField = (typeof RANDOM_FIELDS)[number];
 /** 랜덤 초안. 아직 검증 전인 편집 중 값이므로 느슨하게 받는다 */
 export const characterDraftSchema = z.object({
   name: z.string().max(CHARACTER_NAME_MAX_LENGTH * 4).default(""),
-  gender: z.enum(GENDER_INPUTS).default("AUTO"),
-  genderCustom: z.string().max(CHARACTER_GENDER_CUSTOM_MAX_LENGTH * 4).nullish(),
+  /** 편집 중 초안: 아직 고르지 않았으면 null. 기존 캐릭터의 다른 값도 그대로 들고 있을 수 있다(저장 시 남자·여자만 통과) */
+  gender: z.enum(GENDERS).nullable().default(null),
   age: z.number().int().min(0).max(CHARACTER_AGE_MAX).nullable().default(null),
   personalityTags: z.array(z.string().max(64)).max(PERSONALITY_TAG_CODES.length).default([]),
   goal: z.string().max(10_000).default(""),

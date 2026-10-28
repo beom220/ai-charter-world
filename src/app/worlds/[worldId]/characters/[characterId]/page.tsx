@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { BACKGROUND_RARITY_LABEL, BACKGROUND_STAGE_LABEL, findBackground, requiresAdulthood, type BackgroundStage } from "../../../../../../config/character-backgrounds";
 import { BIG_FIVE_LABEL, type BigFiveAxis } from "../../../../../../config/personality-map";
 import { getCurrentSession } from "@/server/auth/session";
-import { getCharacter } from "@/server/domain/characters/characters";
+import { findDeletedCharacterName, getCharacter } from "@/server/domain/characters/characters";
 import { getCharacterInsights } from "@/server/domain/characters/insights";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
 import { CharacterLiveState, type LiveMemory } from "./live-state";
@@ -21,11 +20,9 @@ import { genderText, tagLabel } from "../character-list";
 
 export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/[characterId]">) {
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 p-4 sm:p-8">
-      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
-        <CharacterDetail params={params} />
-      </Suspense>
-    </main>
+    <div className="flex flex-col gap-6">
+      <CharacterDetail params={params} />
+    </div>
   );
 }
 
@@ -43,17 +40,34 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
     eventCursor = await currentWorldEventCursor(userId, worldId); // 이후 장면 커밋은 SSE로 받아 다시 읽는다
     [c, insights] = await Promise.all([getCharacter(userId, worldId, characterId), getCharacterInsights(userId, worldId, characterId)]);
   } catch (error) {
-    if (error instanceof NotFoundError) notFound();
-    throw error;
+    if (!(error instanceof NotFoundError)) throw error;
+    // 대화 속 이름에서 들어왔는데 삭제된 캐릭터면 안내한다. 없거나 타인 소유면 404
+    const deletedName = await findDeletedCharacterName(asAuthenticatedUserId(session.user.id), worldId, characterId);
+    if (deletedName === null) notFound();
+    return (
+      <div className="flex flex-col gap-3">
+        <p role="status" className="rounded-md bg-foreground/5 px-3 py-2 text-sm">
+          <strong>{deletedName}</strong>은(는) 삭제된 캐릭터입니다. 지난 대화의 발언은 남아 있지만 상세 정보는 볼 수 없습니다.
+        </p>
+        <div className="flex gap-3 text-sm">
+          <Link href={`/worlds/${worldId}`} className="underline">
+            ← 대화로
+          </Link>
+          <Link href={`/worlds/${worldId}/characters`} className="underline">
+            캐릭터 목록
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
     <>
-      <Link href={`/worlds/${worldId}`} className="text-sm text-foreground/70 underline">
-        ← 세계관으로
+      <Link href={`/worlds/${worldId}/characters`} className="text-sm text-foreground/70 underline">
+        ← 캐릭터 목록
       </Link>
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold break-all">{c.name}</h1>
+        <h2 className="text-xl font-semibold break-all">{c.name}</h2>
         <p className="text-sm text-foreground/70">
           {genderText(c)} · {c.age ?? "?"}세 · {c.personalityTags.map(tagLabel).join(", ")}
         </p>
@@ -118,7 +132,6 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           initial={{
             name: c.name,
             gender: c.gender,
-            genderCustom: c.genderCustom,
             age: c.age,
             personalityTags: c.personalityTags,
             goal: c.goal,

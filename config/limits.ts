@@ -76,7 +76,7 @@ export const PERSONALITY_TAGS_MAX = 5;
 export const CHARACTER_AGE_MAX = 1000;
 
 /** 랜덤·자동 나이 범위 (성인 기본, 세계관 템플릿 도입 전 공통값) */
-export const RANDOM_ADULT_AGE_RANGE = { min: 20, max: 59 } as const;
+export const RANDOM_ADULT_AGE_RANGE = { min: 20, max: CHARACTER_AGE_MAX } as const;
 
 // ── 대화 장면 생성 (Phase 5-1, architecture.md §6.4·§6.5 StoryMode) ──
 

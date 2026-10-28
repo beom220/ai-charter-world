@@ -1,10 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ADULTHOOD_MIN_AGE, findBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
-import { CHARACTER_CONTEXT_MAX_LENGTH, PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN } from "../../../../../config/limits";
-import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
+import { CHARACTER_AGE_MAX, CHARACTER_CONTEXT_MAX_LENGTH } from "../../../../../config/limits";
+import { EMPTY_CHARACTER_DRAFT } from "@/lib/character-form";
 import {
   adulthoodBackgroundIssue,
   CHILDHOOD_REQUIRED_MESSAGE,
@@ -12,39 +12,43 @@ import {
   codePointLength,
   GENDER_INPUTS,
   GENDER_LABEL,
+  GENDER_REQUIRED_MESSAGE,
   type CharacterDraft,
+  type GenderInput,
   type RandomField,
 } from "@/lib/schemas/character";
 import { button } from "../../ui";
 import { send } from "../../world-form";
 import { BackgroundPicker } from "./background-picker";
+import { PersonalitySelect } from "./personality-select";
 
 // 캐릭터 생성·수정 폼 (PRD FR-04). 🎲 전체 랜덤·항목별 랜덤과 필드 잠금을 지원한다.
 // 잠금은 클라이언트 상태이며 랜덤 요청에 lockedFields로 보낸다(architecture.md §13).
 // 배경(Phase 7-1): 유년기 필수, 성년기는 나이 19세 이상 필수·18세 이하 불가. 나이를 비우면 생성은 성인 자동, 수정은 현재 나이 기준이다.
 // 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비운다. 필수 배경을 고르기 전에는 저장할 수 없다(서버도 같은 규칙으로 거절).
+// 성별은 남자·여자만 고른다. 기존 캐릭터의 다른 값은 표시만 하고 저장하려면 다시 골라야 한다.
+// 생성 화면 상태 초기화: cacheComponents에서 Next.js는 떠난 화면을 <Activity>로 숨겨 상태를 남긴다.
+//   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비워, 다시 들어오면 항상 빈 폼으로 시작한다. 수정 폼은 그대로 둔다.
 
-const input = "rounded-md border border-foreground/20 bg-transparent px-3 py-2";
+const input = "rounded-md border border-foreground/20 bg-background px-3 py-2";
 const small = "rounded border border-foreground/20 px-2 py-0.5 text-xs hover:bg-foreground/5 disabled:opacity-50";
-
-const EMPTY: CharacterDraft = {
-  name: "",
-  gender: "AUTO",
-  genderCustom: null,
-  age: null,
-  personalityTags: [],
-  goal: "",
-  characterContext: "",
-  childhoodBackgroundId: null,
-  adulthoodBackgroundId: null,
-};
 
 export function CharacterForm({ worldId, characterId, initial }: { worldId: string; characterId?: string; initial?: CharacterDraft }) {
   const router = useRouter();
-  const [draft, setDraft] = useState<CharacterDraft>(initial ?? EMPTY);
+  const [draft, setDraft] = useState<CharacterDraft>(initial ?? EMPTY_CHARACTER_DRAFT);
   const [locked, setLocked] = useState<Set<RandomField>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    if (characterId) return;
+    return () => {
+      setDraft(EMPTY_CHARACTER_DRAFT);
+      setLocked(new Set());
+      setNotice(null);
+      setBusy(false);
+    };
+  }, [characterId]);
 
   const set = <K extends keyof CharacterDraft>(key: K, value: CharacterDraft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   /** 저장될 나이: 비우면 생성은 성인 자동, 수정은 현재 나이 */
@@ -84,7 +88,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setNotice(null);
-    if (backgroundProblem) return setNotice({ kind: "error", text: backgroundProblem });
+    if (problem) return setNotice({ kind: "error", text: problem });
     const parsed = characterInputSchema.safeParse(draft);
     if (!parsed.success) return setNotice({ kind: "error", text: parsed.error.issues[0]?.message ?? "입력을 확인하세요." });
 
@@ -127,10 +131,12 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
 
   const contextLength = codePointLength(draft.characterContext);
   const adult = isAdult(draft.age);
-  const ageForRule = effectiveAge(draft.age);
-  const backgroundProblem = !findBackground(draft.childhoodBackgroundId, "CHILDHOOD")
-    ? CHILDHOOD_REQUIRED_MESSAGE
-    : adulthoodBackgroundIssue(ageForRule ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId);
+  const genderChosen = (GENDER_INPUTS as readonly string[]).includes(draft.gender ?? "");
+  const problem = !genderChosen
+    ? GENDER_REQUIRED_MESSAGE
+    : !findBackground(draft.childhoodBackgroundId, "CHILDHOOD")
+      ? CHILDHOOD_REQUIRED_MESSAGE
+      : adulthoodBackgroundIssue(effectiveAge(draft.age) ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId);
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
@@ -149,16 +155,16 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm">
           {header("성별", "gender")}
-          <select className={input} value={draft.gender} onChange={(e) => set("gender", e.target.value as CharacterDraft["gender"])}>
+          <select className={input} value={genderChosen ? (draft.gender ?? "") : ""} onChange={(e) => set("gender", e.target.value as GenderInput)}>
+            <option value="" disabled>
+              {draft.gender && !genderChosen ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}
+            </option>
             {GENDER_INPUTS.map((g) => (
               <option key={g} value={g}>
                 {GENDER_LABEL[g]}
               </option>
             ))}
           </select>
-          {draft.gender === "CUSTOM" && (
-            <input className={input} placeholder="성별 직접 입력" value={draft.genderCustom ?? ""} onChange={(e) => set("genderCustom", e.target.value)} />
-          )}
         </label>
         <label className="flex flex-col gap-1 text-sm">
           {header("나이", "age")}
@@ -166,6 +172,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
             className={input}
             type="number"
             min={0}
+            max={CHARACTER_AGE_MAX}
             placeholder="비우면 자동"
             value={draft.age ?? ""}
             onChange={(e) => setAge(e.target.value === "" ? null : Number(e.target.value))}
@@ -173,46 +180,10 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
         </label>
       </div>
 
-      <fieldset className="flex flex-col gap-2 text-sm">
-        <legend className="mb-1 w-full">
-          {header(`성격 (${draft.personalityTags.length}/${PERSONALITY_TAGS_MIN}~${PERSONALITY_TAGS_MAX}개)`, "personalityTags")}
-        </legend>
-        {PERSONALITY_CATEGORIES.map((category) => (
-          <div key={category} className="flex flex-wrap items-center gap-1.5">
-            <span className="w-16 shrink-0 text-xs text-foreground/60">{category}</span>
-            {PERSONALITY_TAGS.filter((t) => t.category === category).map((t) => {
-              const selected = draft.personalityTags.includes(t.code);
-              const full = !selected && draft.personalityTags.length >= PERSONALITY_TAGS_MAX;
-              return (
-                <button
-                  key={t.code}
-                  type="button"
-                  aria-pressed={selected}
-                  disabled={full}
-                  onClick={() =>
-                    set("personalityTags", selected ? draft.personalityTags.filter((c) => c !== t.code) : [...draft.personalityTags, t.code])
-                  }
-                  className={`rounded-full border px-2.5 py-0.5 text-xs disabled:opacity-40 ${
-                    selected ? "border-foreground bg-foreground text-background" : "border-foreground/20 hover:bg-foreground/5"
-                  }`}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </fieldset>
+      <PersonalitySelect value={draft.personalityTags} onChange={(tags) => set("personalityTags", tags)} controls={controls("personalityTags")} />
 
+      <BackgroundPicker stage="CHILDHOOD" value={draft.childhoodBackgroundId} onChange={(id) => set("childhoodBackgroundId", id)} controls={controls("childhoodBackgroundId")} />
       <BackgroundPicker
-        key={`c-${draft.childhoodBackgroundId ?? "none"}`} // 랜덤으로 바뀌면 그 등급 탭을 연다
-        stage="CHILDHOOD"
-        value={draft.childhoodBackgroundId}
-        onChange={(id) => set("childhoodBackgroundId", id)}
-        controls={controls("childhoodBackgroundId")}
-      />
-      <BackgroundPicker
-        key={`a-${draft.adulthoodBackgroundId ?? "none"}`}
         stage="ADULTHOOD"
         value={draft.adulthoodBackgroundId}
         onChange={(id) => set("adulthoodBackgroundId", id)}
@@ -235,10 +206,10 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       </label>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" className={button} disabled={busy || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || backgroundProblem !== null}>
+        <button type="submit" className={button} disabled={busy || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || problem !== null}>
           {characterId ? "저장" : "만들기"}
         </button>
-        {backgroundProblem && <span className="text-xs text-foreground/60">{backgroundProblem}</span>}
+        {problem && <span className="text-xs text-foreground/60">{problem}</span>}
         {notice && (
           <p role={notice.kind === "error" ? "alert" : "status"} className={notice.kind === "error" ? "text-sm text-red-600" : "text-sm"}>
             {notice.text}

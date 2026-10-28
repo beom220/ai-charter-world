@@ -1,7 +1,7 @@
 import { pickRandomBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
 import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_ADULT_AGE_RANGE } from "../../../../../config/limits";
 import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
-import { RANDOM_FIELDS, type CharacterDraft, type GenderValue, type RandomField } from "@/lib/schemas/character";
+import { GENDER_INPUTS, RANDOM_FIELDS, type CharacterDraft, type GenderInput, type RandomField } from "@/lib/schemas/character";
 import { CONTEXT_TEMPLATES, GOAL_TEMPLATES, NAME_POOL } from "./data";
 
 // 규칙 기반 캐릭터 랜덤 생성 (PRD FR-04, architecture.md §13). 런타임 독립 순수 함수.
@@ -11,9 +11,9 @@ export type Rng = () => number;
 const pick = <T>(items: readonly T[], rng: Rng): T => items[Math.floor(rng() * items.length)]!;
 const intBetween = (min: number, max: number, rng: Rng) => min + Math.floor(rng() * (max - min + 1));
 
-/** 랜덤·자동 성별은 남성·여성·논바이너리 중에서 고른다 */
-export function randomGender(rng: Rng = Math.random): GenderValue {
-  return pick(["MALE", "FEMALE", "NONBINARY"] as const, rng);
+/** 랜덤 성별은 남자·여자 중에서 고른다 (UI 선택지와 같다) */
+export function randomGender(rng: Rng = Math.random): GenderInput {
+  return pick(GENDER_INPUTS, rng);
 }
 
 export function randomAge(rng: Rng = Math.random): number {
@@ -52,10 +52,7 @@ export function randomizeCharacter(
   const targets = new Set((options.fields ?? RANDOM_FIELDS).filter((f) => !locked.has(f)));
   const next: CharacterDraft = { ...draft };
 
-  if (targets.has("gender")) {
-    next.gender = randomGender(rng);
-    next.genderCustom = null;
-  }
+  if (targets.has("gender")) next.gender = randomGender(rng);
   if (targets.has("name")) next.name = randomName(next.gender, rng);
   if (targets.has("age")) next.age = randomAge(rng);
   if (targets.has("personalityTags")) next.personalityTags = randomTags(rng);

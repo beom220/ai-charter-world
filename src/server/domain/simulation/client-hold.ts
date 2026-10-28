@@ -1,6 +1,8 @@
 import { CLIENT_HOLD_TIMEOUT_MS, SSE_CONNECTION_ACTIVE_MS } from "../../../../config/limits";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/client";
+import { requireOwnedWorld } from "@/server/db/scope";
+import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { signalRunner } from "@/server/engine/runner/signal";
 import { notifyWorld } from "@/server/events/event-bus";
 import { publishRuntimeStatus } from "./control";
@@ -13,6 +15,10 @@ import { publishRuntimeStatus } from "./control";
 // - 매번 World 행 잠금 → Runtime 재확인 → 조건부 갱신 → outbox(runtime.status)를 한 트랜잭션에서 한다(잠금 순서 World → Runtime).
 //   연결·해제·만료·사용자 명령이 겹쳐도 World 잠금으로 직렬화되고, 상태가 RUNNING이 아니면 아무것도 바꾸지 않는다
 //   (사용자 PAUSED·IDLE을 덮어쓰지 않고, PAUSED에서 재접속해도 자동 재개하지 않는다). 상태가 그대로면 이벤트도 없다.
+// - 대화 화면 이탈(UI 개선): 화면을 떠난 탭이 leaveConversation을 부르면 그 탭의 연결을 지우고 immediate로 판정한다.
+//   다른 대화 화면 연결이 남아 있으면 아무것도 하지 않고, 없으면 60초를 기다리지 않고 바로 PAUSED/PAUSING(CLIENT_DISCONNECTED)로 보낸다.
+//   새로고침·탭 닫기처럼 이탈 알림이 없는 연결 종료는 기존대로 보류(신규 호출 즉시 중단) → 60초 뒤 PAUSED다.
+//   캐릭터 상세 등 보기 전용 SSE(watch)는 연결 등록부에 기록하지 않으므로 대화 화면 연결로 세지 않는다.
 
 export type ClientHoldResult =
   /** RUNNING이 아님 (보류 정책 대상 아님) */
@@ -31,7 +37,7 @@ export const activeConnectionWhere = (worldId: string, now: Date): Prisma.SseCon
  * 현재 DB 기준으로 보류를 시작·해제·만료 처리한다. SSE 연결·해제 처리기와 Runner(호출 전·진행 중 heartbeat)가 부른다.
  * 바뀐 경우에만 runtime.status를 기록하고 커밋 후 알린다.
  */
-export async function reconcileClientHold(worldId: string, now: Date = new Date()): Promise<ClientHoldResult> {
+export async function reconcileClientHold(worldId: string, now: Date = new Date(), options: { immediate?: boolean } = {}): Promise<ClientHoldResult> {
   const { result, changed } = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
     const rt = await tx.simulationRuntime.findUnique({ where: { worldId }, select: { status: true, clientHoldSince: true, inFlightAttemptId: true } });
@@ -44,13 +50,15 @@ export async function reconcileClientHold(worldId: string, now: Date = new Date(
       await publishRuntimeStatus(tx, worldId);
       return { result: "connected" as const, changed: true };
     }
-    if (rt.clientHoldSince === null) {
+    if (rt.clientHoldSince === null && !options.immediate) {
       // 재시작 후 보류 기록이 없어도 여기서 지금부터 유예를 시작한다 (즉시 PAUSED로 보내지 않음)
       await tx.simulationRuntime.update({ where: { worldId }, data: { clientHoldSince: now } });
       await publishRuntimeStatus(tx, worldId);
       return { result: "held" as const, changed: true };
     }
-    if (now.getTime() - rt.clientHoldSince.getTime() < CLIENT_HOLD_TIMEOUT_MS) return { result: "held" as const, changed: false };
+    if (!options.immediate && rt.clientHoldSince && now.getTime() - rt.clientHoldSince.getTime() < CLIENT_HOLD_TIMEOUT_MS) {
+      return { result: "held" as const, changed: false };
+    }
 
     await tx.simulationRuntime.update({
       where: { worldId },
@@ -66,4 +74,14 @@ export async function reconcileClientHold(worldId: string, now: Date = new Date(
     signalRunner(worldId);
   }
   return result;
+}
+
+/**
+ * 대화 화면 이탈 알림. 이 사용자의 그 연결 행을 지운 뒤(다른 사용자·세계관의 행은 지우지 않음) 남은 대화 화면 연결이 없으면 바로 일시정지한다.
+ * 클라이언트 알림은 힌트일 뿐이고, 판정은 DB의 활성 연결과 실행 상태로 한다. 세계관이 없거나 타인 소유면 NotFoundError.
+ */
+export async function leaveConversation(userId: AuthenticatedUserId, worldId: string, connectionId: string | null, now: Date = new Date()): Promise<ClientHoldResult> {
+  await requireOwnedWorld(userId, worldId);
+  if (connectionId) await prisma.sseConnection.deleteMany({ where: { id: connectionId, worldId, userId } });
+  return reconcileClientHold(worldId, now, { immediate: true });
 }

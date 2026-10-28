@@ -140,7 +140,7 @@ export function statusNotice(state: SimulationStateView): StatusNotice | null {
   if (state.status !== "PAUSED") return null;
   switch (state.statusReason) {
     case "CLIENT_DISCONNECTED":
-      return { tone: "warn", text: "연결이 끊겨 시뮬레이션이 일시정지되었습니다. 재개를 눌러 계속하세요." };
+      return { tone: "warn", text: "대화 화면을 벗어나거나 연결이 끊겨 시뮬레이션이 일시정지되었습니다. 재개를 눌러 계속하세요." };
     case "USAGE_LIMIT":
       return { tone: "warn", text: "오늘의 사용량 한도에 도달했습니다. 한도를 올리거나 자정(한국 시간) 이후에 재개하세요." };
     case "KEY_INVALID":

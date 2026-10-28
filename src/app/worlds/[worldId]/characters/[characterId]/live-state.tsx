@@ -60,7 +60,8 @@ export function CharacterLiveState({
   }, [worldId, characterId]);
 
   useEffect(() => {
-    const es = new EventSource(`/api/worlds/${worldId}/simulation/stream?lastEventId=${encodeURIComponent(eventCursor)}`);
+    // 보기 전용 구독(watch=1): 상세 화면을 보고 있다고 시뮬레이션이 계속 돌지 않게 대화 화면 연결로 세지 않는다
+    const es = new EventSource(`/api/worlds/${worldId}/simulation/stream?watch=1&lastEventId=${encodeURIComponent(eventCursor)}`);
     es.addEventListener("scene.committed", () => void reload());
     es.addEventListener("sync.required", () => void reload());
     es.addEventListener("state.replaced", () => router.refresh());

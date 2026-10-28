@@ -5,7 +5,7 @@ import { prisma } from "@/server/db/client";
 import { BadRequestError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { lockOwnedWorld } from "@/server/domain/worlds";
-import { randomAge, randomGender } from "./random";
+import { randomAge } from "./random";
 
 // 캐릭터 CRUD (PRD FR-04, database.md §6.6·§6.7·§7). 런타임 독립 모듈.
 // - 모든 접근은 world.ownerId 조건을 건다. 없거나 타인 소유이거나 삭제된 캐릭터는 NotFoundError(404).
@@ -86,16 +86,16 @@ function toView(r: Row): CharacterView {
 
 const activeWhere = (userId: AuthenticatedUserId, worldId: string) => ({ worldId, deletedAt: null, world: { ownerId: userId } });
 
-/** 입력 → 저장 값. 성별 AUTO·나이 비움은 저장 시 자동으로 정한다 (architecture.md §13). Big Five는 태그에서 계산한다 */
+/** 입력 → 저장 값. 나이 비움은 저장 시 자동으로 정한다 (architecture.md §13). 성별은 남자·여자만 받는다. Big Five는 태그에서 계산한다 */
 function toData(input: CharacterInput) {
-  const gender = input.gender === "AUTO" ? randomGender() : input.gender;
+  const gender = input.gender;
   const age = input.age ?? randomAge();
   const issue = adulthoodBackgroundIssue(age, input.adulthoodBackgroundId);
   if (issue) throw new BadRequestError(issue);
   return {
     name: input.name,
     gender,
-    genderCustom: gender === "CUSTOM" ? (input.genderCustom ?? null) : null,
+    genderCustom: null,
     age,
     personalityTags: input.personalityTags,
     ...bigFiveFromTags(input.personalityTags),
@@ -125,6 +125,15 @@ export async function getCharacter(userId: AuthenticatedUserId, worldId: string,
   const row = await prisma.character.findFirst({ where: { id: characterId, ...activeWhere(userId, worldId) }, select: viewSelect });
   if (!row) throw new NotFoundError();
   return toView(row);
+}
+
+/** 삭제된(소프트 삭제) 캐릭터의 이름. 소유자 세계관의 삭제된 캐릭터가 아니면 null (안내용) */
+export async function findDeletedCharacterName(userId: AuthenticatedUserId, worldId: string, characterId: string): Promise<string | null> {
+  const row = await prisma.character.findFirst({
+    where: { id: characterId, worldId, deletedAt: { not: null }, world: { ownerId: userId } },
+    select: { name: true },
+  });
+  return row?.name ?? null;
 }
 
 /** 캐릭터 생성 (database.md §6.6). World 행 잠금으로 동시 생성을 직렬화해 활성 6명 상한을 지킨다 */
@@ -161,12 +170,8 @@ export async function updateCharacter(
     const current = await tx.character.findFirst({ where: { id: characterId, worldId, deletedAt: null } });
     if (!current) throw new NotFoundError();
 
-    // 자동 값(AUTO·나이 비움)은 기존 값을 유지한다
-    const data = toData({
-      ...input,
-      gender: input.gender === "AUTO" ? current.gender : input.gender,
-      age: input.age ?? current.age,
-    });
+    // 나이 비움은 기존 값을 유지한다
+    const data = toData({ ...input, age: input.age ?? current.age });
     const same =
       current.name === data.name &&
       current.gender === data.gender &&

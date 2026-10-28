@@ -1,48 +1,31 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { getCurrentSession } from "@/server/auth/session";
+import { listCharacters } from "@/server/domain/characters/characters";
 import { NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
-import { getWorld } from "@/server/domain/worlds";
-import { listCharacters } from "@/server/domain/characters/characters";
-import { CharacterList } from "./characters/character-list";
-import { ScenePanel, type SceneItem } from "./scene-panel";
+import { listSaves } from "@/server/domain/saves/saves";
 import { listScenes } from "@/server/domain/scenes/generate-scene";
 import { getSimulationState } from "@/server/domain/simulation/control";
-import { listSaves } from "@/server/domain/saves/saves";
-import { SavePanel } from "./save-panel";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
-import { LoginRequired, STATUS_LABEL } from "../ui";
-import { DeleteWorldButton, WorldForm } from "../world-form";
+import { button, LoginRequired } from "../ui";
+import { SaveControls } from "./save-panel";
+import { ScenePanel, type SceneItem } from "./scene-panel";
 
-// 세계관 상세·수정 (PRD §6 /worlds/[worldId]). 없거나 타인 소유이면 404.
+// 대화 탭 (/worlds/[worldId], 세계관 진입 시 기본 화면). 대화 장면·실시간 말풍선, 실행 제어·속도, 저장·불러오기.
+// 캐릭터는 /characters, 세계관 설정은 /settings 탭으로 분리했다. 없거나 타인 소유이면 404.
+// 이 화면을 떠나면(탭 이동·다른 페이지·언마운트) 대화 패널이 서버에 알리고, 남은 대화 화면 연결이 없으면 일시정지된다.
 
-export default function WorldPage({ params }: PageProps<"/worlds/[worldId]">) {
-  return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 p-4 sm:p-8">
-      <Link href="/worlds" className="text-sm text-foreground/70 underline">
-        ← 내 세계관
-      </Link>
-      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
-        <WorldDetail params={params} />
-      </Suspense>
-    </main>
-  );
-}
-
-async function WorldDetail({ params }: { params: Promise<{ worldId: string }> }) {
+export default async function WorldConversationPage({ params }: PageProps<"/worlds/[worldId]">) {
   const session = await getCurrentSession();
   if (!session) return <LoginRequired />;
   const { worldId } = await params;
 
   const userId = asAuthenticatedUserId(session.user.id);
-  let world, characters, scenes, eventCursor, simulation, saves;
+  let characters, scenes, eventCursor, simulation, saves;
   try {
     // 커서를 먼저 읽는다: 이후에 커밋된 장면·상태 변경은 SSE로 다시 온다(장면은 id로 중복을 거르고, 상태는 마지막 것이 이긴다)
     eventCursor = await currentWorldEventCursor(userId, worldId);
-    [world, characters, scenes, simulation, saves] = await Promise.all([
-      getWorld(userId, worldId),
+    [characters, scenes, simulation, saves] = await Promise.all([
       listCharacters(userId, worldId),
       listScenes(userId, worldId),
       getSimulationState(userId, worldId),
@@ -54,34 +37,16 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
   }
 
   return (
-    <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold break-all">{world.name}</h1>
-        <p className="text-xs text-foreground/60">
-          {STATUS_LABEL[world.runtimeStatus]} · 만든 날 {world.createdAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
-        </p>
-      </div>
-      <CharacterList worldId={world.id} characters={characters} />
-      <ScenePanel
-        key={`scene-${saves.replaceMarker}`} // 불러오기 뒤에는 새로 마운트해 이전 장면·재생 상태를 버린다
-        worldId={world.id}
-        activeCount={characters.length}
-        initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
-        initialHasMore={scenes.hasMore}
-        eventCursor={eventCursor}
-        initialState={simulation}
-      />
-      <SavePanel key={`saves-${saves.replaceMarker}`} worldId={world.id} initial={saves} />
-      <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
-        <h2 className="text-lg font-semibold">세계관 설정</h2>
-        <WorldForm initial={{ id: world.id, name: world.name, worldContext: world.worldContext }} />
-      </section>
-      <section className="flex flex-col gap-2 border-t border-foreground/10 pt-6">
-        <h2 className="text-sm font-semibold">위험 구역</h2>
-        <div>
-          <DeleteWorldButton worldId={world.id} worldName={world.name} />
-        </div>
-      </section>
-    </>
+    <ScenePanel
+      key={`scene-${saves.replaceMarker}`} // 불러오기 뒤에는 새로 마운트해 이전 장면·재생 상태를 버린다
+      worldId={worldId}
+      activeCount={characters.length}
+      activeCharacterIds={characters.map((c) => c.id)}
+      initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
+      initialHasMore={scenes.hasMore}
+      eventCursor={eventCursor}
+      initialState={simulation}
+      saveControls={<SaveControls key={`saves-${saves.replaceMarker}`} worldId={worldId} initial={saves} buttonClass={button} />}
+    />
   );
 }

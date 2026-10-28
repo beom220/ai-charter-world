@@ -85,7 +85,7 @@ describe("캐릭터 CRUD", () => {
     expect((await RANDOM(req("POST", { body: {} }), worldCtx("w"))).status).toBe(401);
   });
 
-  it("생성: Big Five는 태그에서 계산하고 EmotionState를 초기화하며 changeSeq를 올린다. AUTO 성별·빈 나이는 자동 설정", async () => {
+  it("생성: Big Five는 태그에서 계산하고 EmotionState를 초기화하며 changeSeq를 올린다. 성별은 남자·여자만, 빈 나이는 자동(20~1000)", async () => {
     const { world, cookie } = await setup("char-create");
     const r = await json(await POST(req("POST", { cookie, body: { ...valid(), extraversion: 99, worldId: "other" } }), worldCtx(world.id)));
     expect(r.status).toBe(201);
@@ -93,9 +93,13 @@ describe("캐릭터 CRUD", () => {
     expect(r.body.character.emotion).toEqual({ mood: "NEUTRAL", intensity: 50 });
     expect(await changeSeq(world.id)).toBe(1);
 
-    const auto = await json(await POST(req("POST", { cookie, body: { ...valid("자동"), gender: "AUTO", age: null } }), worldCtx(world.id)));
-    expect(["MALE", "FEMALE", "NONBINARY"]).toContain(auto.body.character.gender);
+    for (const gender of ["AUTO", "NONBINARY", "CUSTOM", "UNSPECIFIED", null]) {
+      expect((await POST(req("POST", { cookie, body: { ...valid("거절"), gender } }), worldCtx(world.id))).status).toBe(400);
+    }
+    const auto = await json(await POST(req("POST", { cookie, body: { ...valid("자동"), gender: "FEMALE", age: null } }), worldCtx(world.id)));
+    expect(auto.body.character.gender).toBe("FEMALE");
     expect(auto.body.character.age).toBeGreaterThanOrEqual(20);
+    expect(auto.body.character.age).toBeLessThanOrEqual(1000);
 
     const list = await json(await LIST(req("GET", { cookie }), worldCtx(world.id)));
     expect(list.body.characters.map((c: { name: string }) => c.name)).toEqual(["도윤", "자동"]);
@@ -221,19 +225,20 @@ describe("캐릭터 CRUD", () => {
 
   it("랜덤: 전체 랜덤·항목별 랜덤 모두 잠긴 필드를 유지하고 DB에는 쓰지 않는다", async () => {
     const { world, cookie } = await setup("char-random");
-    const draft = { name: "고정", gender: "CUSTOM", genderCustom: "엘프", age: 300, personalityTags: ["kind"], goal: "", characterContext: "유지" };
+    const draft = { name: "고정", gender: "FEMALE", age: 300, personalityTags: ["kind"], goal: "", characterContext: "유지" };
 
     const all = await json(
       await RANDOM(req("POST", { cookie, body: { draft, lockedFields: ["name", "gender", "characterContext"] } }), worldCtx(world.id)),
     );
     expect(all.status).toBe(200);
-    expect(all.body.draft).toMatchObject({ name: "고정", gender: "CUSTOM", genderCustom: "엘프", characterContext: "유지" });
+    expect(all.body.draft).toMatchObject({ name: "고정", gender: "FEMALE", characterContext: "유지" });
     expect(all.body.draft.personalityTags.length).toBeGreaterThanOrEqual(3);
     expect(all.body.draft.goal).not.toBe("");
 
     const one = await json(await RANDOM(req("POST", { cookie, body: { draft, fields: ["age", "name"], lockedFields: ["name"] } }), worldCtx(world.id)));
     expect(one.body.draft).toMatchObject({ name: "고정", personalityTags: ["kind"], characterContext: "유지", goal: "" });
-    expect(one.body.draft.age).toBeLessThan(100);
+    expect(one.body.draft.age).toBeGreaterThanOrEqual(20);
+    expect(one.body.draft.age).toBeLessThanOrEqual(1000);
 
     expect(await prisma.character.count({ where: { worldId: world.id } })).toBe(0);
     expect(await changeSeq(world.id)).toBe(0);

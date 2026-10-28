@@ -291,7 +291,7 @@ describe("POST /api/worlds/[worldId]/scenes", () => {
               buffer = buffer.slice(end + 2);
               const field = (k: string) => block.split("\n").find((l) => l.startsWith(`${k}: `))?.slice(k.length + 2) ?? null;
               const event = field("event");
-              if (event) frames.push({ id: field("id"), event, data: field("data") ?? "" });
+              if (event && event !== "stream.ready") frames.push({ id: field("id"), event, data: field("data") ?? "" }); // 연결 ID 알림은 장면 흐름 검증에서 제외
             }
           }
         })();
