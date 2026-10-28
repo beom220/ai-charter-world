@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "@/server/auth/session";
 import { NotFoundError } from "@/server/domain/errors";
@@ -8,7 +9,16 @@ import { DeleteWorldButton, WorldForm } from "../../world-form";
 
 // 세계관 설정 탭 (UI 개선, /worlds/[worldId]/settings): 이름·설명 조회·수정, 삭제. 없거나 타인 소유이면 404.
 
-export default async function WorldSettingsPage({ params }: PageProps<"/worlds/[worldId]/settings">) {
+// cacheComponents: 세션·params·DB를 읽는 부분은 페이지 안의 Suspense 경계에 둔다 (탐색·프리렌더 시 uncached data 오류 방지)
+export default function WorldSettingsPage({ params }: PageProps<"/worlds/[worldId]/settings">) {
+  return (
+    <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+      <WorldSettings params={params} />
+    </Suspense>
+  );
+}
+
+async function WorldSettings({ params }: { params: PageProps<"/worlds/[worldId]/settings">["params"] }) {
   const session = await getCurrentSession();
   if (!session) return <LoginRequired />;
   const { worldId } = await params;

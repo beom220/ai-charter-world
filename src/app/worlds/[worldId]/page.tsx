@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "@/server/auth/session";
 import { listCharacters } from "@/server/domain/characters/characters";
@@ -15,7 +16,16 @@ import { ScenePanel, type SceneItem } from "./scene-panel";
 // 캐릭터는 /characters, 세계관 설정은 /settings 탭으로 분리했다. 없거나 타인 소유이면 404.
 // 이 화면을 떠나면(탭 이동·다른 페이지·언마운트) 대화 패널이 서버에 알리고, 남은 대화 화면 연결이 없으면 일시정지된다.
 
-export default async function WorldConversationPage({ params }: PageProps<"/worlds/[worldId]">) {
+// cacheComponents: 세션·params·DB를 읽는 부분은 페이지 안의 Suspense 경계에 둔다 (탐색·프리렌더 시 uncached data 오류 방지)
+export default function WorldConversationPage({ params }: PageProps<"/worlds/[worldId]">) {
+  return (
+    <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+      <WorldConversation params={params} />
+    </Suspense>
+  );
+}
+
+async function WorldConversation({ params }: { params: PageProps<"/worlds/[worldId]">["params"] }) {
   const session = await getCurrentSession();
   if (!session) return <LoginRequired />;
   const { worldId } = await params;

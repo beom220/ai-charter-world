@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MAX_ACTIVE_CHARACTERS_PER_WORLD } from "../../../../../../config/limits";
@@ -13,7 +14,9 @@ import { CharacterForm } from "../character-form";
 export default function NewCharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/new">) {
   return (
     <div className="flex flex-col gap-6">
-      <NewCharacter params={params} />
+      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+        <NewCharacter params={params} />
+      </Suspense>
     </div>
   );
 }

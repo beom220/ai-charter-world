@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BACKGROUND_RARITY_LABEL, BACKGROUND_STAGE_LABEL, findBackground, requiresAdulthood, type BackgroundStage } from "../../../../../../config/character-backgrounds";
@@ -21,7 +22,9 @@ import { genderText, tagLabel } from "../character-list";
 export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/[characterId]">) {
   return (
     <div className="flex flex-col gap-6">
-      <CharacterDetail params={params} />
+      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+        <CharacterDetail params={params} />
+      </Suspense>
     </div>
   );
 }
