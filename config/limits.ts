@@ -134,3 +134,25 @@ export const SCENE_PLAYBACK_TIMING = {
 
 /** 수동 장면 생성 진행 표시(inFlightAttemptId)가 이 시간보다 오래되면 끝난 것으로 본다 (프로세스 종료 대비) */
 export const SCENE_IN_FLIGHT_STALE_MS = 5 * 60 * 1000;
+
+// ── 자동 실행 Runner (Phase 5-4-2, architecture.md §6.3·§7.4) ──
+
+/** 장면 사이 최소 간격(이전 장면 완료 시점부터). GameState.intervalPreset (확정: 15/5/1초) */
+export const SCENE_INTERVAL_MS = { SLOW: 15_000, NORMAL: 5_000, FAST: 1_000 } as const satisfies Record<"SLOW" | "NORMAL" | "FAST", number>;
+
+/** 실행 lease 유효 시간과 갱신(heartbeat) 간격 (§7.4) */
+export const RUNNER_LEASE_TTL_MS = 30_000;
+export const RUNNER_LEASE_RENEW_MS = 10_000;
+
+/** Runner가 대기 중에도 DB 상태를 다시 읽는 최대 간격 (신호 유실 대비, §7.3) */
+export const RUNNER_POLL_INTERVAL_MS = 2_000;
+
+/** 복구 스위퍼 주기: lease가 비었거나 만료된 RUNNING·PAUSING 세계관을 찾아 Runner를 붙인다 (§7.4) */
+export const RUNNER_SWEEP_INTERVAL_MS = 15_000;
+
+/**
+ * 장면 실패(검증 실패·요청 오류 등)가 이어질 때 다음 시도까지의 간격 상한.
+ * 실패마다 간격(최소 5초)을 두 배로 늘린다. 서킷 브레이커가 다루지 않는 요청 단위 오류의 반복 과금을 줄인다.
+ */
+export const RUNNER_FAILURE_BACKOFF_MIN_MS = 5_000;
+export const RUNNER_FAILURE_BACKOFF_MAX_MS = 5 * 60 * 1000;

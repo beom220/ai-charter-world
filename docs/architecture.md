@@ -486,7 +486,21 @@ stateDiagram-v2
   - lease는 Runner 소유다. 제어 명령은 `PAUSED`·`IDLE`이 될 때만 해제한다. `PAUSING`은 진행 중 장면이 끝나면 `settlePausing`이 `PAUSED`로 마무리한다(현재는 수동 장면 생성의 종료 처리에서 호출).
   - `runtime.status` payload: `status, statusReason, runId, intervalPreset, nextSceneAt, inFlight, held`(held는 5-4-3에서 채움).
 - API: `GET·PATCH /simulation/state`(PATCH `{ intervalPreset }` = 실행 속도, 바뀐 경우에만 `changeSeq += 1`), `POST /simulation/{start,pause,resume,stop}`.
-- 아직 없음: Runner·lease 획득, SSE 연결 보류(`clientHoldSince`), `USAGE_LIMIT`·`KEY_INVALID` 자동 전환(5-4-2·5-4-3).
+- 아직 없음: SSE 연결 보류(`clientHoldSince`), 5-4-3.
+
+**Phase 5-4-2 구현 (자동 실행 Runner)** — `server/engine/runner/`: `host.ts`(InProcessRunnerHost), `world-tick.ts`(세계관 1단계), `schedule.ts`(다음 예약), `signal.ts`
+- 시작·종료: `instrumentation.ts` `register()`(Node runtime, `next build` 단계 제외) → `startRunnerHost()`. `globalThis` 단일 인스턴스라 HMR·중복 호출에도 1개다. 부팅 직후 1회 + 15초마다 스위퍼가 `RUNNING·PAUSING`이고 lease가 비었거나 만료·내 것인 세계관에 Runner를 붙인다. 제어 명령은 커밋 후 `signalRunner(worldId)`만 부른다(없으면 무시). `shutdown()`은 스위퍼 중지 → Runner 중단·대기 → 진행 중 시도가 없는 내 lease 해제. 타이머는 `unref`. 비정상 종료는 lease 만료(30초) 후 스위퍼가 이어받는다.
+- 단계(`runWorldTick`): lease 획득·갱신(조건부 UPDATE) → 남은 진행 중 시도가 있으면 `SCENE_IN_FLIGHT_STALE_MS`(5분, 요청 타임아웃 60초보다 김)까지 새 호출 없이 대기 후 버림(재시도 없음, 다음 장면은 새 `attemptId`) → `PAUSING`이면 `settlePausing` 후 종료 → `nextSceneAt` 대기(최대 2초 폴링, 신호 시 즉시) → `prepareScene` → 시도 기록(조건부 UPDATE: `RUNNING` + 같은 Run + lease 소유 + 진행 중 없음 + 예정 도달) → 요청 직전 재검증(meter 래퍼) → UsageGuard 예약 → Gemini 1회 → 검증 → 커밋 → 종료 처리. 수동 생성과 같은 `prepareScene`·`runSceneAttempt`를 쓴다.
+- 커밋 펜싱(Runner): §6.7대로 `stateVersion`에 더해 `currentRunId`·`leaseOwner`·`inFlightAttemptId`가 이 시도와 같아야 한다. 장면에 `runId`를 기록하고, `SIMULATION` meter에 `runId`를 넘겨 Run 카운터를 누적한다.
+- 잠금 순서: 장면 커밋·Runner 종료 처리·`settlePausing`도 World → GameState → Runtime 순으로 잡는다(장면·outbox INSERT의 World FK 잠금과 제어 명령의 World `FOR UPDATE`가 교착되지 않게).
+- 종료 처리(한 트랜잭션): 진행 중 표시 해제 + 다음 예약 또는 일시정지 + outbox `runtime.status`, 이어서 `settlePausing`.
+  - 성공: `nextSceneAt = 완료 시각 + max(설정 간격, 발언 수 × (쉼 900ms + 입력 중 3초))`(재생 시간 백프레셔, 브라우저 신호는 기다리지 않음). 속도는 종료 시점의 `intervalPreset`을 쓴다.
+  - 실패(검증·요청 오류·참가자 부족 등): 상태는 `RUNNING` 유지, 같은 요청을 다시 보내지 않는다. 간격 max(설정, 5초)에서 연속 실패마다 2배, 최대 5분(`RUNNER_FAILURE_BACKOFF_*`, 프로세스 메모리 카운터).
+  - 브레이커 열림(`CircuitOpenError`): `RUNNING` 유지, `max(간격, blockedUntil)`.
+  - 일일 한도(`UsageLimitError`) → `PAUSED(USAGE_LIMIT)`. 연결 미준비·삭제·키 무효(`KEY_INVALID`·`PERMISSION_DENIED`) → `PAUSED(KEY_INVALID)`. 둘 다 lease 해제, 자동 재개 없음.
+  - 요청 전 중단(일시정지·종료·lease 상실, 키 교체): 외부 호출 없음, 실패로 세지 않음.
+- 수동 생성(`POST /scenes`)은 기존대로 `IDLE`·`PAUSED`에서만 점유하므로 `RUNNING`·`PAUSING`에서는 409 `SCENE_IN_PROGRESS`다.
+- 아직 없음(5-4-3): SSE 연결 보류·60초 `PAUSED`, `scene.started`·`scene.failed`, 진행 중 호출 `AbortController` 취소(현재는 펜싱만), outbox 정리, Worker 분리.
 
 ### 7.3 취소 (D5)
 

@@ -6,14 +6,15 @@ import { ConflictError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { requireUsableGeminiConnection } from "@/server/domain/providers/gemini-verification";
 import { lockOwnedWorld } from "@/server/domain/worlds";
+import { signalRunner } from "@/server/engine/runner/signal";
 import { decideTransition, type SimulationCommand } from "@/server/engine/runner/transitions";
 import { assertDailyUsageAvailable } from "@/server/engine/usage/usage-guard";
 import { notifyWorld, publishEvents } from "@/server/events/event-bus";
 import { logServerError } from "@/server/logging/log";
 
 // 시뮬레이션 실행 제어 (architecture.md §7.1·§7.2, Phase 5-4-1). 런타임 독립.
-// - 상태의 기준은 SimulationRuntime 행이다. 이 단계는 상태만 바꾸며 Runner·Gemini 호출을 시작하지 않는다.
-//   RUNNING은 "실행해도 된다"는 허가 상태이고, 실제 루프는 Phase 5-4-2에서 붙는다.
+// - 상태의 기준은 SimulationRuntime 행이다. 명령은 상태만 바꾸고 RunnerHost에 신호(signalRunner)만 보낸다.
+//   RUNNING은 "실행해도 된다"는 허가 상태이고, 실제 장면 생성은 Runner(engine/runner, Phase 5-4-2)가 한다.
 // - 명령마다 한 트랜잭션: World 행 잠금(같은 세계관 명령 직렬화) → [stop: GameState 잠금] → 상태 전이 → outbox(runtime.status).
 //   커밋 후 SSE 구독자에게 알린다. 같은 명령의 반복·동시 요청은 noop으로 200과 현재 상태를 돌려준다.
 // - lease(leaseOwner·leaseExpiresAt)는 Runner 소유다. 여기서는 PAUSED·IDLE이 될 때만 해제한다(§7.4 "해제").
@@ -55,8 +56,8 @@ async function readState(db: Tx | typeof prisma, worldId: string): Promise<Simul
   };
 }
 
-/** 현재 상태를 outbox에 기록한다 (트랜잭션 안) */
-async function publishState(tx: Tx, worldId: string): Promise<SimulationStateView> {
+/** 현재 상태를 outbox(runtime.status)에 기록한다 (트랜잭션 안). Runner도 쓴다 */
+export async function publishRuntimeStatus(tx: Tx, worldId: string): Promise<SimulationStateView> {
   const state = await readState(tx, worldId);
   await publishEvents(tx, worldId, [{ type: "runtime.status", payload: state }]);
   return state;
@@ -118,9 +119,12 @@ export async function runSimulationCommand(
         data: { status: "IDLE", statusReason: "USER", currentRunId: null, clientHoldSince: null, ...released },
       });
     }
-    return { state: await publishState(tx, worldId), changed: true };
+    return { state: await publishRuntimeStatus(tx, worldId), changed: true };
   });
-  if (result.changed) notifyWorld(worldId);
+  if (result.changed) {
+    notifyWorld(worldId);
+    signalRunner(worldId); // 루프를 직접 조작하지 않고 RunnerHost에 알리기만 한다 (§7.2)
+  }
   return result;
 }
 
@@ -137,7 +141,7 @@ export async function updateSimulationSettings(
       data: { intervalPreset, changeSeq: { increment: 1 } },
     });
     if (updated.count === 0) return { state: await readState(tx, worldId), changed: false };
-    return { state: await publishState(tx, worldId), changed: true };
+    return { state: await publishRuntimeStatus(tx, worldId), changed: true };
   });
   if (result.changed) notifyWorld(worldId);
   return result;
@@ -150,12 +154,13 @@ export async function updateSimulationSettings(
 export async function settlePausing(worldId: string): Promise<void> {
   try {
     const done = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`; // 잠금 순서 World → Runtime (제어 명령과 같음)
       const moved = await tx.simulationRuntime.updateMany({
         where: { worldId, status: "PAUSING", inFlightAttemptId: null },
         data: { status: "PAUSED", leaseOwner: null, leaseExpiresAt: null, nextSceneAt: null },
       });
       if (moved.count === 0) return false;
-      await publishState(tx, worldId);
+      await publishRuntimeStatus(tx, worldId);
       return true;
     });
     if (done) notifyWorld(worldId);
