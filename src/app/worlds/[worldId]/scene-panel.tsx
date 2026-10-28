@@ -25,7 +25,7 @@ import { button, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 import { worldCalendar } from "@/lib/world-clock";
-import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
+import { SceneNotes, WorldClock, WorldEvents, type WorldEventsHandle } from "./world-status";
 import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
@@ -41,7 +41,8 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 // - SSE(scene.committed) 또는 POST 응답으로 새 장면이 오면 장면 id로 한 번만 넣고, ScenePlayback 큐로
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
-// - 하단 고정 바(뮤직 앱 재생 바처럼): 실행 버튼(시작·일시정지·재개·종료)과 [속도](모달에서 선택), 맨 오른쪽 [저장]·[불러오기], 생성 중 표시.
+// - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 실행 버튼(시작·일시정지·재개·종료)과 [속도](모달에서 선택),
+//   오른쪽 [사건 일으키기]·[저장]·[불러오기], 생성 중 표시.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
@@ -134,6 +135,7 @@ export function ScenePanel({
   const playbackRef = useRef<ScenePlayback | null>(null);
   const stickRef = useRef(true); // 하단 근처인가 (사용자 스크롤로 갱신)
   const speedDialog = useRef<HTMLDialogElement>(null);
+  const eventsRef = useRef<WorldEventsHandle>(null);
   const anchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null); // 이전 기록 추가 직전 위치
 
   useEffect(() => {
@@ -336,7 +338,7 @@ export function ScenePanel({
         </span>
       </div>
       <WorldClock clock={view.state.worldClock} startDate={worldStartDate} />
-      <WorldEvents worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
+      <WorldEvents ref={eventsRef} worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
 
       <div className="flex min-h-40 flex-col gap-3 rounded-md bg-foreground/[0.02] p-3">
         {hasMore && (
@@ -416,13 +418,13 @@ export function ScenePanel({
           </p>
         )
       )}
-      {/* 하단 고정 바(뮤직 앱 재생 바처럼): 왼쪽 실행 버튼·[속도], 맨 오른쪽 [저장]·[불러오기]. 본문 너비(max-w-3xl)에 맞춘다 */}
+      {/* 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 실행 버튼·[속도], 오른쪽 [사건 일으키기]·[저장]·[불러오기] */}
       <div
         role="region"
         aria-label="실행 컨트롤"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-foreground/10 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
       >
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-4 py-3 sm:px-8">
+        <div className="flex w-full flex-wrap items-center gap-2 px-4 py-3 sm:px-6">
           {!lacksCharacters && (
             <>
               {controlsFor(view.state.status).map((c) => (
@@ -441,7 +443,12 @@ export function ScenePanel({
               </button>
             </>
           )}
-          <span className="ml-auto flex gap-2">{saveControls}</span>
+          <span className="ml-auto flex flex-wrap gap-2">
+            <button type="button" className={button} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
+              사건 일으키기
+            </button>
+            {saveControls}
+          </span>
           {generating && (
             <p role="status" className="w-full truncate text-xs text-foreground/70">
               {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과

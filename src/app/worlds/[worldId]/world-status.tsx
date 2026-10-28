@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { USER_EVENT_PENDING_MAX, USER_EVENT_TEXT_MAX_LENGTH } from "../../../../config/limits";
 import { userEventTextLength } from "@/lib/schemas/world-event";
 import { noteText, noteTone, type NoteTone, type SceneNote } from "@/lib/scene-notes";
@@ -12,7 +12,7 @@ import { send } from "../world-form";
 // - 월드 시각: 서버 상태(worldClock: asOf 시각의 월드 초·흐르는 중)에서 지금까지를 계산해 1초마다 표시한다.
 //   폴링·SSE·재연결로 새 값이 와도 화면 값은 뒤로 가지 않는다(서버 값이 더 크면 따라간다).
 // - 사건(7-2-3): 사건은 장면에 한 번 일어나며 발생 배너는 그 장면에만 보인다(진행 중 사건 목록 없음).
-//   [사건 일으키기] 모달, 대기 목록·취소.
+//   [사건 일으키기] 모달(버튼은 하단 고정 바, ref.open()), 대기 목록·취소.
 // - 사건·상태 메시지(7-4): 자동·사용자 사건은 같은 파란 테두리, 호전 초록, 악화 주홍, 사망 검정. 분류는 @/lib/scene-notes.
 
 type Clock = { seconds: number; running: boolean; asOf: string };
@@ -50,7 +50,10 @@ const newRequestId = () => crypto.randomUUID();
  * 목록은 서버 기준이다. 등록·취소·장면 시작/커밋/실패·world_event.updated(SSE)·재연결 때(refreshKey) 다시 읽는다.
  * 같은 입력을 다시 보내면(네트워크 오류 후 재시도) 같은 requestId를 써서 중복 등록되지 않는다. 등록에 성공하면 새 requestId를 만든다.
  */
-export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshKey: string }) {
+export type WorldEventsHandle = { open: () => void };
+
+/** [사건 일으키기] 버튼은 대화 화면 하단 고정 바에 있고, ref.open()으로 이 모달을 연다 */
+export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; refreshKey: string; ref?: Ref<WorldEventsHandle> }) {
   const [pending, setPending] = useState<PendingEvent[]>([]);
   const [reload, setReload] = useState(0);
   const [text, setText] = useState("");
@@ -58,6 +61,12 @@ export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshK
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "error" | "ok"; text: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  useImperativeHandle(ref, () => ({
+    open: () => {
+      setMessage(null);
+      dialog.current?.showModal();
+    },
+  }));
 
   useEffect(() => {
     let alive = true;
@@ -132,22 +141,9 @@ export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshK
 
   return (
     <>
-      <div className="flex items-center justify-end gap-2">
-        {pending.length > 0 && <span className="text-xs text-foreground/60">대기 중 사건 {pending.length}개</span>}
-        <button
-          type="button"
-          className={button}
-          onClick={() => {
-            setMessage(null);
-            dialog.current?.showModal();
-          }}
-        >
-          사건 일으키기
-        </button>
-      </div>
       {pending.length > 0 && (
         <div className="rounded-md border border-sky-600/30 bg-sky-600/5 px-3 py-2 text-sm" aria-label="대기 중 사건">
-          <p className="text-xs font-semibold text-foreground/70">대기 중 사건 (다음 장면부터 등록 순서대로 하나씩 일어남)</p>
+          <p className="text-xs font-semibold text-foreground/70">대기 중 사건 {pending.length}개 (다음 장면부터 등록 순서대로 하나씩 일어남)</p>
           {pendingList}
         </div>
       )}
