@@ -42,7 +42,7 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
 // - 실행 컨트롤(시작·일시정지·재개·종료·속도)과 생성 중 표시는 화면 하단 고정 바에 둔다(뮤직 앱 재생 바처럼). 세이브 버튼은 본문에 남는다.
-// - 스크롤: 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
+// - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
 //   중앙 말풍선으로 보여 준다(7-4: 분류별 테두리, 라벨 없음). 사건 발생은 장면 대사 앞, 상태 변화(과거 기록의 사건 해결 포함)는 장면 대사가 모두 공개된 뒤에 보인다.
@@ -50,6 +50,9 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 //   SSE, 재연결 때 서버에서 다시 읽는다. 자동·사용자 사건은 같은 디자인이다.
 // - 월드 날짜: 각 발언의 부연설명(actionIntent) 아래에 그 장면의 월드 시각("yyyy-mm-dd hh:mm", 시작일 = 세계관 생성일 KST가 Day 0)을 붙이고, 피드에서 월드 날짜가
 //   바뀌는 장면(피드 첫 장면 포함) 앞에 "Day N" 구분선을 넣는다. 월드 시각이 없는 7-2-2 이전 장면은 표시하지 않는다.
+
+/** 피드가 쓰는 스크롤 영역 = 페이지 */
+const pageScroller = () => document.scrollingElement ?? document.documentElement;
 
 type Message = {
   id: string;
@@ -129,7 +132,6 @@ export function ScenePanel({
 
   const scenesRef = useRef(scenes);
   const playbackRef = useRef<ScenePlayback | null>(null);
-  const feedRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true); // 하단 근처인가 (사용자 스크롤로 갱신)
   const anchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null); // 이전 기록 추가 직전 위치
 
@@ -233,10 +235,16 @@ export function ScenePanel({
     };
   }, [worldId, eventCursor, addScenes, refreshState, refreshCharacters, router]);
 
+  // 피드는 자체 스크롤 없이 페이지 스크롤을 쓴다(실행 컨트롤이 하단 고정 바이므로). 사용자 스크롤로 하단 근처 여부를 갱신한다
+  useEffect(() => {
+    const onScroll = () => (stickRef.current = isNearBottom(pageScroller()));
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   // 피드 내용이 바뀐 직후(그리기 전) 스크롤 위치를 맞춘다: 이전 기록 추가 → 위치 유지, 하단 근처 → 맨 아래
   useLayoutEffect(() => {
-    const el = feedRef.current;
-    if (!el) return;
+    const el = pageScroller();
     if (anchorRef.current) {
       el.scrollTop = anchoredScrollTop(anchorRef.current, el.scrollHeight);
       anchorRef.current = null;
@@ -261,8 +269,8 @@ export function ScenePanel({
     try {
       const { ok, json } = await send(`/api/worlds/${worldId}/scenes?before=${oldest.seq}`, "GET");
       if (!ok) return setError(json?.error?.message ?? "이전 기록을 불러오지 못했습니다.");
-      const el = feedRef.current;
-      if (el) anchorRef.current = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight };
+      const el = pageScroller();
+      anchorRef.current = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight };
       addScenes(json.scenes as SceneItem[], false);
       setHasMore(json.hasMore);
     } catch {
@@ -328,11 +336,7 @@ export function ScenePanel({
       <WorldClock clock={view.state.worldClock} startDate={worldStartDate} />
       <WorldEvents worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
 
-      <div
-        ref={feedRef}
-        onScroll={(e) => (stickRef.current = isNearBottom(e.currentTarget))}
-        className="flex max-h-[65vh] min-h-40 flex-col gap-3 overflow-y-auto rounded-md bg-foreground/[0.02] p-3"
-      >
+      <div className="flex min-h-40 flex-col gap-3 rounded-md bg-foreground/[0.02] p-3">
         {hasMore && (
           <div className="flex justify-center">
             <button type="button" className="text-xs text-foreground/70 underline disabled:opacity-50" onClick={loadMore} disabled={loadingMore}>
