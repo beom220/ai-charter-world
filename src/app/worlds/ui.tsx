@@ -5,6 +5,12 @@ import Link from "next/link";
 export const button =
   "rounded-md border border-foreground/20 px-4 py-2 text-sm font-medium hover:bg-foreground/5 disabled:opacity-50";
 
+// 대화 화면 하단 고정 바의 색 버튼: 사건 일으키기(파랑, 사건 메시지 색), 저장(초록), 불러오기(보라)
+const solid = "rounded-md px-3 py-2 text-sm font-medium text-white disabled:opacity-50 sm:px-4";
+export const eventButton = `${solid} bg-[#3B82F6] hover:bg-[#2563EB]`;
+export const saveButton = `${solid} bg-[#16A34A] hover:bg-[#15803D]`;
+export const loadButton = `${solid} bg-[#7C3AED] hover:bg-[#6D28D9]`;
+
 export function LoginRequired() {
   return (
     <p className="text-sm">

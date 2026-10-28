@@ -21,7 +21,7 @@ import {
   type SimulationStateView,
   type SimulationView,
 } from "@/lib/simulation-view";
-import { button, STATUS_LABEL } from "../ui";
+import { eventButton, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 import { worldCalendar } from "@/lib/world-clock";
@@ -41,8 +41,8 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 // - SSE(scene.committed) 또는 POST 응답으로 새 장면이 오면 장면 id로 한 번만 넣고, ScenePlayback 큐로
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
-// - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 실행 버튼(시작·일시정지·재개·종료)과 [속도](모달에서 선택),
-//   오른쪽 [사건 일으키기]·[저장]·[불러오기], 생성 중 표시.
+// - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행 아이콘(시작·일시정지·재개·종료)과
+//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기], 생성 중 표시.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
@@ -418,39 +418,52 @@ export function ScenePanel({
           </p>
         )
       )}
-      {/* 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 실행 버튼·[속도], 오른쪽 [사건 일으키기]·[저장]·[불러오기] */}
+      {/* 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행·속도 아이콘, 오른쪽 [저장]·[불러오기] */}
       <div
         role="region"
         aria-label="실행 컨트롤"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-foreground/10 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
       >
-        <div className="flex w-full flex-wrap items-center gap-2 px-4 py-3 sm:px-6">
-          {!lacksCharacters && (
-            <>
-              {controlsFor(view.state.status).map((c) => (
-                <button
-                  key={c.label}
-                  type="button"
-                  className={button}
-                  disabled={c.command === null || pending}
-                  onClick={() => c.command && void runCommand(c.command)}
-                >
-                  {c.label}
-                </button>
-              ))}
-              <button type="button" className={button} disabled={pending} onClick={() => speedDialog.current?.showModal()} aria-haspopup="dialog">
-                속도 · {INTERVAL_LABEL[view.state.intervalPreset]}
-              </button>
-            </>
-          )}
-          <span className="ml-auto flex flex-wrap gap-2">
-            <button type="button" className={button} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
+        {/* 모바일: 위 줄 가운데 실행 아이콘, 아래 줄 좌우 버튼. sm 이상: 왼쪽 | 가운데 | 오른쪽 한 줄 */}
+        <div className="grid w-full grid-cols-2 items-center gap-2 px-4 py-3 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
+          <span className="justify-self-start">
+            <button type="button" className={eventButton} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
               사건 일으키기
             </button>
-            {saveControls}
           </span>
+          <span className="order-first col-span-2 flex items-center justify-center gap-2 sm:order-none sm:col-span-1">
+            {!lacksCharacters && (
+              <>
+                {controlsFor(view.state.status).map((c) => (
+                  <button
+                    key={c.label}
+                    type="button"
+                    aria-label={controlText(c.label)}
+                    title={controlText(c.label)}
+                    className={c.command === "start" || c.command === "resume" ? playButton : iconButton}
+                    disabled={c.command === null || pending}
+                    onClick={() => c.command && void runCommand(c.command)}
+                  >
+                    <ControlIcon command={c.command} />
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  aria-label={`실행 속도: ${INTERVAL_LABEL[view.state.intervalPreset]}`}
+                  title={`실행 속도: ${INTERVAL_LABEL[view.state.intervalPreset]}`}
+                  className={iconButton}
+                  disabled={pending}
+                  onClick={() => speedDialog.current?.showModal()}
+                  aria-haspopup="dialog"
+                >
+                  <SpeedIcon />
+                </button>
+              </>
+            )}
+          </span>
+          <span className="flex justify-self-end gap-2">{saveControls}</span>
           {generating && (
-            <p role="status" className="w-full truncate text-xs text-foreground/70">
+            <p role="status" className="col-span-2 truncate text-center text-xs text-foreground/70 sm:col-span-3">
               {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
             </p>
           )}
@@ -534,5 +547,29 @@ function SpeakerName({ worldId, message, activeIds }: { worldId: string; message
     <span title="삭제된 캐릭터라 상세 정보를 볼 수 없습니다.">
       {message.speakerName} <span className="font-normal text-foreground/50">(삭제된 캐릭터)</span>
     </span>
+  );
+}
+
+// ── 하단 고정 바 아이콘 (패키지 없이 인라인 SVG)
+const iconButton =
+  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 text-foreground hover:bg-foreground/5 disabled:opacity-50";
+const playButton = "flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 disabled:opacity-50";
+
+/** 버튼 라벨("▶ 재개")에서 기호를 뺀 접근성 이름 */
+const controlText = (label: string) => label.replace(/^[^\p{L}]+/u, "");
+
+function ControlIcon({ command }: { command: SimulationCommand | null }) {
+  const props = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "currentColor", "aria-hidden": true } as const;
+  if (command === "start" || command === "resume") return <svg {...props}><path d="M8 5v14l11-7z" /></svg>;
+  if (command === "stop") return <svg {...props}><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>;
+  return <svg {...props}><path d="M6 5h4v14H6zM14 5h4v14h-4z" /></svg>; // pause, 일시정지 중(비활성)
+}
+
+function SpeedIcon() {
+  return (
+    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m12 14 4-4" />
+      <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+    </svg>
   );
 }

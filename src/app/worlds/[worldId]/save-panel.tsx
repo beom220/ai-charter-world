@@ -20,7 +20,7 @@ const when = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZone: 
 const small = "rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-foreground/5 disabled:opacity-50";
 const LOAD_BLOCKED = "시뮬레이션 종료 후 불러올 수 있습니다.";
 
-export function SaveControls({ worldId, initial, buttonClass }: { worldId: string; initial: SaveList; buttonClass: string }) {
+export function SaveControls({ worldId, initial, saveClass, loadClass }: { worldId: string; initial: SaveList; saveClass: string; loadClass: string }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const [mode, setMode] = useState<"save" | "load">("save");
@@ -173,10 +173,10 @@ export function SaveControls({ worldId, initial, buttonClass }: { worldId: strin
 
   return (
     <>
-      <button type="button" className={buttonClass} onClick={() => open("save")}>
+      <button type="button" className={saveClass} onClick={() => open("save")}>
         저장
       </button>
-      <button type="button" className={buttonClass} onClick={() => open("load")}>
+      <button type="button" className={loadClass} onClick={() => open("load")}>
         불러오기
       </button>
 

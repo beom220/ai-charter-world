@@ -10,7 +10,7 @@ import { getSimulationState } from "@/server/domain/simulation/control";
 import { getWorld } from "@/server/domain/worlds";
 import { worldStartDate } from "@/lib/world-clock";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
-import { button, LoginRequired } from "../ui";
+import { loadButton, LoginRequired, saveButton } from "../ui";
 import { SaveControls } from "./save-panel";
 import { ScenePanel, type SceneItem } from "./scene-panel";
 
@@ -59,7 +59,7 @@ async function WorldConversation({ params }: { params: PageProps<"/worlds/[world
       initialHasMore={scenes.hasMore}
       eventCursor={eventCursor}
       initialState={simulation}
-      saveControls={<SaveControls key={`saves-${saves.replaceMarker}`} worldId={worldId} initial={saves} buttonClass={button} />}
+      saveControls={<SaveControls key={`saves-${saves.replaceMarker}`} worldId={worldId} initial={saves} saveClass={saveButton} loadClass={loadButton} />}
     />
   );
 }
