@@ -112,7 +112,12 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         characterId={c.id}
         characterName={c.name}
         eventCursor={eventCursor}
-        initial={{ emotion: c.emotion, relations: insights.relations, memories: JSON.parse(JSON.stringify(insights.memories)) as LiveMemory[] }}
+        initial={{
+          emotion: c.emotion,
+          condition: c.condition,
+          relations: insights.relations,
+          memories: JSON.parse(JSON.stringify(insights.memories)) as LiveMemory[],
+        }}
       >
         <section className={panel}>
           <h2 className="text-sm font-semibold">성격 수치</h2>
@@ -127,6 +132,11 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         </section>
       </CharacterLiveState>
 
+      {c.condition.vital === "DEAD" ? (
+        <p role="status" className="rounded-md border border-red-600/40 bg-red-600/5 px-3 py-2 text-sm">
+          사망한 캐릭터는 설정을 수정하거나 대화에 참가시킬 수 없습니다. 캐릭터 슬롯은 계속 차지하며, 지난 대화·기억·관계 기록은 남습니다.
+        </p>
+      ) : (
       <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
         <h2 className="text-lg font-semibold">설정 수정</h2>
         <CharacterForm
@@ -144,6 +154,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           }}
         />
       </section>
+      )}
 
       <section className="flex flex-col gap-2 border-t border-foreground/10 pt-6">
         <ConfirmDeleteButton

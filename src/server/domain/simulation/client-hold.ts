@@ -6,6 +6,7 @@ import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { signalRunner } from "@/server/engine/runner/signal";
 import { notifyWorld } from "@/server/events/event-bus";
 import { publishRuntimeStatus } from "./control";
+import { settleWorldClock, startWorldClock } from "./world-clock";
 
 // SSE 연결 보류 (architecture.md §7.5 D4, Phase 5-4-3). 런타임 독립. 연결 상태의 기준은 DB(SseConnection)다.
 // - 활성 연결 = lastSeenAt이 SSE_CONNECTION_ACTIVE_MS(30초) 이내인 행. 비정상 종료·재시작으로 남은 행은 30초 뒤 비활성이다.
@@ -19,6 +20,7 @@ import { publishRuntimeStatus } from "./control";
 //   다른 대화 화면 연결이 남아 있으면 아무것도 하지 않고, 없으면 60초를 기다리지 않고 바로 PAUSED/PAUSING(CLIENT_DISCONNECTED)로 보낸다.
 //   새로고침·탭 닫기처럼 이탈 알림이 없는 연결 종료는 기존대로 보류(신규 호출 즉시 중단) → 60초 뒤 PAUSED다.
 //   캐릭터 상세 등 보기 전용 SSE(watch)는 연결 등록부에 기록하지 않으므로 대화 화면 연결로 세지 않는다.
+// - 월드 시계(Phase 7-2-2): 보류가 시작되면 정산해 멈추고(연결 끊김 동안 흐르지 않음), 보류가 풀리면 다시 흐르게 한다.
 
 export type ClientHoldResult =
   /** RUNNING이 아님 (보류 정책 대상 아님) */
@@ -47,26 +49,29 @@ export async function reconcileClientHold(worldId: string, now: Date = new Date(
     if (active > 0) {
       if (rt.clientHoldSince === null) return { result: "connected" as const, changed: false };
       await tx.simulationRuntime.update({ where: { worldId }, data: { clientHoldSince: null } });
-      await publishRuntimeStatus(tx, worldId);
+      await startWorldClock(tx, worldId, now);
+      await publishRuntimeStatus(tx, worldId, now);
       return { result: "connected" as const, changed: true };
     }
     if (rt.clientHoldSince === null && !options.immediate) {
       // 재시작 후 보류 기록이 없어도 여기서 지금부터 유예를 시작한다 (즉시 PAUSED로 보내지 않음)
+      await settleWorldClock(tx, worldId, now, "stop");
       await tx.simulationRuntime.update({ where: { worldId }, data: { clientHoldSince: now } });
-      await publishRuntimeStatus(tx, worldId);
+      await publishRuntimeStatus(tx, worldId, now);
       return { result: "held" as const, changed: true };
     }
     if (!options.immediate && rt.clientHoldSince && now.getTime() - rt.clientHoldSince.getTime() < CLIENT_HOLD_TIMEOUT_MS) {
       return { result: "held" as const, changed: false };
     }
 
+    await settleWorldClock(tx, worldId, now, "stop"); // 바로 일시정지(이탈 알림)면 여기서 멈춘다. 보류 뒤라면 이미 멈춰 있다
     await tx.simulationRuntime.update({
       where: { worldId },
       data: rt.inFlightAttemptId
         ? { status: "PAUSING", statusReason: "CLIENT_DISCONNECTED", clientHoldSince: null } // 진행 중 장면은 취소하지 않고 마친 뒤 PAUSED
         : { status: "PAUSED", statusReason: "CLIENT_DISCONNECTED", clientHoldSince: null, leaseOwner: null, leaseExpiresAt: null, nextSceneAt: null },
     });
-    await publishRuntimeStatus(tx, worldId);
+    await publishRuntimeStatus(tx, worldId, now);
     return { result: "paused" as const, changed: true };
   });
   if (changed) {

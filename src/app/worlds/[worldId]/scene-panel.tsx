@@ -24,6 +24,7 @@ import {
 import { button, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
+import { ActiveEvents, SceneNotes, WorldClock } from "./world-status";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
 // - 실행 상태의 기준은 서버 SimulationRuntime이다. 버튼은 start/pause/resume/stop API만 부르고, 화면 상태는 응답과
@@ -40,6 +41,8 @@ import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
 // - 스크롤: 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
+// - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 진행 중 사건, 장면별 사건 발생·해결·신체 상태 변화는 말풍선과 구분된
+//   시스템 영역에 보여 준다. 사건 발생은 장면 대사 앞, 해결·상태 변화는 장면 대사가 모두 공개된 뒤에 보인다.
 
 type Message = {
   id: string;
@@ -50,7 +53,17 @@ type Message = {
   actionIntent: string | null;
   emotionCue: string | null;
 };
-export type SceneItem = { id: string; seq: number; title: string; summary: string; contextTruncated: boolean; messages: Message[] };
+type SceneNote = { kind: "EVENT_STARTED" | "EVENT_RESOLVED" | "CONDITION" | "DEATH"; text: string };
+export type SceneItem = {
+  id: string;
+  seq: number;
+  title: string;
+  summary: string;
+  contextTruncated: boolean;
+  worldSeconds?: number | null;
+  notes?: SceneNote[];
+  messages: Message[];
+};
 
 type StreamStatus = "connecting" | "open" | "reconnecting" | "closed";
 const STREAM_LABEL: Record<StreamStatus, string> = {
@@ -65,7 +78,7 @@ const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
 
 export function ScenePanel({
   worldId,
-  activeCharacterIds,
+  activeCharacters,
   initialScenes,
   initialHasMore,
   eventCursor,
@@ -73,8 +86,8 @@ export function ScenePanel({
   saveControls,
 }: {
   worldId: string;
-  /** 이 세계관의 활성 캐릭터 ID: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분). 수는 시작 안내에 쓴다 */
-  activeCharacterIds: string[];
+  /** 이 세계관의 활성(삭제되지 않은) 캐릭터: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분, 사망자 포함). 생존자 수는 시작 안내에 쓴다 */
+  activeCharacters: { id: string; alive: boolean }[];
   /** 실행 제어 줄에 놓을 [저장]·[불러오기] */
   saveControls: React.ReactNode;
   initialScenes: SceneItem[];
@@ -93,13 +106,14 @@ export function ScenePanel({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 활성 캐릭터: 서버가 다시 그리면 props로, 숨김에서 복원(<Activity>)되면 SSE 연결 직후 다시 받아 갱신한다
-  const [characterIds, setCharacterIds] = useState(activeCharacterIds);
-  const [propIds, setPropIds] = useState(activeCharacterIds);
-  if (propIds !== activeCharacterIds) {
-    setPropIds(activeCharacterIds);
-    setCharacterIds(activeCharacterIds);
+  const [characters, setCharacters] = useState(activeCharacters);
+  const [propCharacters, setPropCharacters] = useState(activeCharacters);
+  if (propCharacters !== activeCharacters) {
+    setPropCharacters(activeCharacters);
+    setCharacters(activeCharacters);
   }
-  const activeIds = new Set(characterIds);
+  const activeIds = new Set(characters.map((c) => c.id));
+  const aliveCount = characters.filter((c) => c.alive).length;
 
   const scenesRef = useRef(scenes);
   const playbackRef = useRef<ScenePlayback | null>(null);
@@ -132,7 +146,7 @@ export function ScenePanel({
   /** 활성 캐릭터 목록을 다시 읽는다 (다른 탭에서 추가·삭제했을 수 있다) */
   const refreshCharacters = useCallback(async () => {
     const { ok, json } = await send(`/api/worlds/${worldId}/characters`, "GET").catch(() => ({ ok: false, json: null }));
-    if (ok) setCharacterIds((json.characters as { id: string }[]).map((c) => c.id));
+    if (ok) setCharacters((json.characters as { id: string; condition: { vital: string } }[]).map((c) => ({ id: c.id, alive: c.condition.vital === "ALIVE" })));
   }, [worldId]);
 
   // 세계관 이벤트 구독. 이 연결은 장면 생성·실행 명령을 시작하지 않는다 (연결 자체가 서버의 연결 보류를 해제할 뿐)
@@ -172,6 +186,7 @@ export function ScenePanel({
         if (type === "scene.committed") {
           const scene = (payload as { scene?: SceneItem }).scene;
           if (scene) addScenes([scene], true);
+          if (scene?.notes?.some((n) => n.kind === "DEATH")) void refreshCharacters(); // 생존자 수 안내 갱신
         }
       });
     }
@@ -296,6 +311,8 @@ export function ScenePanel({
           {STREAM_LABEL[stream]}
         </span>
       </div>
+      <WorldClock clock={view.state.worldClock} />
+      <ActiveEvents worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}`} />
 
       <div
         ref={feedRef}
@@ -322,6 +339,7 @@ export function ScenePanel({
                 </span>
                 <span className="h-px flex-1 bg-foreground/10" />
               </div>
+              <SceneNotes notes={(s.notes ?? []).filter((n) => n.kind === "EVENT_STARTED")} />
               {visible.map((m) =>
                 play.typing === m.id ? (
                   <div key={m.id} className="flex flex-col items-start" aria-label={`${m.speakerName} 입력 중`}>
@@ -345,6 +363,7 @@ export function ScenePanel({
                   </div>
                 ),
               )}
+              {visible.length === s.messages.length && !play.typing && <SceneNotes notes={(s.notes ?? []).filter((n) => n.kind !== "EVENT_STARTED")} />}
               {s.contextTruncated && visible.length === s.messages.length && !play.typing && (
                 <p className="text-[11px] text-foreground/50">세계관 컨텍스트 일부가 이번 장면에 반영되지 않았을 수 있습니다.</p>
               )}
@@ -353,10 +372,10 @@ export function ScenePanel({
         })}
       </div>
 
-      {characterIds.length < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE" ? (
+      {aliveCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE" ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm text-foreground/70">
-            대화하려면 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
+            대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
             <Link href={`/worlds/${worldId}/characters`} className="underline">
               캐릭터 탭
             </Link>

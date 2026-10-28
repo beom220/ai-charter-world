@@ -12,6 +12,7 @@ import { decideTransition, type SimulationCommand } from "@/server/engine/runner
 import { assertDailyUsageAvailable } from "@/server/engine/usage/usage-guard";
 import { notifyWorld, publishEvents } from "@/server/events/event-bus";
 import { logServerError } from "@/server/logging/log";
+import { currentWorldSeconds, settleWorldClock, startWorldClock } from "./world-clock";
 
 // 시뮬레이션 실행 제어 (architecture.md §7.1·§7.2, Phase 5-4-1). 런타임 독립.
 // - 상태의 기준은 SimulationRuntime 행이다. 명령은 상태만 바꾸고 RunnerHost에 신호(signalRunner)만 보낸다.
@@ -19,7 +20,8 @@ import { logServerError } from "@/server/logging/log";
 // - 명령마다 한 트랜잭션: World 행 잠금(같은 세계관 명령 직렬화) → [stop: GameState 잠금] → 상태 전이 → outbox(runtime.status).
 //   커밋 후 SSE 구독자에게 알린다. 같은 명령의 반복·동시 요청은 noop으로 200과 현재 상태를 돌려준다.
 // - lease(leaseOwner·leaseExpiresAt)는 Runner 소유다. 여기서는 PAUSED·IDLE이 될 때만 해제한다(§7.4 "해제").
-// - 사전 조건(start·resume): 연결 ACTIVE + 모델, 활성 캐릭터 2명 이상, 오늘 일일 한도 미도달.
+// - 사전 조건(start·resume): 연결 ACTIVE + 모델, 대화 가능한(생존) 캐릭터 2명 이상, 오늘 일일 한도 미도달.
+// - 월드 시계(Phase 7-2-2, world-clock.ts): 시작·재개 때 흐르게 하고, 일시정지·종료 때 같은 트랜잭션에서 정산해 멈춘다.
 
 // 상태 API·runtime.status payload. 화면(lib/simulation-view.ts)과 같은 정의를 쓴다
 export type { SimulationStateView };
@@ -33,10 +35,10 @@ const STATUS_MESSAGE: Record<SimulationCommand, string> = {
   stop: "",
 };
 
-async function readState(db: Tx | typeof prisma, worldId: string): Promise<SimulationStateView> {
+async function readState(db: Tx | typeof prisma, worldId: string, now: Date = new Date()): Promise<SimulationStateView> {
   const [runtime, gameState] = await Promise.all([
     db.simulationRuntime.findUniqueOrThrow({ where: { worldId } }),
-    db.gameState.findUniqueOrThrow({ where: { worldId }, select: { intervalPreset: true } }),
+    db.gameState.findUniqueOrThrow({ where: { worldId }, select: { intervalPreset: true, worldSeconds: true } }),
   ]);
   return {
     status: runtime.status,
@@ -48,12 +50,13 @@ async function readState(db: Tx | typeof prisma, worldId: string): Promise<Simul
     held: runtime.status === "RUNNING" && runtime.clientHoldSince !== null,
     holdDeadline:
       runtime.status === "RUNNING" && runtime.clientHoldSince ? new Date(runtime.clientHoldSince.getTime() + CLIENT_HOLD_TIMEOUT_MS).toISOString() : null,
+    worldClock: { seconds: currentWorldSeconds(gameState.worldSeconds, runtime, now), running: runtime.clockAnchorAt !== null, asOf: now.toISOString() },
   };
 }
 
 /** 현재 상태를 outbox(runtime.status)에 기록한다 (트랜잭션 안). Runner도 쓴다 */
-export async function publishRuntimeStatus(tx: Tx, worldId: string): Promise<SimulationStateView> {
-  const state = await readState(tx, worldId);
+export async function publishRuntimeStatus(tx: Tx, worldId: string, now: Date = new Date()): Promise<SimulationStateView> {
+  const state = await readState(tx, worldId, now);
   await publishEvents(tx, worldId, [{ type: "runtime.status", payload: state }]);
   return state;
 }
@@ -65,9 +68,10 @@ export async function getSimulationState(userId: AuthenticatedUserId, worldId: s
 
 async function assertCanRun(userId: AuthenticatedUserId, worldId: string, tx: Tx): Promise<void> {
   const { connectionId } = await requireUsableGeminiConnection(userId);
-  const active = await tx.character.count({ where: { worldId, deletedAt: null } });
-  if (active < SCENE_PARTICIPANTS_MIN) {
-    throw new ConflictError("NOT_ENOUGH_CHARACTERS", `시뮬레이션을 시작하려면 활성 캐릭터가 ${SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.`);
+  // 사망자는 슬롯을 차지하지만 대화할 수 없다 (신체 상태 행이 없으면 생존으로 본다)
+  const alive = await tx.character.count({ where: { worldId, deletedAt: null, OR: [{ condition: null }, { condition: { vital: "ALIVE" } }] } });
+  if (alive < SCENE_PARTICIPANTS_MIN) {
+    throw new ConflictError("NOT_ENOUGH_CHARACTERS", `시뮬레이션을 시작하려면 대화할 수 있는 생존 캐릭터가 ${SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.`);
   }
   await assertDailyUsageAvailable(connectionId);
 }
@@ -101,13 +105,16 @@ export async function runSimulationCommand(
           nextAutoSaveAt: nextAutoSaveOnRun(runtime.nextAutoSaveAt, at),
         },
       });
+      await startWorldClock(tx, worldId, at);
     } else if (command === "resume") {
       await assertCanRun(userId, worldId, tx);
       await tx.simulationRuntime.update({
         where: { worldId },
         data: { status: "RUNNING", statusReason: "USER", nextSceneAt: at, clientHoldSince: null, nextAutoSaveAt: nextAutoSaveOnRun(runtime.nextAutoSaveAt, at) },
       });
+      await startWorldClock(tx, worldId, at);
     } else if (command === "pause") {
+      await settleWorldClock(tx, worldId, at, "stop"); // 진행 중 장면을 마치는 PAUSING 동안에도 월드 시간은 멈춘다
       await tx.simulationRuntime.update({
         where: { worldId },
         // PAUSING은 진행 중 장면을 마칠 때까지 lease를 유지한다
@@ -115,6 +122,7 @@ export async function runSimulationCommand(
       });
     } else {
       // stop: 펜싱 토큰을 올려 그 전에 시작된 시도의 커밋을 막는다 (잠금 순서 World → GameState → Runtime)
+      await settleWorldClock(tx, worldId, at, "stop");
       await tx.$executeRaw`UPDATE "GameState" SET "stateVersion" = "stateVersion" + 1, "updatedAt" = now() WHERE "worldId" = ${worldId}`;
       if (runtime.currentRunId) {
         await tx.simulationRun.updateMany({ where: { id: runtime.currentRunId, worldId, endedAt: null }, data: { endedAt: at, endReason: "USER" } });
@@ -124,7 +132,7 @@ export async function runSimulationCommand(
         data: { status: "IDLE", statusReason: "USER", currentRunId: null, clientHoldSince: null, ...released },
       });
     }
-    return { state: await publishRuntimeStatus(tx, worldId), changed: true };
+    return { state: await publishRuntimeStatus(tx, worldId, at), changed: true };
   });
   if (result.changed) {
     notifyWorld(worldId);

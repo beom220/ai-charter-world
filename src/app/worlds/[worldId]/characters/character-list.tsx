@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { MAX_ACTIVE_CHARACTERS_PER_WORLD } from "../../../../../config/limits";
 import { PERSONALITY_TAGS } from "../../../../../config/personality-map";
+import { conditionBadges } from "@/lib/condition-labels";
 import { GENDER_LABEL } from "@/lib/schemas/character";
 import type { CharacterView } from "@/server/domain/characters/characters";
 import { button, MOOD_LABEL } from "../../ui";
 
 // 세계관 상세의 캐릭터 목록 (활성 캐릭터만). 6명이면 추가 버튼 대신 상한 안내를 보인다.
+// 사망자도 목록에 남아 슬롯을 차지한다(Phase 7-2-2). 신체 상태가 정상이 아니면 배지로 보인다.
 
 export const tagLabel = (code: string) => PERSONALITY_TAGS.find((t) => t.code === code)?.label ?? code;
 
@@ -36,7 +38,14 @@ export function CharacterList({ worldId, characters }: { worldId: string; charac
           {characters.map((c) => (
             <li key={c.id}>
               <Link href={`/worlds/${worldId}/characters/${c.id}`} className="flex flex-col gap-1 rounded-md border border-foreground/15 p-3 hover:bg-foreground/5">
-                <span className="font-medium break-all">{c.name}</span>
+                <span className="font-medium break-all">
+                  {c.name}
+                  {conditionBadges(c.condition).map((b) => (
+                    <span key={b} className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-normal ${b === "사망" ? "bg-red-600/10 text-red-600" : "bg-amber-600/10"}`}>
+                      {b}
+                    </span>
+                  ))}
+                </span>
                 <span className="text-xs text-foreground/60">
                   {genderText(c)} · {c.age ?? "?"}세 · 기분 {c.emotion ? MOOD_LABEL[c.emotion.mood] : "-"}
                 </span>

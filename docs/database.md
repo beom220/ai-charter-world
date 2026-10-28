@@ -294,6 +294,7 @@ model GameState {
   worldId          String         @id
   stateVersion     Int            @default(0)      // 펜싱 토큰: 장면 커밋·종료·불러오기·초기화 시 +1
   changeSeq        Int            @default(0)      // 게임 상태 변경 카운터: 장면 커밋·설정 수정·기록 삭제·불러오기·초기화 시 +1 (복구 지점 판정, A13)
+  worldSeconds     Int            @default(0)      // 월드 누적 시간(초): RUNNING으로 실제 진행한 시간 × 36 (Phase 7-2-2, CHECK gs_world_seconds ≥ 0)
   settingsSeq      Int            @default(0)      // 설정 펜싱 카운터: 세계관·캐릭터 설정 변경·불러오기 시만 +1 (Phase 7-2-0, 속도 변경·사건 등록 제외)
   nextSceneSeq     Int            @default(1)      // 기록 삭제와 무관하게 단조 증가
 
@@ -593,6 +594,13 @@ model SimulationEvent {                               // SSE outbox (A6)
 }
 ```
 
+### 3.5b 월드 시간·신체 상태 재구성 (Phase 7-2-2, 마이그레이션 20261028150000)
+
+- `GameState.worldSeconds`(정산된 월드 초), `SimulationRuntime.clockAnchorAt`·`clockCheckpointAt`(흐르는 중인 구간 시작·마지막 확인, 스냅샷 제외), `ConversationScene.worldSeconds`, `WorldEvent.startedWorldSeconds`·`resolvedWorldSeconds`, `CharacterConditionChange.worldSeconds`.
+- `CharacterCondition`: `thermal`(ThermalState) → `thermalCause`(`ThermalCause` NONE·COLD·HEAT) + `thermalLevel`(`DiscomfortLevel` NONE·MILD·SEVERE·EXTREME, CHECK `character_condition_thermal_pair`: 원인 NONE ⇔ 단계 NONE) + `thermalSinceSeconds`. 고통 `painLevel`·`painCause`·`painSinceSeconds`(부상과 독립). `injuryUpdatedSceneSeq` → `injuryUpdatedAtSeconds`(월드 시간 기준 회복). `extremeSinceSeconds`(극심 지속 시작), `deathWorldSeconds`. `ThermalState` enum 삭제.
+- 단방향 매핑: COLD·VERY_COLD → 추위 경미·심함, HOT·VERY_HOT → 더위 경미·심함, 고통 = 부상 MILD·MODERATE → 경미, SEVERE → 심함, CRITICAL → 극심(원인 = 부상 원인), 기존 부상·온도·고통·위독(극심)의 기준 시각 = 월드 0.
+- `StatusReason` + `NOT_ENOUGH_CHARACTERS`(생존자 2명 미만 정지).
+
 ### 3.5a 사건·신체 상태 (Phase 7-2-1, 마이그레이션 20261028140000)
 
 - `WorldEvent` 확장: `kind` + `RANDOM`, `status` + `PENDING`·`CANCELLED`, `presetId`, `intensity`(`EventIntensity` LOW·MEDIUM·HIGH), `requestId`(`@@unique([worldId, requestId])`), `startedSceneSeq`, `lastSceneSeq`, `resolvedSceneSeq`, `resolutionSummary`, `claimedAttemptId`, `cancelledAt`. 사용자 사건 원문은 `description`(CHECK `world_event_user_text_length` ≤ 200자).
@@ -686,7 +694,8 @@ ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   --
 - 나이 상한 1000은 판타지 종족을 고려한 기술적 상한이다. 랜덤 생성 범위는 별도(성인 기본)이다.
 - `RelationshipBaseline`에도 같은 범위·자기 참조 금지 CHECK(`baseline_range`, `baseline_not_self`)를 둔다.
 - `Character`: 성년기 배경은 19세 이상만 `character_adulthood_age CHECK ("adulthoodBackgroundId" IS NULL OR "age" >= 19)` (Phase 7-1, 20261028120000). 배경 ID 값 자체(프리셋 44종)는 앱이 검증한다.
-- Phase 7-2-1(20261028140000): `character_condition_death_record`, `character_condition_injury_cause`, `world_event_period_schedule`, `world_event_user_text_length` (§3.5a). 프리셋 ID 값은 앱·스냅샷 검증이 확인한다. CHECK는 모두 15개.
+- Phase 7-2-1(20261028140000): `character_condition_death_record`, `character_condition_injury_cause`, `world_event_period_schedule`, `world_event_user_text_length` (§3.5a). 프리셋 ID 값은 앱·스냅샷 검증이 확인한다.
+- Phase 7-2-2(20261028150000): `character_condition_thermal_pair`, `gs_world_seconds` (§3.5b). CHECK는 모두 17개.
 
 ### 4.2 주요 조회와 인덱스
 
@@ -830,7 +839,7 @@ type SnapshotV1 = {
 
 ### 5.3 schemaVersion 정책
 
-- **현재 버전**: `SNAPSHOT_SCHEMA_VERSION = 3` (`config/limits.ts`, `lib/snapshot/v1.ts`·`v2.ts`·`v3.ts`). v2 = 캐릭터 배경(Phase 7-1), v3 = 사건 확장·자동 사건 구간·캐릭터 신체 상태와 이력(Phase 7-2). 읽기는 v1 → v2 → v3 순으로 변환한다.
+- **현재 버전**: `SNAPSHOT_SCHEMA_VERSION = 4` (`config/limits.ts`, `lib/snapshot/v1.ts`~`v4.ts`). v2 = 캐릭터 배경(Phase 7-1), v3 = 사건 확장·자동 사건 구간·캐릭터 신체 상태와 이력(Phase 7-2), v4 = 월드 시간·온도 원인/단계·고통 분리(Phase 7-2-2). 읽기는 v1 → v2 → v3 → v4 순으로 변환하고, 저장된 원본·checksum은 바꾸지 않는다.
 - **읽기 경로**: `parse(raw) → migrations[v→v+1]… → SnapshotCurrent.parse()`. 원본 행은 수정하지 않는다.
 - **버전을 올리는 경우**: 스냅샷 대상 테이블에 필드 추가·삭제·의미 변경이 있을 때 반드시 버전을 올린다.
 - 각 마이그레이터에 이전 버전 픽스처 기반 테스트를 붙인다.

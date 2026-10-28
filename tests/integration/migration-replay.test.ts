@@ -89,7 +89,7 @@ describe("전체 마이그레이션 재현", () => {
     const [replay, dev] = await Promise.all([catalog(replayDb), catalog(devDb)]);
     expect(replay).toEqual(dev);
     expect(replay.triggers).toHaveLength(14); // Phase 7-2: 신체 상태 변화 이력(장면·사건)·자동 사건 구간(사건) 같은 세계관 트리거 3개
-    expect(replay.constraints.filter((c) => c.includes(":CHECK ("))).toHaveLength(15); // Phase 7-2: 사망 기록·부상 원인·구간 예약·사용자 사건 길이
+    expect(replay.constraints.filter((c) => c.includes(":CHECK ("))).toHaveLength(17); // Phase 7-2: 사망 기록·부상 원인·구간 예약·사용자 사건 길이, 7-2-2: 온도 원인·단계 짝·월드 시간
     expect(replay.functions).toEqual([expect.stringMatching(/^enforce_same_scope:/)]);
   });
 

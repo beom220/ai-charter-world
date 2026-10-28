@@ -8,9 +8,19 @@ import type { MemoryAcquisition, MemoryKind, Mood } from "@/generated/prisma/cli
 // - 구조 오류, 이번 장면 매핑에 없는 별칭, 자기 자신과의 관계는 장면 실패다. 수치 상한·범위는 실패가 아니라 커밋 때 clamp한다.
 // - 기억 소유자는 참가자(별칭)만 가능하다 = 그 장면을 직접 경험한 인물만 기억한다. 기억은 중요도 순으로 캐릭터당 2개·장면당 6개만 남긴다.
 // - proposals가 없으면 상태 변화 없이 장면만 저장한다(빈 제안). 기억 획득 경로(acquisition)는 v1 스키마에 더한 선택 필드다.
+// events·conditions(Phase 7-2-2, 선택 필드): 사건별 진행·해결 제안과 참가자의 온도·고통·부상·치료·사망 제안.
+// - 없거나 형식이 틀려도 장면은 저장한다(사건은 미해결로 계속, 상태는 자연 변화만). 사건 별칭(E1…)이 이번 프롬프트에 없으면 그 항목만 버린다
+//   (다른 사건을 잘못 종료하지 않는다). 상태 제안의 캐릭터는 참가자 별칭만 가능하다(사망자·비참가자는 발화·참조 불가).
+// - 단계의 타당성(한 장면 상한·원인·치료 근거·사망 조건)은 커밋 때 engine/commit/condition-rules가 검증한다.
 
 export const SCENE_ALIASES = ["C1", "C2", "C3", "C4", "C5", "C6"] as const;
 export type SceneAlias = (typeof SCENE_ALIASES)[number];
+/** 프롬프트의 진행 중 사건 별칭 (DB ID 대신) */
+export const EVENT_ALIASES = ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9"] as const;
+export type EventAlias = (typeof EVENT_ALIASES)[number];
+const DISCOMFORT = ["NONE", "MILD", "SEVERE", "EXTREME"] as const;
+const INJURY = ["NONE", "MILD", "MODERATE", "SEVERE", "CRITICAL"] as const;
+const THERMAL_CAUSE = ["NONE", "COLD", "HEAT"] as const;
 
 const END_REASONS = ["RESOLVED", "INTERRUPTED", "STALEMATE", "TURN_LIMIT"] as const;
 export const MOODS = ["NEUTRAL", "HAPPY", "EXCITED", "CALM", "SAD", "ANXIOUS", "ANGRY", "FEARFUL", "EMBARRASSED", "LONELY", "HOPEFUL", "TIRED"] as const satisfies readonly Mood[];
@@ -63,6 +73,28 @@ const proposalsSchema = z.object({
     .default([]),
 });
 
+const reason = z.string().trim().refine(cp(200));
+
+const eventOutcomeSchema = z.object({
+  ref: z.string(),
+  status: z.enum(["ONGOING", "RESOLVED"]),
+  resolutionSummary: z.string().trim().refine(cp(300)).nullable().default(null),
+  /** 새 사건을 이 세계관에 맞게 구체화한 문구 */
+  realization: z.string().trim().refine(cp(200)).nullable().default(null),
+  /** 생물이 불가능한 세계관이라 대체 사건으로 썼는가 */
+  usedFallback: z.boolean().default(false),
+});
+
+const conditionProposalSchema = z.object({
+  character: z.enum(SCENE_ALIASES),
+  thermal: z.object({ cause: z.enum(THERMAL_CAUSE), level: z.enum(DISCOMFORT) }).nullable().default(null),
+  pain: z.object({ level: z.enum(DISCOMFORT), cause: reason.nullable().default(null) }).nullable().default(null),
+  injury: z.object({ level: z.enum(INJURY), cause: reason }).nullable().default(null),
+  treatment: reason.nullable().default(null),
+  death: z.object({ cause: reason }).nullable().default(null),
+  eventRef: z.string().nullable().default(null),
+});
+
 const sceneOutputSchema = (maxTurns: number) =>
   z.object({
     scene: z.object({
@@ -72,13 +104,18 @@ const sceneOutputSchema = (maxTurns: number) =>
     }),
     turns: z.array(turnSchema).min(SCENE_TURNS_MIN).max(maxTurns),
     proposals: proposalsSchema.default({ emotions: [], relationships: [], memories: [] }),
+    // 형식이 틀린 선택 필드는 장면 실패 대신 비운다 (사건·상태는 서버 기본값으로 계속)
+    events: z.array(eventOutcomeSchema).max(EVENT_ALIASES.length).catch([]).default([]),
+    conditions: z.array(conditionProposalSchema).max(SCENE_ALIASES.length).catch([]).default([]),
   });
 
 export type SceneOutput = z.infer<ReturnType<typeof sceneOutputSchema>>;
 export type SceneProposals = SceneOutput["proposals"];
+export type SceneEventOutcome = SceneOutput["events"][number];
+export type SceneConditionProposal = SceneOutput["conditions"][number];
 
 /** Gemini responseJsonSchema (Zod 스키마와 같은 구조. 최종 판정은 서버의 Zod 검증이다) */
-export function sceneResponseJsonSchema(aliases: readonly SceneAlias[], maxTurns: number): Record<string, unknown> {
+export function sceneResponseJsonSchema(aliases: readonly SceneAlias[], maxTurns: number, eventAliases: readonly EventAlias[] = []): Record<string, unknown> {
   const nullableString = (maxLength: number) => ({ type: ["string", "null"], maxLength });
   return {
     type: "object",
@@ -153,6 +190,46 @@ export function sceneResponseJsonSchema(aliases: readonly SceneAlias[], maxTurns
         },
         required: ["emotions", "relationships", "memories"],
       },
+      ...(eventAliases.length
+        ? {
+            events: {
+              type: "array",
+              maxItems: eventAliases.length,
+              items: {
+                type: "object",
+                properties: {
+                  ref: { type: "string", enum: [...eventAliases] },
+                  status: { type: "string", enum: ["ONGOING", "RESOLVED"] },
+                  resolutionSummary: nullableString(300),
+                  realization: nullableString(200),
+                  usedFallback: { type: "boolean" },
+                },
+                required: ["ref", "status", "resolutionSummary", "realization", "usedFallback"],
+              },
+            },
+          }
+        : {}),
+      conditions: {
+        type: "array",
+        maxItems: aliases.length,
+        items: {
+          type: "object",
+          properties: {
+            character: { type: "string", enum: [...aliases] },
+            thermal: {
+              type: ["object", "null"],
+              properties: { cause: { type: "string", enum: [...THERMAL_CAUSE] }, level: { type: "string", enum: [...DISCOMFORT] } },
+              required: ["cause", "level"],
+            },
+            pain: { type: ["object", "null"], properties: { level: { type: "string", enum: [...DISCOMFORT] }, cause: nullableString(200) }, required: ["level", "cause"] },
+            injury: { type: ["object", "null"], properties: { level: { type: "string", enum: [...INJURY] }, cause: { type: "string", maxLength: 200 } }, required: ["level", "cause"] },
+            treatment: nullableString(200),
+            death: { type: ["object", "null"], properties: { cause: { type: "string", maxLength: 200 } }, required: ["cause"] },
+            eventRef: { type: ["string", "null"], enum: [...eventAliases, null] },
+          },
+          required: ["character", "thermal", "pain", "injury", "treatment", "death", "eventRef"],
+        },
+      },
     },
     required: ["scene", "turns", "proposals"],
   };
@@ -190,8 +267,13 @@ export function parseSceneOutput(text: string, aliases: readonly SceneAlias[], m
     ...memories.flatMap((m) => (m.about ? [m.owner, m.about] : [m.owner])),
   ];
   if (refs.some((a) => !allowed.has(a))) throw new SceneValidationError("UNKNOWN_REFERENCE"); // 비참가자·세계관 밖 참조
+  // 상태 제안: 참가자만 (사망자·비참가자 참조는 장면 실패. 사망자는 참가자가 아니므로 발화도 위 UNKNOWN_SPEAKER로 막힌다)
+  if (parsed.data.conditions.some((c) => !allowed.has(c.character))) throw new SceneValidationError("UNKNOWN_REFERENCE");
+  // 같은 캐릭터 상태 제안·같은 사건 결과는 첫 항목만 (같은 상태를 두 번 바꾸지 않게)
+  const conditions = parsed.data.conditions.filter((c, i, all) => all.findIndex((x) => x.character === c.character) === i);
+  const events = parsed.data.events.filter((e, i, all) => all.findIndex((x) => x.ref === e.ref) === i);
   if (relationships.some((r) => r.from === r.to)) throw new SceneValidationError("SELF_RELATIONSHIP");
-  return { ...parsed.data, proposals: { emotions, relationships, memories: selectMemories(memories) } };
+  return { ...parsed.data, events, conditions, proposals: { emotions, relationships, memories: selectMemories(memories) } };
 }
 
 /** 중요도 높은 순(같으면 제안 순)으로 캐릭터당 2개·장면당 6개만 남긴다. 자기 자신에 대한 인물 기억은 about을 비운다 */

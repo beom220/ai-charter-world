@@ -3,7 +3,8 @@ import { SNAPSHOT_SCHEMA_VERSION } from "../../../../config/limits";
 import type { Prisma } from "@/generated/prisma/client";
 import { snapshotReferenceError, snapshotV1Schema } from "@/lib/snapshot/v1";
 import { migrateV1ToV2, snapshotBackgroundError, snapshotV2Schema } from "@/lib/snapshot/v2";
-import { migrateV2ToV3, snapshotV3Error, snapshotV3Schema, type SnapshotV3 } from "@/lib/snapshot/v3";
+import { migrateV2ToV3, snapshotV3Schema } from "@/lib/snapshot/v3";
+import { migrateV3ToV4, snapshotV4Error, snapshotV4Schema, type SnapshotV4 } from "@/lib/snapshot/v4";
 import { AppError } from "@/server/domain/errors";
 
 // 스냅샷 캡처·검증·복원 (architecture.md §9.1·§9.2·§9.6, Phase 6). 런타임 독립.
@@ -37,7 +38,7 @@ export const snapshotChecksum = (payload: unknown) => {
 };
 
 /** 현재 버전 payload */
-export type CurrentSnapshot = SnapshotV3;
+export type CurrentSnapshot = SnapshotV4;
 
 /**
  * 저장된 행 → 검증된 현재 버전 payload. 버전 → checksum(저장된 원본 기준) → 버전별 Zod → 마이그레이션 → 참조 순으로 확인한다.
@@ -50,17 +51,21 @@ export function parseSnapshot(row: { schemaVersion: number; payload: unknown; ch
   if (row.schemaVersion === 1) {
     const v1 = snapshotV1Schema.safeParse(row.payload);
     if (!v1.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV2ToV3(migrateV1ToV2(v1.data));
+    snapshot = migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1.data)));
   } else if (row.schemaVersion === 2) {
     const v2 = snapshotV2Schema.safeParse(row.payload);
     if (!v2.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV2ToV3(v2.data);
-  } else {
+    snapshot = migrateV3ToV4(migrateV2ToV3(v2.data));
+  } else if (row.schemaVersion === 3) {
     const v3 = snapshotV3Schema.safeParse(row.payload);
     if (!v3.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = v3.data;
+    snapshot = migrateV3ToV4(v3.data);
+  } else {
+    const v4 = snapshotV4Schema.safeParse(row.payload);
+    if (!v4.success) throw new SnapshotInvalidError("SCHEMA");
+    snapshot = v4.data;
   }
-  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot) ?? snapshotV3Error(snapshot);
+  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot) ?? snapshotV4Error(snapshot);
   if (refError) throw new SnapshotInvalidError(refError);
   return snapshot;
 }
@@ -89,7 +94,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
   ]);
   const rel = (r: { affinity: number; trust: number; respect: number; familiarity: number }) => ({ affinity: r.affinity, trust: r.trust, respect: r.respect, familiarity: r.familiarity });
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     capturedAt: iso(now),
     world: {
       name: world.name,
@@ -108,6 +113,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       participantsMax: gs.participantsMax,
       modelOverride: gs.modelOverride,
       lastCommittedAt: isoOrNull(gs.lastCommittedAt),
+      worldSeconds: gs.worldSeconds, // 정산된 값만 (불러오기·저장은 진행 중 시도가 없을 때이고, 실행 중 저장은 마지막 정산 시점까지)
     },
     characters: characters.map((c) => ({
       id: c.id,
@@ -183,6 +189,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       motiveRef: s.motiveRef,
       endReason: s.endReason,
       contextTruncated: s.contextTruncated,
+      worldSeconds: s.worldSeconds,
       createdAt: iso(s.createdAt),
       participants: s.participants.map((p) => ({ characterId: p.characterId, alias: p.alias, nameSnapshot: p.nameSnapshot })),
       messages: s.messages.map((m) => ({
@@ -214,6 +221,8 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       resolvedSceneSeq: e.resolvedSceneSeq,
       resolutionSummary: e.resolutionSummary,
       cancelledAt: isoOrNull(e.cancelledAt),
+      startedWorldSeconds: e.startedWorldSeconds,
+      resolvedWorldSeconds: e.resolvedWorldSeconds,
     })),
     eventPeriods: periods.map((x) => ({
       periodIndex: x.periodIndex,
@@ -229,14 +238,21 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       const x = conditions.find((k) => k.characterId === c.id);
       return {
         characterId: c.id,
-        thermal: x?.thermal ?? "NORMAL",
+        thermalCause: x?.thermalCause ?? "NONE",
+        thermalLevel: x?.thermalLevel ?? "NONE",
+        thermalSinceSeconds: x?.thermalSinceSeconds ?? null,
+        painLevel: x?.painLevel ?? "NONE",
+        painCause: x?.painCause ?? null,
+        painSinceSeconds: x?.painSinceSeconds ?? null,
         injury: x?.injury ?? "NONE",
         injuryCause: x?.injuryCause ?? null,
         injurySceneSeq: x?.injurySceneSeq ?? null,
-        injuryUpdatedSceneSeq: x?.injuryUpdatedSceneSeq ?? null,
+        injuryUpdatedAtSeconds: x?.injuryUpdatedAtSeconds ?? null,
+        extremeSinceSeconds: x?.extremeSinceSeconds ?? null,
         vital: x?.vital ?? "ALIVE",
         deathCause: x?.deathCause ?? null,
         deathSceneSeq: x?.deathSceneSeq ?? null,
+        deathWorldSeconds: x?.deathWorldSeconds ?? null,
         diedAt: x?.diedAt ? iso(x.diedAt) : null,
       };
     }),
@@ -249,6 +265,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       fromValue: c.fromValue,
       toValue: c.toValue,
       reason: c.reason,
+      worldSeconds: c.worldSeconds,
       createdAt: iso(c.createdAt),
     })),
   };
@@ -312,6 +329,7 @@ export async function restoreSnapshot(tx: Tx, worldId: string, p: CurrentSnapsho
         motiveRef: s.motiveRef,
         endReason: s.endReason,
         contextTruncated: s.contextTruncated,
+        worldSeconds: s.worldSeconds,
         createdAt: at(s.createdAt),
       })),
     });

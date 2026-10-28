@@ -6,10 +6,12 @@ import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId, type AuthenticatedUserId } from "@/server/domain/identity";
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
 import { prepareScene, runSceneAttempt, SceneValidationFailedError, settingsUnchanged, type SceneDeps } from "@/server/domain/scenes/generate-scene";
+import { claimAutoEvent, type AutoEventClaim } from "@/server/domain/scenes/scene-world";
 
 type PreparedScene = Awaited<ReturnType<typeof prepareScene>>;
 import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
 import { publishRuntimeStatus, settlePausing } from "@/server/domain/simulation/control";
+import { settleWorldClock, touchWorldClock } from "@/server/domain/simulation/world-clock";
 import { CircuitOpenError, KeyChangedError, UsageLimitError } from "@/server/engine/usage/errors";
 import { notifyWorld, publishEvents } from "@/server/events/event-bus";
 import { logServerError } from "@/server/logging/log";
@@ -92,6 +94,7 @@ export async function runWorldTick(worldId: string, ctx: RunnerContext): Promise
     const hold = await reconcileClientHold(worldId, at);
     if (hold === "paused") return waitFor(0); // PAUSED면 다음 단계에서 종료, PAUSING이면 진행 중 시도 처리
     if (hold === "held" && !rt.inFlightAttemptId) return waitFor(RUNNER_POLL_INTERVAL_MS); // 활성 연결 0: 신규 호출 보류
+    if (hold === "connected") await touchWorldClock(worldId, at); // 월드 시계 확인 (크래시 뒤 정지 구간 제외)
   }
 
   if (rt.inFlightAttemptId) {
@@ -138,13 +141,14 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
   }
 
   const attemptId = randomUUID();
-  const claimed = await claimAttempt(worldId, runId, owner, prepared, attemptId, now());
+  const claimed = await claimAttempt(worldId, runId, owner, prepared, attemptId, now(), deps?.random);
   if (!claimed) return; // 그사이 상태가 바뀜 → 다음 단계에서 다시 판단
   notifyWorld(worldId);
 
   // 호출 중에도 lease를 갱신하고 보류 만료를 확인한다 (만료되면 PAUSING → 이 시도가 끝난 뒤 PAUSED)
   const heartbeat = setInterval(() => {
     void renewLease(worldId, owner, now());
+    void touchWorldClock(worldId, now()); // Gemini 호출 중에도 월드 시간은 흐른다
     void reconcileClientHold(worldId, now()).catch((e: unknown) => logServerError("runner.hold", e));
   }, RUNNER_LEASE_RENEW_MS);
   heartbeat.unref?.();
@@ -157,6 +161,7 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
       {
         attemptId,
         runner: { runId, leaseOwner: owner },
+        autoEvent: claimed.autoEvent,
         beforeRequest: async () => {
           const current = await prisma.simulationRuntime.count({
             where: { worldId, status: "RUNNING", currentRunId: runId, leaseOwner: owner, inFlightAttemptId: attemptId, clientHoldSince: null },
@@ -176,7 +181,8 @@ async function attemptScene(worldId: string, runId: string, userId: Authenticate
 }
 
 /**
- * 시도 기록 (테스트에서 직접 부른다). 준비 이후 상태·설정이 바뀌었으면 false.
+ * 시도 기록 (테스트에서 직접 부른다). 준비 이후 상태·설정이 바뀌었으면 null.
+ * 기록에 성공하면 같은 트랜잭션에서 자동 사건 구간을 판정해(구간당 한 번, 영속) 이번 장면의 자동 사건을 함께 돌려준다.
  * 호출 전에 시도를 기록한다. 이 조건부 UPDATE가 세계관당 진행 중 생성 1건을 보장한다 (lease와 별개의 2차 방어).
  * 같은 트랜잭션에서 scene.started를 기록하므로 기록에 성공한 Runner만 이벤트를 낸다 (잠금 순서 World → Runtime)
  */
@@ -187,11 +193,12 @@ export async function claimAttempt(
   prepared: Pick<PreparedScene, "characters" | "settingsSeq">,
   attemptId: string,
   startedAt: Date,
-): Promise<boolean> {
+  random: () => number = Math.random,
+): Promise<{ autoEvent: AutoEventClaim | null } | null> {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
     // 준비 이후 설정 수정·불러오기로 settingsSeq가 바뀌었으면 이전 설정으로 호출하지 않고 다음 단계에서 다시 준비한다
-    if (!(await settingsUnchanged(tx, worldId, prepared.settingsSeq))) return false;
+    if (!(await settingsUnchanged(tx, worldId, prepared.settingsSeq))) return null;
     const { count } = await tx.simulationRuntime.updateMany({
       where: {
         worldId,
@@ -204,14 +211,15 @@ export async function claimAttempt(
       },
       data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
     });
-    if (count === 0) return false;
+    if (count === 0) return null;
+    const autoEvent = await claimAutoEvent(tx, worldId, random);
     await publishEvents(tx, worldId, [
       {
         type: "scene.started",
         payload: { worldId, attemptId, startedAt: startedAt.toISOString(), participants: prepared.characters.map((c) => c.name) },
       },
     ]);
-    return true;
+    return { autoEvent };
   });
 }
 
@@ -264,6 +272,7 @@ async function finishAttempt(worldId: string, attemptId: string | null, outcome:
         }
       }
       if (outcome.kind === "pause") {
+        await settleWorldClock(tx, worldId, at, "stop");
         await tx.simulationRuntime.updateMany({
           where: { worldId, status: { in: ["RUNNING", "PAUSING"] } },
           data: { status: "PAUSED", statusReason: outcome.reason, leaseOwner: null, leaseExpiresAt: null, nextSceneAt: null },

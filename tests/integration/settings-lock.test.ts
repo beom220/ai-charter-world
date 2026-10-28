@@ -201,15 +201,15 @@ describe("캐릭터 설정 변경 → 재개", () => {
     // 실행 속도 변경은 changeSeq만 올린다 → 같은 준비로 기록해도 된다 (기록 후 해제)
     await updateSimulationSettings(uid, world.id, "FAST");
     const claimedId = randomUUID();
-    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", prepared, claimedId, deps.now())).toBe(true);
+    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", prepared, claimedId, deps.now())).not.toBeNull();
     await prisma.simulationRuntime.update({ where: { worldId: world.id }, data: { inFlightAttemptId: null, inFlightStartedAt: null } });
 
     await prisma.$executeRaw`UPDATE "GameState" SET "settingsSeq" = "settingsSeq" + 1 WHERE "worldId" = ${world.id}`;
-    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", prepared, randomUUID(), deps.now())).toBe(false);
+    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", prepared, randomUUID(), deps.now())).toBeNull();
     expect((await prisma.simulationRuntime.findUniqueOrThrow({ where: { worldId: world.id } })).inFlightAttemptId).toBeNull();
 
     const fresh = await prepareScene(uid, world.id, deps);
-    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", fresh, randomUUID(), deps.now())).toBe(true);
+    expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", fresh, randomUUID(), deps.now())).not.toBeNull();
   });
 
   it("수동 생성: Gemini 호출 중(IDLE) 설정이 바뀌면 장면을 저장하지 않고 점유를 풀며, 호출 기록은 남는다", async () => {

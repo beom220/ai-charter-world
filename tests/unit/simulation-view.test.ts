@@ -10,6 +10,7 @@ const base: SimulationStateView = {
   nextSceneAt: null,
   inFlight: false,
   held: false,
+  worldClock: { seconds: 0, running: false, asOf: "2026-10-28T00:00:00.000Z" },
   holdDeadline: null,
 };
 const running = { ...base, status: "RUNNING" as const, statusReason: "USER" as const, runId: "run-1" };

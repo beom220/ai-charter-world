@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { AUTO_EVENT_CHANCE } from "../../config/limits";
 import { EVENT_PRESETS, findEventPreset } from "../../config/world-events";
 import type { SnapshotV1 } from "@/lib/snapshot/v1";
-import type { SnapshotV3 } from "@/lib/snapshot/v3";
+import { migrateV1ToV2 } from "@/lib/snapshot/v2";
+import { migrateV2ToV3, type SnapshotV3 } from "@/lib/snapshot/v3";
 import { parseSnapshot, snapshotChecksum } from "@/server/domain/saves/snapshot";
-import { naturalInjuryRecovery } from "@/server/engine/commit/condition-rules";
 import { autoEventPeriodOf, pickAutoEventPreset, rollAutoEventPeriod } from "@/server/engine/director/auto-events";
 
-// Phase 7-2-1: 자동 사건 프리셋 24종, 20장면 구간 추첨, 프리셋 반복 방지, 부상 자연 회복 규칙, 스냅샷 v1·v2 → v3.
+// Phase 7-2-1: 자동 사건 프리셋 24종, 20장면 구간 추첨, 프리셋 반복 방지, 스냅샷 v1·v2·v3 → 최신(v4) 호환과 v3 불변식.
+// (부상 회복 규칙은 7-2-2에서 월드 시간 기준으로 바뀌어 world-time-conditions.test.ts에서 본다)
 
 const seq = (...values: number[]) => {
   let i = 0;
@@ -84,20 +85,7 @@ describe("20장면 구간 추첨", () => {
   });
 });
 
-describe("부상 자연 회복 (장면 수 기준)", () => {
-  it("약간 아픔 4장면·아픔 10장면·매우 아픔 20장면 뒤 한 단계, 위독은 치료 없이 나아지지 않고, 치료 장면에는 겹쳐 적용하지 않는다", () => {
-    expect(naturalInjuryRecovery("MILD", 10, 13, false)).toBeNull();
-    expect(naturalInjuryRecovery("MILD", 10, 14, false)).toBe("NONE");
-    expect(naturalInjuryRecovery("MODERATE", 10, 20, false)).toBe("MILD");
-    expect(naturalInjuryRecovery("SEVERE", 10, 29, false)).toBeNull();
-    expect(naturalInjuryRecovery("SEVERE", 10, 30, false)).toBe("MODERATE");
-    expect(naturalInjuryRecovery("CRITICAL", 1, 500, false)).toBeNull();
-    expect(naturalInjuryRecovery("MILD", 10, 30, true)).toBeNull();
-    expect(naturalInjuryRecovery("NONE", 10, 30, false)).toBeNull();
-  });
-});
-
-describe("스냅샷 v3 호환", () => {
+describe("스냅샷 v3 호환 (최신 v4로 읽기)", () => {
   const t = "2026-10-28T00:00:00.000Z";
   const character = {
     id: "a",
@@ -153,14 +141,15 @@ describe("스냅샷 v3 호환", () => {
   };
   const parse = (version: number, payload: unknown) => parseSnapshot({ schemaVersion: version, payload, checksum: snapshotChecksum(payload).checksum });
 
-  it("v1·v2 원본은 checksum 그대로 읽혀 v3가 된다: 모든 캐릭터 생존·정상·부상 없음, 사건 새 필드 NULL, 구간 기록 없음", () => {
+  it("v1·v2 원본은 checksum 그대로 읽혀 최신이 된다: 모든 캐릭터 생존·정상·고통 없음·부상 없음, 사건 새 필드 NULL, 구간 기록 없음, 월드 시간 0", () => {
     const v2 = { ...v1, schemaVersion: 2, characters: v1.characters.map((c) => ({ ...c, childhoodBackgroundId: null, adulthoodBackgroundId: null })) };
     for (const [version, payload] of [[1, v1], [2, v2]] as const) {
       const p = parse(version, payload);
-      expect(p.schemaVersion).toBe(3);
-      expect(p.characterConditions.map((c) => [c.characterId, c.vital, c.injury, c.thermal])).toEqual([
-        ["a", "ALIVE", "NONE", "NORMAL"],
-        ["b", "ALIVE", "NONE", "NORMAL"],
+      expect(p.schemaVersion).toBe(4);
+      expect(p.gameState.worldSeconds).toBe(0);
+      expect(p.characterConditions.map((c) => [c.characterId, c.vital, c.injury, c.thermalCause, c.painLevel])).toEqual([
+        ["a", "ALIVE", "NONE", "NONE", "NONE"],
+        ["b", "ALIVE", "NONE", "NONE", "NONE"],
       ]);
       expect(p.worldEvents[0]).toMatchObject({ id: "e1", status: "ACTIVE", presetId: null, startedSceneSeq: null, requestId: null });
       expect(p.eventPeriods).toEqual([]);
@@ -168,19 +157,30 @@ describe("스냅샷 v3 호환", () => {
     }
   });
 
-  it("v3 참조·불변식: 사망 기록 누락, 없는 사건을 가리키는 구간, 상태가 없는 캐릭터, 알 수 없는 프리셋, 대기 4건은 거절", () => {
-    const v3 = parse(1, v1);
+  it("v3 참조·불변식: 사망 기록 누락, 없는 사건을 가리키는 구간, 상태가 없는 캐릭터, 알 수 없는 프리셋, 대기 4건은 거절. v3 상태는 보존적으로 옮긴다", () => {
+    const v3 = migrateV2ToV3(migrateV1ToV2(v1));
     const ok: SnapshotV3 = {
       ...v3,
       worldEvents: [...v3.worldEvents, { ...v3.worldEvents[0]!, id: "e2", kind: "RANDOM", presetId: "creature_attack", intensity: "HIGH", startedSceneSeq: 1, lastSceneSeq: 1 }],
       eventPeriods: [{ periodIndex: 0, won: true, scheduledSceneSeq: 3, presetId: "creature_attack", eventId: "e2", firedAt: t, createdAt: t }],
       characterConditions: [
-        { ...v3.characterConditions[0]!, injury: "SEVERE", injuryCause: "늑대에게 물림", injurySceneSeq: 1, injuryUpdatedSceneSeq: 1 },
+        { ...v3.characterConditions[0]!, injury: "SEVERE", injuryCause: "늑대에게 물림", injurySceneSeq: 1, injuryUpdatedSceneSeq: 1, thermal: "VERY_COLD" },
         { ...v3.characterConditions[1]!, vital: "DEAD", deathCause: "습격", deathSceneSeq: 1, diedAt: t },
       ],
       conditionChanges: [{ id: "cc1", characterId: "b", sceneId: "s1", eventId: "e2", kind: "DEATH", fromValue: "ALIVE", toValue: "DEAD", reason: "습격", createdAt: t }],
     };
-    expect(parse(3, ok).characterConditions[1]).toMatchObject({ vital: "DEAD", deathCause: "습격" });
+    const read = parse(3, ok);
+    expect(read.characterConditions[1]).toMatchObject({ vital: "DEAD", deathCause: "습격" });
+    // VERY_COLD → 추위·심함, 부상 SEVERE → 고통 심함(원인 유지), 회복 기준은 월드 시각 0부터
+    expect(read.characterConditions[0]).toMatchObject({
+      thermalCause: "COLD",
+      thermalLevel: "SEVERE",
+      painLevel: "SEVERE",
+      painCause: "늑대에게 물림",
+      injury: "SEVERE",
+      injuryUpdatedAtSeconds: 0,
+      extremeSinceSeconds: null,
+    });
 
     const pending = (i: number) => ({ ...v3.worldEvents[0]!, id: `p${i}`, kind: "USER_INTERVENTION" as const, status: "PENDING" as const, requestId: `r${i}` });
     const bad: SnapshotV3[] = [

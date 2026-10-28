@@ -212,8 +212,9 @@ export const AUTO_SAVE_RETRY_MS = 10 * 60 * 1000;
 /** 저장 이름 최대 길이(코드 포인트). SaveGame.name VarChar(60) */
 export const SAVE_NAME_MAX_LENGTH = 60;
 
-/** 현재 스냅샷 payload 버전 (lib/snapshot). v2 = 캐릭터 배경 추가 (Phase 7-1), v3 = 사건·자동 사건 구간·캐릭터 신체 상태 (Phase 7-2) */
-export const SNAPSHOT_SCHEMA_VERSION = 3;
+/** 현재 스냅샷 payload 버전 (lib/snapshot). v2 = 캐릭터 배경 추가 (Phase 7-1), v3 = 사건·자동 사건 구간·캐릭터 신체 상태 (Phase 7-2),
+ *  v4 = 월드 시간·온도 불편(원인·단계)·고통 분리 (Phase 7-2-2) */
+export const SNAPSHOT_SCHEMA_VERSION = 4;
 
 /** 저장·불러오기 트랜잭션 제한 시간 (대화 기록 전체를 캡처·복원하므로 기본 5초보다 길게) */
 export const SAVE_TRANSACTION_TIMEOUT_MS = 30_000;
@@ -233,11 +234,32 @@ export const USER_EVENT_PENDING_MAX = 3;
 export const USER_EVENT_MIN_INTERVAL_MS = 30_000;
 export const USER_EVENTS_PER_DAY = 30;
 
-/**
- * 부상 자연 회복: 마지막 부상 변화 뒤 이 장면 수가 지나면 한 단계 낮아진다 (진행 장면 수 기준, 현실 시간 아님).
- * null이면 치료 없이는 나아지지 않는다(위독). 치료 효과가 반영된 장면에서는 자연 회복을 함께 적용하지 않는다.
- */
-export const INJURY_NATURAL_RECOVERY_SCENES = { NONE: null, MILD: 4, MODERATE: 10, SEVERE: 20, CRITICAL: null } as const satisfies Record<
+// ── 신체 상태 규칙 (Phase 7-2-2, 월드 시간 기준). MVP용 보수적 초깃값이며 실제 의학적 기준이 아니다.
+//    자연 회복·고통 완화·극심 지속·사망 위험은 모두 월드 시간으로 판정하고, 장면 커밋은 결과를 확정하는 시점만 담당한다.
+
+const WORLD_HOUR = 60 * 60;
+
+/** 부상 자연 회복: 마지막 부상 변화 뒤 이 월드 시간이 지나면 한 단계 낮아진다. null = 치료 없이는 나아지지 않음(위독) */
+export const INJURY_NATURAL_RECOVERY_WORLD_SECONDS = { NONE: null, MILD: 24 * WORLD_HOUR, MODERATE: 72 * WORLD_HOUR, SEVERE: 168 * WORLD_HOUR, CRITICAL: null } as const satisfies Record<
   "NONE" | "MILD" | "MODERATE" | "SEVERE" | "CRITICAL",
   number | null
 >;
+/** 고통 자연 완화: 마지막 고통 변화 뒤 12 월드 시간마다 한 단계 (부상이 남기는 최소 고통 아래로는 내려가지 않음) */
+export const PAIN_NATURAL_EASE_WORLD_SECONDS = 12 * WORLD_HOUR;
+/** 극심(온도 불편 극심·고통 극심·위독 부상)이 이 시간 이상 이어지면 생명 위험: 장면이 제안한 사망을 받아들일 수 있다 */
+export const EXTREME_LIFE_RISK_WORLD_SECONDS = 12 * WORLD_HOUR;
+/** 극심이 이 시간 이상 끊김 없이 이어지면 다음 장면 커밋에서 서버가 사망을 확정한다 (월드 48시간 = 실제 80분 진행) */
+export const EXTREME_LETHAL_WORLD_SECONDS = 48 * WORLD_HOUR;
+/** 한 장면에서 허용하는 악화 단계 (재난·고강도 사건이 진행 중이면 +1 예외) */
+export const CONDITION_MAX_WORSEN_STEPS_PER_SCENE = 1;
+
+// ── 월드 시간 (Phase 7-2-2)
+
+/** 실제 1시간 = 월드 36시간(1.5일). 실제 1초 = 월드 36초, 월드 1일 = 실제 40분. 장면 간격(실행 속도)과 별개이며 곱하지 않는다 */
+export const WORLD_TIME_SCALE = 36;
+export const WORLD_DAY_SECONDS = 24 * 60 * 60;
+/**
+ * 서버가 실행 중임을 마지막으로 확인한 뒤 이 시간이 지나도록 확인이 없으면(크래시·장시간 정지) 그 구간은 세지 않는다.
+ * Runner는 대기 중 2초, Gemini 호출 중 10초마다 확인을 남기므로 lease TTL과 같은 30초로 둔다.
+ */
+export const WORLD_CLOCK_MAX_GAP_MS = 30_000;

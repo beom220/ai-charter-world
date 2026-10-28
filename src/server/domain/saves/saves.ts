@@ -247,6 +247,8 @@ export async function loadSave(userId: AuthenticatedUserId, worldId: string, sav
         nextSceneAt: null,
         clientHoldSince: null,
         nextAutoSaveAt: null,
+        clockAnchorAt: null, // 불러온 뒤는 IDLE: 월드 시간은 스냅샷 값에서 멈춰 있다
+        clockCheckpointAt: null,
       },
     });
     await publishEvents(tx, worldId, [

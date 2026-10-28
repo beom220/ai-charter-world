@@ -367,13 +367,20 @@ enum EventStatus {
   CANCELLED // PENDING에서만 (진행 중 시도에 점유된 사건은 취소 불가)
 }
 
-// 캐릭터 신체 상태 (Phase 7-2). 감정(EmotionState)과 분리한 지속 상태. 통증은 부상 심도와 같은 단계로 본다(추후 별도 열로 확장)
-enum ThermalState {
-  NORMAL
+// 캐릭터 신체 상태 (Phase 7-2). 감정(EmotionState)과 분리한 지속 상태.
+// 7-2-2: 온도 불편은 원인(추위·더위)과 단계(경미·심함·극심)를 나누고, 고통은 부상과 독립된 단계로 둔다.
+enum ThermalCause {
+  NONE
   COLD
-  VERY_COLD
-  HOT
-  VERY_HOT
+  HEAT
+}
+
+/// 온도 불편·고통 공통 단계
+enum DiscomfortLevel {
+  NONE
+  MILD
+  SEVERE
+  EXTREME
 }
 
 enum InjurySeverity {
@@ -401,6 +408,7 @@ model GameState {
   worldId      String @id
   stateVersion Int    @default(0) // 펜싱 토큰: 장면 커밋·종료·불러오기·초기화 시 +1
   changeSeq    Int    @default(0) // 게임 상태 변경 카운터 (복구 지점 판정, A13)
+  worldSeconds Int    @default(0) // 월드 누적 시간(초). RUNNING으로 실제 진행한 시간 × 36만 더한다 (Phase 7-2-2). Day N HH:MM은 여기서 계산
   settingsSeq  Int    @default(0) // 설정 펜싱 카운터: 세계관·캐릭터 설정 변경·불러오기 때만 +1 (Phase 7-2-0, 속도 변경·사건 등록은 올리지 않음)
   nextSceneSeq Int    @default(1) // 기록 삭제와 무관하게 단조 증가
 
@@ -432,6 +440,7 @@ model ConversationScene {
   motiveRef        String? // WorldEvent id 등
   endReason        SceneEndReason
   contextTruncated Boolean        @default(false) // D6 안내 근거
+  worldSeconds     Int? // 커밋 때의 월드 시각 (7-2-2 이전 장면은 NULL)
   createdAt        DateTime       @default(now()) @db.Timestamptz(3)
 
   world        World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
@@ -596,15 +605,17 @@ model WorldEvent {
 
   // Phase 7-2 사건 시스템. 자동 사건은 프리셋 ID·강도, 사용자 사건은 description에 원문(200자)과 requestId(멱등).
   // 진행 순서는 startedSceneSeq(최초 반영 장면) → createdAt → id. 장면 수로 강제 종료하지 않는다.
-  presetId          String?         @db.VarChar(64) // config/world-events.ts
-  intensity         EventIntensity?
-  requestId         String?         @db.VarChar(64) // 사용자 제출 멱등 키 (worldId 안에서 UNIQUE)
-  startedSceneSeq   Int? // PENDING → ACTIVE가 된 장면
-  lastSceneSeq      Int? // 마지막으로 반영된 장면
-  resolvedSceneSeq  Int?
-  resolutionSummary String?         @db.Text
-  claimedAttemptId  String?         @db.VarChar(64) // 진행 중 생성 시도에 포함된 PENDING 사건 (취소 불가, 시도 종료 시 해제)
-  cancelledAt       DateTime?       @db.Timestamptz(3)
+  presetId             String?         @db.VarChar(64) // config/world-events.ts
+  intensity            EventIntensity?
+  requestId            String?         @db.VarChar(64) // 사용자 제출 멱등 키 (worldId 안에서 UNIQUE)
+  startedSceneSeq      Int? // PENDING → ACTIVE가 된 장면
+  lastSceneSeq         Int? // 마지막으로 반영된 장면
+  resolvedSceneSeq     Int?
+  resolutionSummary    String?         @db.Text
+  claimedAttemptId     String?         @db.VarChar(64) // 진행 중 생성 시도에 포함된 PENDING 사건 (취소 불가, 시도 종료 시 해제)
+  startedWorldSeconds  Int? // 발생(ACTIVE)한 월드 시각
+  resolvedWorldSeconds Int?
+  cancelledAt          DateTime?       @db.Timestamptz(3)
 
   world            World                      @relation(fields: [worldId], references: [id], onDelete: Cascade)
   sourceScene      ConversationScene?         @relation(fields: [sourceSceneId], references: [id], onDelete: SetNull)
@@ -634,18 +645,26 @@ model WorldEventPeriod {
 
 /// 캐릭터 신체 상태 1:1 (Phase 7-2). 사망해도 캐릭터 행(슬롯)은 그대로다 — deletedAt(소프트 삭제)과 다른 의미
 model CharacterCondition {
-  characterId           String         @id
-  worldId               String
-  thermal               ThermalState   @default(NORMAL)
-  injury                InjurySeverity @default(NONE) // 통증 단계와 같다
-  injuryCause           String?        @db.VarChar(200)
-  injurySceneSeq        Int? // 부상 발생 장면
-  injuryUpdatedSceneSeq Int? // 마지막 부상 변화(악화·치료·회복) 장면 — 자연 회복 계산 기준
-  vital                 VitalStatus    @default(ALIVE)
-  deathCause            String?        @db.VarChar(200)
-  deathSceneSeq         Int?
-  diedAt                DateTime?      @db.Timestamptz(3)
-  updatedAt             DateTime       @updatedAt @db.Timestamptz(3)
+  characterId            String          @id
+  worldId                String
+  // 시각 필드(*Seconds)는 월드 누적 초(GameState.worldSeconds 기준)다. 자연 회복·극심 지속·사망 위험은 월드 시간으로 판정한다
+  thermalCause           ThermalCause    @default(NONE) // NONE ⇔ thermalLevel NONE (CHECK)
+  thermalLevel           DiscomfortLevel @default(NONE)
+  thermalSinceSeconds    Int? // 현재 온도 단계가 시작된 월드 시각
+  painLevel              DiscomfortLevel @default(NONE) // 부상과 독립 (추위·질병으로도 생기고, 진통으로 먼저 줄 수 있다)
+  painCause              String?         @db.VarChar(200)
+  painSinceSeconds       Int?
+  injury                 InjurySeverity  @default(NONE)
+  injuryCause            String?         @db.VarChar(200)
+  injurySceneSeq         Int? // 부상 발생 장면
+  injuryUpdatedAtSeconds Int? // 마지막 부상 변화(발생·악화·치료·회복) 월드 시각 — 자연 회복 기준
+  extremeSinceSeconds    Int? // 극심(온도·고통)이 끊김 없이 시작된 월드 시각. 극심이 없으면 NULL
+  vital                  VitalStatus     @default(ALIVE)
+  deathCause             String?         @db.VarChar(200)
+  deathSceneSeq          Int?
+  deathWorldSeconds      Int?
+  diedAt                 DateTime?       @db.Timestamptz(3)
+  updatedAt              DateTime        @updatedAt @db.Timestamptz(3)
 
   character Character @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
   world     World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
@@ -656,16 +675,17 @@ model CharacterCondition {
 
 /// 신체 상태 변화 이력 (부상·치료·회복·체온·사망). 관련 사건·장면은 선택
 model CharacterConditionChange {
-  id          String              @id @default(cuid())
-  worldId     String
-  characterId String
-  sceneId     String? // SetNull
-  eventId     String? // SetNull
-  kind        ConditionChangeKind
-  fromValue   String              @db.VarChar(20)
-  toValue     String              @db.VarChar(20)
-  reason      String?             @db.VarChar(200)
-  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+  id           String              @id @default(cuid())
+  worldId      String
+  characterId  String
+  sceneId      String? // SetNull
+  eventId      String? // SetNull
+  kind         ConditionChangeKind
+  fromValue    String              @db.VarChar(20)
+  toValue      String              @db.VarChar(20)
+  reason       String?             @db.VarChar(200)
+  worldSeconds Int? // 변화가 확정된 월드 시각 (7-2-2)
+  createdAt    DateTime            @default(now()) @db.Timestamptz(3)
 
   world     World              @relation(fields: [worldId], references: [id], onDelete: Cascade)
   character Character          @relation(fields: [characterId, worldId], references: [id, worldId], onDelete: Cascade, onUpdate: Restrict)
@@ -694,6 +714,7 @@ enum StatusReason {
   LOADED
   RESET
   SERVER_RECOVERY
+  NOT_ENOUGH_CHARACTERS // 사망 등으로 대화 가능한 생존자가 2명 미만 (Phase 7-2-2)
 }
 
 enum ApiOutcome {
@@ -724,6 +745,8 @@ model SimulationRuntime {
   inFlightStartedAt DateTime?     @db.Timestamptz(3)
   clientHoldSince   DateTime?     @db.Timestamptz(3) // 활성 SSE 연결 0 → 신규 호출 보류 시작 시각 (D4)
   nextSceneAt       DateTime?     @db.Timestamptz(3) // 다음 장면 예정 시각 (UI 표시)
+  clockAnchorAt     DateTime?     @db.Timestamptz(3) // 월드 시계가 흐르기 시작한(아직 GameState.worldSeconds에 정산 안 된) 실제 시각. 멈춰 있으면 NULL
+  clockCheckpointAt DateTime?     @db.Timestamptz(3) // 서버가 실행 중임을 마지막으로 확인한 실제 시각 (크래시 뒤 정지 구간을 세지 않는 상한)
   nextAutoSaveAt    DateTime?     @db.Timestamptz(3) // 다음 자동 저장 예정 시각 (마지막 성공 + 1시간, Phase 6)
   updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
 

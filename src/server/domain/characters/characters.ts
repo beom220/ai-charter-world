@@ -176,8 +176,9 @@ export async function updateCharacter(
 ): Promise<{ character: CharacterView; changed: boolean }> {
   const changed = await prisma.$transaction(async (tx) => {
     await lockOwnedWorld(tx, userId, worldId);
-    const current = await tx.character.findFirst({ where: { id: characterId, worldId, deletedAt: null } });
+    const current = await tx.character.findFirst({ where: { id: characterId, worldId, deletedAt: null }, include: { condition: { select: { vital: true } } } });
     if (!current) throw new NotFoundError();
+    if (current.condition?.vital === "DEAD") throw new ConflictError("CHARACTER_DEAD", "사망한 캐릭터는 설정을 수정할 수 없습니다.");
 
     // 나이 비움은 기존 값을 유지한다
     const data = toData({ ...input, age: input.age ?? current.age });

@@ -7,6 +7,7 @@ import {
   findBackground,
   pickRandomBackground,
 } from "../../config/character-backgrounds";
+import { SNAPSHOT_SCHEMA_VERSION } from "../../config/limits";
 import { adulthoodBackgroundIssue, characterInputSchema } from "@/lib/schemas/character";
 import type { SnapshotV1 } from "@/lib/snapshot/v1";
 import { parseSnapshot, snapshotChecksum } from "@/server/domain/saves/snapshot";
@@ -162,7 +163,7 @@ describe("세이브 호환", () => {
 
   it("v1 스냅샷은 저장된 checksum 그대로 읽히고 배경 NULL인 최신 버전이 된다. v2의 잘못된 배경은 거절", () => {
     const parsed = parseSnapshot({ schemaVersion: 1, payload: v1, checksum: snapshotChecksum(v1).checksum });
-    expect(parsed.schemaVersion).toBe(3);
+    expect(parsed.schemaVersion).toBe(SNAPSHOT_SCHEMA_VERSION);
     expect(parsed.characters[0]).toMatchObject({ id: "a", childhoodBackgroundId: null, adulthoodBackgroundId: null });
 
     const v2 = { ...v1, schemaVersion: 2, characters: [{ ...v1.characters[0]!, childhoodBackgroundId: "childhood_city", adulthoodBackgroundId: "adulthood_doctor" }] };

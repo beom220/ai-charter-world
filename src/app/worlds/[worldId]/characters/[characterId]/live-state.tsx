@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { INJURY_LABEL, painLabel, thermalLabel, type DiscomfortLevel, type InjuryLevel, type ThermalCauseValue } from "@/lib/condition-labels";
+import { formatWorldTime } from "@/lib/world-clock";
 import { MOOD_LABEL } from "../../../ui";
 import { send } from "../../../world-form";
 
@@ -10,11 +12,25 @@ import { send } from "../../../world-form";
 // - 세계관 SSE를 구독해 scene.committed가 오면 /characters/[id]/state를 다시 읽는다. 상태 변화 수치는 메인 피드에 보이지 않는다.
 // - 요청마다 번호를 붙여 가장 최근 요청의 응답만 반영한다(응답 순서가 뒤집혀도 오래된 값으로 덮어쓰지 않음).
 // - state.replaced(불러오기)면 페이지 전체를 서버에서 다시 그린다(프로필이 바뀌었거나 캐릭터가 없어졌을 수 있음).
+// - 신체 상태(Phase 7-2-2): 온도 불편·고통·부상·생존. 사망하면 원인·장면·월드 시각을 보이고, 페이지를 다시 그려 수정 폼을 닫는다.
 
 type RelationValues = { affinity: number; trust: number; respect: number; familiarity: number };
 export type LiveMemory = { id: string; kind: string; acquisition: string; importance: number; content: string; aboutName: string | null };
+export type LiveCondition = {
+  thermalCause: ThermalCauseValue;
+  thermalLevel: DiscomfortLevel;
+  painLevel: DiscomfortLevel;
+  painCause: string | null;
+  injury: InjuryLevel;
+  injuryCause: string | null;
+  vital: "ALIVE" | "DEAD";
+  deathCause: string | null;
+  deathSceneSeq: number | null;
+  deathWorldSeconds: number | null;
+};
 type LiveState = {
   emotion: { mood: string; intensity: number } | null;
+  condition: LiveCondition;
   relations: { otherId: string; otherName: string; outgoing: RelationValues; incoming: RelationValues }[];
   memories: LiveMemory[];
 };
@@ -51,13 +67,21 @@ export function CharacterLiveState({
   const router = useRouter();
   const [state, setState] = useState(initial);
   const latest = useRef(0);
+  const dead = useRef(initial.condition.vital === "DEAD");
 
   /** 최신 값 다시 읽기. 늦게 도착한 이전 요청의 응답은 버린다 */
   const reload = useCallback(async () => {
     const seq = ++latest.current;
     const { ok, json } = await send(`/api/worlds/${worldId}/characters/${characterId}/state`, "GET").catch(() => ({ ok: false, json: null }));
-    if (ok && seq === latest.current) setState(json as LiveState);
-  }, [worldId, characterId]);
+    if (ok && seq === latest.current) {
+      const next = json as LiveState;
+      if (next.condition.vital === "DEAD" && !dead.current) {
+        dead.current = true;
+        router.refresh(); // 사망: 수정 폼을 닫는다
+      }
+      setState(next);
+    }
+  }, [worldId, characterId, router]);
 
   useEffect(() => {
     // 보기 전용 구독(watch=1): 상세 화면을 보고 있다고 시뮬레이션이 계속 돌지 않게 대화 화면 연결로 세지 않는다
@@ -70,6 +94,33 @@ export function CharacterLiveState({
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
+      <section className={`${panel} sm:col-span-2 ${state.condition.vital === "DEAD" ? "border-red-600/40" : ""}`}>
+        <h2 className="text-sm font-semibold">신체 상태</h2>
+        {state.condition.vital === "DEAD" ? (
+          <p className="text-sm">
+            <span className="font-semibold text-red-600">사망</span> — {state.condition.deathCause ?? "원인 미상"}
+            <span className="text-xs text-foreground/60">
+              {state.condition.deathSceneSeq !== null ? ` · 장면 #${state.condition.deathSceneSeq}` : ""}
+              {state.condition.deathWorldSeconds !== null ? ` · ${formatWorldTime(state.condition.deathWorldSeconds)}` : ""}
+            </span>
+          </p>
+        ) : (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 text-sm">
+            <dt className="text-foreground/70">체감 온도</dt>
+            <dd>{thermalLabel(state.condition.thermalCause, state.condition.thermalLevel)}</dd>
+            <dt className="text-foreground/70">고통</dt>
+            <dd>
+              {painLabel(state.condition.painLevel)}
+              {state.condition.painCause && <span className="text-xs text-foreground/60"> · {state.condition.painCause}</span>}
+            </dd>
+            <dt className="text-foreground/70">부상</dt>
+            <dd>
+              {INJURY_LABEL[state.condition.injury]}
+              {state.condition.injuryCause && <span className="text-xs text-foreground/60"> · {state.condition.injuryCause}</span>}
+            </dd>
+          </dl>
+        )}
+      </section>
       <section className={panel}>
         <h2 className="text-sm font-semibold">현재 감정</h2>
         <p className="text-sm">{state.emotion ? `${MOOD_LABEL[state.emotion.mood]} (강도 ${state.emotion.intensity}/100)` : "기록 없음"}</p>

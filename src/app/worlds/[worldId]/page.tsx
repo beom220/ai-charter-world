@@ -50,7 +50,7 @@ async function WorldConversation({ params }: { params: PageProps<"/worlds/[world
     <ScenePanel
       key={`scene-${saves.replaceMarker}`} // 불러오기 뒤에는 새로 마운트해 이전 장면·재생 상태를 버린다
       worldId={worldId}
-      activeCharacterIds={characters.map((c) => c.id)}
+      activeCharacters={characters.map((c) => ({ id: c.id, alive: c.condition.vital === "ALIVE" }))}
       initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
       initialHasMore={scenes.hasMore}
       eventCursor={eventCursor}

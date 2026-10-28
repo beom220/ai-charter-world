@@ -44,7 +44,7 @@ describe("DB 스키마 상태", () => {
     expect(rows).toEqual([]);
   });
 
-  it("database.md §4.1 CHECK 제약 15개가 모두 있다", async () => {
+  it("database.md §4.1 CHECK 제약 17개가 모두 있다", async () => {
     const rows = await prisma.$queryRaw<{ conname: string }[]>`
       SELECT c.conname FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
       WHERE n.nspname = 'public' AND c.contype = 'c' ORDER BY c.conname`;
@@ -56,8 +56,10 @@ describe("DB 스키마 상태", () => {
       "character_bigfive_range",
       "character_condition_death_record",
       "character_condition_injury_cause",
+      "character_condition_thermal_pair",
       "emotion_range",
       "gs_turns",
+      "gs_world_seconds",
       "memory_importance",
       "rel_not_self",
       "rel_range",

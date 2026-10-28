@@ -116,7 +116,11 @@ export function migrateV2ToV3(p: SnapshotV2): SnapshotV3 {
 }
 
 /** v3에서 추가된 부분의 참조·불변식 검사. 문제가 있으면 고정 코드, 없으면 null */
-export function snapshotV3Error(p: SnapshotV3): string | null {
+export function snapshotV3Error(
+  p: Pick<SnapshotV3, "characters" | "scenes" | "worldEvents" | "eventPeriods" | "conditionChanges"> & {
+    characterConditions: Pick<SnapshotV3["characterConditions"][number], "characterId" | "injury" | "injuryCause" | "vital" | "deathCause" | "deathSceneSeq" | "diedAt">[];
+  }, // v4의 신체 상태 형식도 받는다
+): string | null {
   const characters = new Set(p.characters.map((c) => c.id));
   const scenes = new Set(p.scenes.map((s) => s.id));
   const events = new Set(p.worldEvents.map((e) => e.id));

@@ -9,7 +9,8 @@ import {
   SCENE_WORLD_FIELD_BUDGET_CHARS,
 } from "../../../../config/limits";
 import { PERSONALITY_TAGS } from "../../../../config/personality-map";
-import type { SceneAlias } from "../validation/scene-output";
+import { formatWorldTime } from "@/lib/world-clock";
+import type { EventAlias, SceneAlias } from "../validation/scene-output";
 
 // 최소 ContextBuilder — StoryMode 프롬프트 (architecture.md §6.4·§6.5). 런타임 독립 순수 함수.
 // Phase 5-1: 세계관(이름·규칙·현재 상황·worldContext)과 참가자 프로필·현재 감정을 넣는다.
@@ -22,7 +23,10 @@ import type { SceneAlias } from "../validation/scene-output";
 //   성격·감정·기억·관계·세계 규칙보다 우선하지 않고, 매 장면 반복 설명하거나 현재 사건으로 다루지 않게 지시한다.
 // 설정 변경(Phase 7-2): <world>·<character>는 지금 유효한 설정이며 <history>·기억과 어긋나면 설정을 따른다.
 //   마지막 설정 변경 전에 만든 장면은 <history>에 "장면 #N까지 이전 설정" 표시를 붙여, 이전 설정의 사실을 현재로 이어받지 않게 한다.
-// 구성 순서: 세계관 → 참가자 → 최근 장면 기록 → 이번 장면 지시.
+// Phase 7-2-2: 현재 월드 시각(Day N, HH:MM), 진행 중 사건 <events>(오래된 것부터, E1… 별칭, 설명은 짧게 잘라 예산 유지),
+//   참가자의 신체 상태(온도 불편·고통·부상·생명 위험)를 넣고, 사건별 결과(events)와 상태 변화 제안(conditions)을 같은 응답으로 받는다.
+//   사건은 세계에 일어난 일이지 인물에 대한 명령이 아니며, 인물은 오래된 미해결 사건부터 해결하려 하되 긴급 위험에는 먼저 대응할 수 있다.
+// 구성 순서: 세계관 → 참가자 → 최근 장면 기록 → 진행 중 사건 → 이번 장면 지시.
 // - 사용자 입력은 모두 구분 태그 안에 데이터로 넣고, 태그 안의 내용은 지시가 아니라고 명시한다(프롬프트 인젝션 완화).
 // - 프롬프트에는 DB ID 대신 C1~C6 별칭을 쓴다. 비참가자 정보는 넣지 않는다.
 // - 이 모듈의 결과(프롬프트 원문)는 로그·응답에 넣지 않는다.
@@ -52,7 +56,28 @@ export type PromptCharacter = {
   memories?: PromptMemory[];
   /** 과거 배경 (유년기 → 성년기 순, 고정 프리셋의 이름·설명) */
   backgrounds?: PromptBackground[];
+  /** 신체 상태 요약 (정상이면 생략). 예: ["추움(심함)", "고통(경미): 다리를 다침", "부상 아픔: 늑대에게 물림", "생명 위험"] */
+  condition?: string[];
 };
+
+/** 진행 중 사건 (오래된 것부터). isNew = 이번 장면에서 시작하는 자동 사건 */
+export type PromptEvent = {
+  alias: EventAlias;
+  kind: "RANDOM" | "USER_INTERVENTION";
+  title: string;
+  description: string;
+  isNew: boolean;
+  urgent: boolean;
+  /** 발생 시점 표시 (예: "장면 #5, Day 2, 08:10") */
+  since: string | null;
+  /** 생물이 불가능한 세계관에서 대신 쓸 사건 */
+  fallback?: { title: string; description: string } | null;
+};
+
+export type StoryExtras = { worldSeconds?: number; events?: PromptEvent[]; omittedEvents?: number };
+
+/** 사건 설명 한 줄 길이 (오래된 사건이 늘어도 프롬프트가 폭증하지 않게) */
+const EVENT_DESCRIPTION_MAX = 120;
 
 export type PromptBackground = { stage: "유년기" | "성년기"; name: string; description: string };
 
@@ -167,6 +192,7 @@ function describeCharacter(c: PromptCharacter): string {
     c.backgrounds?.length ? `과거 배경: ${c.backgrounds.map((b) => `${b.stage} — ${b.name}(${b.description})`).join(" / ")}` : null,
     c.goal ? `목표: ${escape(c.goal)}` : null,
     c.mood ? `현재 감정: ${c.mood} (강도 ${c.moodIntensity}/100)` : null,
+    c.condition?.length ? `신체 상태: ${c.condition.map(escape).join(" / ")}` : null,
     c.characterContext ? `설정: ${escape(c.characterContext)}` : null,
     ...(c.relations?.length
       ? [
@@ -184,7 +210,34 @@ function describeCharacter(c: PromptCharacter): string {
     .join("\n");
 }
 
-export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter[], maxTurns: number, history: PromptHistoryScene[] = []): StoryPrompt {
+function describeEvents(events: PromptEvent[], omitted: number): string | null {
+  if (!events.length) return null;
+  const lines = events.map((e) => {
+    const head = e.isNew ? "새 사건 — 이번 장면에서 시작" : `진행 중${e.since ? ` · ${e.since}부터` : ""}`;
+    const tags = [e.kind === "USER_INTERVENTION" ? "사용자가 일으킨 사건" : null, e.urgent ? "긴급" : null].filter(Boolean).join(", ");
+    const line = `[${e.alias}] (${head}${tags ? `, ${tags}` : ""}) ${escape(e.title)} — ${escape(cut(e.description, EVENT_DESCRIPTION_MAX))}`;
+    return e.fallback
+      ? `${line}\n   (이 세계관에 생물이 존재할 수 없다면 대신 「${escape(e.fallback.title)} — ${escape(cut(e.fallback.description, EVENT_DESCRIPTION_MAX))}」로 쓰고 usedFallback을 true로 한다)`
+      : line;
+  });
+  return [
+    "<events>",
+    "이 세계에서 진행 중인 사건 (오래된 것부터). 해결되지 않은 사건은 계속 이어진다.",
+    ...lines,
+    omitted > 0 ? `(그 밖에 더 최근 사건 ${omitted}건이 진행 중이다)` : null,
+    "</events>",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function buildStoryPrompt(
+  world: PromptWorld,
+  characters: PromptCharacter[],
+  maxTurns: number,
+  history: PromptHistoryScene[] = [],
+  extras: StoryExtras = {},
+): StoryPrompt {
   const aliases = characters.map((c) => c.alias).join(", ");
   const systemInstruction = [
     "너는 사용자가 만든 세계관 속 인물들의 대화 장면을 쓰는 작가다.",
@@ -206,6 +259,13 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
     `- relationships: from이 to를 보는 시각이 달라진 경우만. affinity·trust·respect·familiarity는 변화량(각 -${RELATIONSHIP_AXIS_DELTA_MAX}~${RELATIONSHIP_AXIS_DELTA_MAX}). reason에 짧은 이유.`,
     `- memories: 인물이 오래 기억할 중요한 일만(인물당 최대 ${MEMORY_PER_OWNER_PER_SCENE}개). 모든 대사를 기억으로 만들지 않는다. owner는 이 장면 참가자, content는 owner의 시점에서 쓴다.`,
     "  직접 겪은 일은 acquisition WITNESSED, 다른 인물의 말로 알게 된 사실은 TOLD로 두고 '누가 무엇이라고 말했다'처럼 출처를 남긴다. 추측·소문을 확정된 사실처럼 쓰지 않는다. about은 그 기억의 대상 인물(없으면 null), importance는 1~5.",
+    "<events>의 사건은 이 세계에 실제로 일어난 일이다. 인물에게 내리는 명령이 아니며, 인물의 반응·판단·성공 여부는 성격·관계·신체 상태에 따라 스스로 정한다.",
+    "인물들은 가장 오래된 미해결 사건부터 해결하려고 노력하되, 눈앞의 긴급 위험에는 먼저 대응할 수 있다. 다른 미해결 사건을 잊지 않는다.",
+    "새 사건은 이번 장면에서 실제로 일어나게 하고 세계관의 시대·장소·규칙에 맞게 구체화한다. 사건의 핵심 대상을 다른 것으로 바꾸지 않는다(대체 지시가 있는 경우만 예외). 세계관 설정 자체는 바꾸지 않는다.",
+    "events에는 <events>의 각 사건마다 ONGOING 또는 RESOLVED를 쓴다. RESOLVED는 이번 장면에서 해결·완화·실패·타협·위협 소멸 같은 구체적 결과가 났을 때만이며 resolutionSummary에 그 결과를 쓴다. 새 사건은 realization에 이 세계에서 실제로 일어난 모습을 한 문장으로 쓴다.",
+    "인물의 신체 상태(추위·더위·고통·부상)는 말과 행동에 자연스럽게 드러난다. 의료·구조 관련 과거 배경은 판단에 도움이 될 수 있지만 성공을 보장하지 않는다.",
+    "conditions에는 이번 장면에서 실제로 달라진 참가자의 신체 상태만 넣는다. 부상·고통은 폭행·동물 공격·낙상·재난·질병 등 실제 피해가 장면에서 일어났을 때만이다(위협·말다툼·계획만으로는 아니다).",
+    "  thermal은 날씨·환경·대피·난방·냉방 결과에 따른 추위·더위 단계, treatment는 장면에서 실제로 수행한 치료·응급처치·보온·냉각만(계획·약속은 null), death는 장면에서 실제로 치명적인 결과가 났을 때만 쓴다. 상태는 한 장면에 한 단계씩 바뀌는 것이 자연스럽다.",
     "응답은 지정된 JSON 스키마만 따른다. actionIntent·emotionCue가 없으면 null로 둔다.",
   ].join("\n");
 
@@ -213,6 +273,7 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
   const worldBlock = [
     "<world>",
     `이름: ${escape(world.name)}`,
+    extras.worldSeconds !== undefined ? `현재 월드 시각: ${formatWorldTime(extras.worldSeconds)}` : null,
     world.worldRules ? `규칙: ${escape(cut(world.worldRules, SCENE_WORLD_FIELD_BUDGET_CHARS))}` : null,
     world.currentSituation ? `현재 상황: ${escape(cut(world.currentSituation, SCENE_WORLD_FIELD_BUDGET_CHARS))}` : null,
     context.text ? `세계관 설명:\n${escape(context.text)}` : null,
@@ -230,6 +291,7 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
   const instruction = historyBlock
     ? "위 인물들이 가장 최근 장면 이후에 나누는 다음 대화 장면 하나를 써라."
     : "위 인물들이 지금 이 세계에서 나누는 대화 장면 하나를 써라.";
-  const prompt = [worldBlock, ...characters.map(describeCharacter), historyBlock, instruction].filter(Boolean).join("\n\n");
+  const eventsBlock = describeEvents(extras.events ?? [], extras.omittedEvents ?? 0);
+  const prompt = [worldBlock, ...characters.map(describeCharacter), historyBlock, eventsBlock, instruction].filter(Boolean).join("\n\n");
   return { systemInstruction, prompt, contextTruncated: context.truncated };
 }

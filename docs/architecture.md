@@ -1055,6 +1055,21 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **컨텍스트**: `<character>`에 `과거 배경: 유년기 — 이름(설명) / 성년기 — 이름(설명)` 한 줄. 시스템 지시로 과거 경험일 뿐 현재 성격·감정·관계·기억·세계 규칙보다 우선하지 않고, 매 장면 설명하거나 현재 사건처럼 쓰지 않게 한다. 호출 수·출력 스키마는 그대로.
 - **세이브**: 스냅샷 v2(`lib/snapshot/v2.ts`) = v1 + 캐릭터 배경 ID. v1은 저장된 원본·checksum 그대로 검증한 뒤 읽을 때 `migrateV1ToV2`로 배경 NULL을 채운다. v2는 알 수 없는 배경 ID·18세 이하 성년기를 `SAVE_INVALID`로 거절한다.
 
+### 13.4 월드 시간·사건 진행·신체 상태 반영 (Phase 7-2-2, PRD v2.0)
+
+실행 명세: `docs/PHASE_7_2_2_EVENTS_CONDITIONS_WORLD_TIME.md`. 구현 전 조사 결과 기존 월드 시계는 없었고, 실행 속도(`intervalPreset`)는 장면 간격만 정한다(월드 시간 배율과 무관, 곱하지 않음).
+
+- **월드 시계** (`domain/simulation/world-clock.ts`, `lib/world-clock.ts`): 정산된 값 `GameState.worldSeconds` + 흐르는 중이면 `SimulationRuntime.clockAnchorAt`(정산 안 된 구간 시작)·`clockCheckpointAt`(서버가 실행 중임을 마지막으로 확인한 시각). 흐르는 조건 = RUNNING이고 보류 아님.
+  - 시작·재개·보류 해제: `startWorldClock`. 일시정지·종료·보류 시작·자동 일시정지·사용량/키 오류 정지: 같은 트랜잭션에서 `settleWorldClock(stop)`. 장면 커밋: `settleWorldClock(keep)`으로 정산해 그 장면의 월드 시각을 정한다(롤백되면 정산도 롤백, 다음 정산에 포함).
+  - Runner가 대기 단계(최대 2초)·호출 중 heartbeat(10초)마다 `touchWorldClock`으로 확인을 남긴다. 마지막 확인 뒤 `WORLD_CLOCK_MAX_GAP_MS`(30초) 넘게 확인이 없으면(크래시·장기 정지) 확인 시각까지만 세고 기준을 지금으로 옮긴다 → 정지 구간 소급 없음.
+  - 정산은 월드 초 단위, 정산에 쓰지 않은 실제 ms는 기준 시각에 남겨 다음 정산으로 넘긴다(누락·이중 계산 없음). 불러오기는 IDLE이므로 시계 기준을 비운다.
+  - 상태 API·`runtime.status`에 `worldClock { seconds, running, asOf }`. 화면은 asOf 이후 실제 시간 × 36을 더해 1초마다 표시하고, 새 값이 와도 이미 보인 값 아래로 내려가지 않는다.
+- **자동 사건 연결**: Runner `claimAttempt`·수동 생성 점유 트랜잭션(World 잠금·펜싱 안)에서 `claimAutoEvent` → `ensureAutoEventPeriod`(구간당 1행)로 판정하고, 예약 장면이면 프리셋을 구간 행에 고정한다(재시도도 같은 프리셋). 사건 행 생성·`firedAt`은 장면 커밋 트랜잭션에서만 → 실패·펜싱 거부 시 사건 없음, 다음 시도가 발생시킨다.
+- **사건 진행·해결** (`domain/scenes/scene-world.ts`): ACTIVE 사건을 오래된 순(E1…, 최대 9개, 설명 120자)으로 `<events>`에 넣고, 출력 `events[{ref, status, resolutionSummary, realization, usedFallback}]`(선택)을 별칭으로만 되돌린다. 요약이 있는 RESOLVED만 해결(고강도 새 사건은 첫 장면에 해결 불가), 없는 별칭·요약 없는 해결은 무시, 결과가 없으면 진행 중으로 `lastSceneSeq`만 갱신. 생물 대체 응답이면 대체 프리셋으로 기록. 장면 `motiveType = WORLD_EVENT`, `motiveRef` = 사건.
+- **신체 상태** (`engine/commit/condition-rules.ts`, 순수 함수): 커밋 때 정산한 월드 시간으로 살아 있는 모든 캐릭터에 적용(참가자만 출력 `conditions` 제안 반영). 순서: 치료 → 부상 악화 → 고통 → 온도 → 자연 회복 → 극심 추적 → 사망. 사망 시 생존자 2명 미만이면 RUNNING → PAUSING(`NOT_ENOUGH_CHARACTERS`, 시계 정지) → 시도 종료 후 PAUSED. 시작·재개·참가자 선정은 생존자만 센다. 사망 캐릭터 수정은 409 `CHARACTER_DEAD`.
+- **화면**: 대화 피드의 말풍선은 캐릭터 발화만. 사건 발생은 장면 대사 앞, 해결·상태 변화·사망은 대사 공개 뒤에 시스템 줄로(`SceneView.notes`), 진행 중 사건 목록(`GET /api/worlds/[id]/events`)과 월드 시각은 피드 위. 캐릭터 목록 배지·상세 신체 상태 패널(실시간 갱신).
+- **세이브**: 스냅샷 v4(`lib/snapshot/v4.ts`) = v3 + `gameState.worldSeconds`·장면/사건/변화의 월드 시각·신체 상태 재구성. `migrateV3ToV4`는 DB 마이그레이션 20261028150000과 같은 보존적 매핑. 시계 기준(anchor)은 담지 않는다.
+
 ### 13.3 사건 시스템과 캐릭터 신체 상태 (Phase 7-2, PRD v1.9)
 
 실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터(완료) → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 스파이크.

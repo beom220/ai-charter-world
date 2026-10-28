@@ -15,6 +15,8 @@ import { logServerError } from "@/server/logging/log";
 import { AppError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { applySceneProposals, loadParticipantContext } from "./scene-state";
+import { applySceneWorld, claimAutoEvent, conditionPromptLines, countAlive, DEFAULT_CONDITION_STATE, loadPromptEvents, loadSceneNotes, type AutoEventClaim, type SceneNote } from "./scene-world";
+import { settleWorldClock } from "@/server/domain/simulation/world-clock";
 import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/server/domain/providers/gemini-verification";
 
 // 수동 대화 장면 1개 생성 (Phase 5-1 Vertical Slice, architecture.md §6.3~§6.7의 축소판). 런타임 독립.
@@ -47,6 +49,10 @@ export type SceneView = {
   title: string;
   summary: string;
   contextTruncated: boolean;
+  /** 커밋 때의 월드 시각 (7-2-2 이전 장면은 null) */
+  worldSeconds: number | null;
+  /** 사건 발생·해결, 신체 상태 변화 (캐릭터 발화와 분리된 시스템 정보) */
+  notes: SceneNote[];
   createdAt: Date;
   messages: SceneMessageView[];
 };
@@ -64,6 +70,7 @@ const sceneSelect = {
   title: true,
   summary: true,
   contextTruncated: true,
+  worldSeconds: true,
   createdAt: true,
   messages: {
     orderBy: { turnIndex: "asc" },
@@ -71,10 +78,11 @@ const sceneSelect = {
   },
 } as const;
 
-type SceneRow = Omit<SceneView, "messages"> & { messages: (Omit<SceneMessageView, "speakerName"> & { speakerNameSnapshot: string })[] };
+type SceneRow = Omit<SceneView, "messages" | "notes"> & { messages: (Omit<SceneMessageView, "speakerName"> & { speakerNameSnapshot: string })[] };
 
-const toView = (row: SceneRow): SceneView => ({
+const toView = (row: SceneRow, notes: SceneNote[] = []): SceneView => ({
   ...row,
+  notes,
   messages: row.messages.map(({ speakerNameSnapshot, ...m }) => ({ ...m, speakerName: speakerNameSnapshot })),
 });
 
@@ -95,7 +103,9 @@ export async function listScenes(
     take: take + 1,
     select: sceneSelect,
   });
-  return { scenes: rows.slice(0, take).map(toView), hasMore: rows.length > take };
+  const page = rows.slice(0, take);
+  const notes = await loadSceneNotes(prisma, worldId, page);
+  return { scenes: page.map((r) => toView(r, notes.get(r.id))), hasMore: rows.length > take };
 }
 
 /**
@@ -148,6 +158,8 @@ export type SceneAttempt = {
   runner?: { runId: string; leaseOwner: string };
   /** Gemini 요청 예약 직전에 호출한다. throw하면 요청을 보내지 않는다 (Runner의 호출 직전 재검증) */
   beforeRequest?: () => Promise<void>;
+  /** 시도 기록 때 정한 자동 사건 (예약 장면이면). 커밋 트랜잭션에서 사건을 만들고 구간을 발생 처리한다 */
+  autoEvent?: AutoEventClaim | null;
   /**
    * 수동 생성: 커밋 때 settingsSeq가 준비 시점과 같아야 한다(IDLE에서는 호출 중에도 설정을 바꿀 수 있으므로).
    * Runner는 진행 중 시도가 있으면 설정 수정이 거부되므로 쓰지 않는다.
@@ -168,18 +180,18 @@ export async function prepareScene(userId: AuthenticatedUserId, worldId: string,
       currentSituation: true,
       worldContext: true,
       updatedAt: true,
-      gameState: { select: { maxTurnsPerScene: true, settingsSeq: true } },
+      gameState: { select: { maxTurnsPerScene: true, settingsSeq: true, worldSeconds: true } },
     },
   });
   if (!world?.gameState) throw new NotFoundError();
-  // 참가자는 서버가 정한다. 삭제된 캐릭터는 후보에서 제외한다
+  // 참가자는 서버가 정한다. 삭제된 캐릭터와 사망자는 후보에서 제외한다 (사망자는 발화·참가 불가, 슬롯만 차지)
   const active = await prisma.character.findMany({
-    where: { worldId, deletedAt: null, world: { ownerId: userId } },
+    where: { worldId, deletedAt: null, world: { ownerId: userId }, OR: [{ condition: null }, { condition: { vital: "ALIVE" } }] },
     orderBy: { createdAt: "asc" },
-    include: { emotionState: { select: { mood: true, intensity: true } } },
+    include: { emotionState: { select: { mood: true, intensity: true } }, condition: true },
   });
   const rows = selectSceneParticipants(active, deps.random);
-  if (!rows) throw new ConflictError("NOT_ENOUGH_CHARACTERS", `대화하려면 활성 캐릭터가 ${SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.`);
+  if (!rows) throw new ConflictError("NOT_ENOUGH_CHARACTERS", `대화하려면 대화할 수 있는 생존 캐릭터가 ${SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.`);
   const characterIds = rows.map((r) => r.id);
   const characters: (PromptCharacter & { id: string })[] = rows.map((r, i) => {
     return {
@@ -196,6 +208,7 @@ export async function prepareScene(userId: AuthenticatedUserId, worldId: string,
       mood: r.emotionState?.mood ?? null,
       moodIntensity: r.emotionState?.intensity ?? null,
       backgrounds: promptBackgrounds(r.childhoodBackgroundId, r.adulthoodBackgroundId),
+      condition: conditionPromptLines({ ...DEFAULT_CONDITION_STATE, ...(r.condition ?? {}) }, world.gameState!.worldSeconds),
     };
   });
   // 참가자 사이 관계와 각자의 기억 (Phase 5-5). 비참가자의 기억은 넣지 않는다
@@ -230,7 +243,7 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
   //    Runner의 시도 기록과 같이 World 잠금 아래에서 설정 펜싱(settingsSeq)을 확인한 뒤 점유한다 (잠금 순서 World → Runtime)
   const attemptId = randomUUID();
   const startedAt = now();
-  await prisma.$transaction(async (tx) => {
+  const autoEvent = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
     if (!(await settingsUnchanged(tx, worldId, prepared.settingsSeq))) throw settingsChangedError();
     const claimed = await tx.simulationRuntime.updateMany({
@@ -242,10 +255,11 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
       data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
     });
     if (claimed.count === 0) throw new ConflictError("SCENE_IN_PROGRESS", "이 세계관에서 이미 장면을 생성하고 있습니다. 잠시 후 다시 시도하세요.");
+    return claimAutoEvent(tx, worldId, deps.random ?? Math.random); // 자동 사건 구간 판정 (Runner와 같은 영속 규칙)
   });
 
   try {
-    return await runSceneAttempt(userId, worldId, prepared, { attemptId, expectedSettingsSeq: prepared.settingsSeq }, deps);
+    return await runSceneAttempt(userId, worldId, prepared, { attemptId, expectedSettingsSeq: prepared.settingsSeq, autoEvent }, deps);
   } finally {
     await prisma.simulationRuntime
       .updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } })
@@ -267,7 +281,12 @@ export async function runSceneAttempt(
   const expected = await prisma.gameState.findUniqueOrThrow({ where: { worldId }, select: { stateVersion: true, maxTurnsPerScene: true } });
   const maxTurns = expected.maxTurnsPerScene;
   const aliases = characters.map((c) => c.alias);
-  const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId, settingsChangedAt));
+  const promptEvents = await loadPromptEvents(worldId, attempt.autoEvent ?? null);
+  const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId, settingsChangedAt), {
+    worldSeconds: world.gameState!.worldSeconds,
+    events: promptEvents.events,
+    omittedEvents: promptEvents.omitted,
+  });
 
   // 3) UsageGuard를 거친 Gemini 호출 1회
   const usageMeter = createUsageMeter(
@@ -290,7 +309,7 @@ export async function runSceneAttempt(
         model: modelId,
         systemInstruction: prompt.systemInstruction,
         prompt: prompt.prompt,
-        responseJsonSchema: sceneResponseJsonSchema(aliases, maxTurns),
+        responseJsonSchema: sceneResponseJsonSchema(aliases, maxTurns, promptEvents.refs.map((r) => r.alias)),
         maxOutputTokens: SCENE_MAX_OUTPUT_TOKENS,
         temperature: SCENE_TEMPERATURE,
         timeoutMs: SCENE_GENERATION_TIMEOUT_MS,
@@ -343,6 +362,9 @@ export async function runSceneAttempt(
     if (stillActive !== characterIds.length) {
       throw new ConflictError("STALE_REFERENCE", "생성하는 동안 참가 캐릭터가 삭제되어 이번 장면을 저장하지 않았습니다.");
     }
+    // 이 장면의 월드 시각: 흐른 시간을 이 트랜잭션에서 정산한다(시계 상태는 유지). 롤백되면 정산도 되돌아가 다음 정산에 포함된다
+    const committedAt = now();
+    const worldSeconds = await settleWorldClock(tx, worldId, committedAt, "keep");
 
     const scene = await tx.conversationScene.create({
       data: {
@@ -357,6 +379,7 @@ export async function runSceneAttempt(
         motiveType: "MIXED",
         endReason: output.scene.endReason,
         contextTruncated: prompt.contextTruncated,
+        worldSeconds,
       },
     });
     await tx.sceneParticipant.createMany({
@@ -379,6 +402,22 @@ export async function runSceneAttempt(
     });
     // 감정·관계·기억 제안 반영 (Phase 5-5). 같은 트랜잭션이므로 실패하면 장면과 함께 아무것도 저장되지 않는다
     await applySceneProposals(tx, worldId, scene.id, characters, output.proposals);
+    // 사건 발생·진행·해결과 신체 상태(Phase 7-2-2). 같은 트랜잭션이므로 실패·펜싱 거부면 사건·상태도 남지 않는다
+    await applySceneWorld(tx, {
+      worldId,
+      scene: { id: scene.id, seq: scene.seq },
+      worldSeconds,
+      now: committedAt,
+      participants: characters,
+      output,
+      refs: promptEvents.refs,
+      autoEvent: attempt.autoEvent ?? null,
+    });
+    // 사망으로 대화 가능한 생존자가 2명 미만이면 실행을 멈춘다 (이 시도는 그대로 커밋, 진행 중 표시가 풀리면 PAUSED)
+    if ((await countAlive(tx, worldId)) < SCENE_PARTICIPANTS_MIN) {
+      const stopped = await tx.simulationRuntime.updateMany({ where: { worldId, status: "RUNNING" }, data: { status: "PAUSING", statusReason: "NOT_ENOUGH_CHARACTERS", nextSceneAt: null } });
+      if (stopped.count) await settleWorldClock(tx, worldId, committedAt, "stop");
+    }
     await tx.gameState.update({
       where: { worldId },
       data: { stateVersion: { increment: 1 }, changeSeq: { increment: 1 }, nextSceneSeq: { increment: 1 }, lastCommittedAt: now() },
@@ -387,7 +426,8 @@ export async function runSceneAttempt(
     // 복구 지점(RECOVERY)·자동 저장 슬롯은 건드리지 않는다 (Phase 6: 복구 지점은 다음 불러오기 때만 교체, §9.3)
 
     // 검증·저장된 내용만 이벤트로 보낸다 (프롬프트·키·응답 원문 없음)
-    const view = toView(await tx.conversationScene.findUniqueOrThrow({ where: { id: scene.id }, select: sceneSelect }));
+    const notes = await loadSceneNotes(tx, worldId, [{ id: scene.id, seq: scene.seq }]);
+    const view = toView(await tx.conversationScene.findUniqueOrThrow({ where: { id: scene.id }, select: sceneSelect }), notes.get(scene.id));
     await publishEvents(tx, worldId, [{ type: "scene.committed", payload: { scene: JSON.parse(JSON.stringify(view)) } }]);
     return view;
   });

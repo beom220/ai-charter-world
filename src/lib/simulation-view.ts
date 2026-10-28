@@ -11,7 +11,7 @@ export type IntervalPresetValue = (typeof INTERVAL_PRESETS)[number];
 export const INTERVAL_LABEL: Record<IntervalPresetValue, string> = { SLOW: "느리게", NORMAL: "보통", FAST: "빠르게" };
 
 const runtimeStatusSchema = z.enum(["IDLE", "RUNNING", "PAUSING", "PAUSED"]);
-const statusReasonSchema = z.enum(["USER", "CLIENT_DISCONNECTED", "USAGE_LIMIT", "KEY_INVALID", "LOADED", "RESET", "SERVER_RECOVERY"]);
+const statusReasonSchema = z.enum(["USER", "CLIENT_DISCONNECTED", "USAGE_LIMIT", "KEY_INVALID", "LOADED", "RESET", "SERVER_RECOVERY", "NOT_ENOUGH_CHARACTERS"]);
 
 /**
  * 세계관·캐릭터 설정(생성·수정·삭제)을 바꿀 수 있는 실행 상태인가 (PRD FR-03·FR-04, 서버·화면 공용).
@@ -33,6 +33,8 @@ export const simulationStateSchema = z.object({
   inFlight: z.boolean(),
   held: z.boolean(),
   holdDeadline: z.string().nullable(),
+  /** 월드 시간 (Phase 7-2-2): asOf 시각의 월드 누적 초, 흐르는 중인지 */
+  worldClock: z.object({ seconds: z.number().int().min(0), running: z.boolean(), asOf: z.string() }),
 });
 export type SimulationStateView = z.infer<typeof simulationStateSchema>;
 
@@ -155,6 +157,8 @@ export function statusNotice(state: SimulationStateView): StatusNotice | null {
       return { tone: "warn", text: "오늘의 사용량 한도에 도달했습니다. 한도를 올리거나 자정(한국 시간) 이후에 재개하세요." };
     case "KEY_INVALID":
       return { tone: "warn", text: "Gemini 연결 상태를 확인해 주세요. 키 검증과 모델 선택 후 재개할 수 있습니다.", settingsLink: true };
+    case "NOT_ENOUGH_CHARACTERS":
+      return { tone: "warn", text: "대화할 수 있는 생존 캐릭터가 2명 미만이라 시뮬레이션을 멈췄습니다. 캐릭터를 추가하거나 이전 저장을 불러오세요." };
     default:
       return null;
   }

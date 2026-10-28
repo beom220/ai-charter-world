@@ -121,6 +121,8 @@ describe("감정·관계·기억 반영", () => {
   it("같은 시도(attemptId)의 결과가 다시 도착해도 상태 변화는 한 번만 반영된다", async () => {
     const { uid, world, deps } = await setup("state-dup");
     const prepared = await prepareScene(uid, world.id, deps);
+    // 수동 시도는 점유한 시도만 커밋된다 (generateScene의 점유를 흉내 낸다)
+    await prisma.simulationRuntime.update({ where: { worldId: world.id }, data: { inFlightAttemptId: "dup-attempt", inFlightStartedAt: new Date() } });
     await runSceneAttempt(uid, world.id, prepared, { attemptId: "dup-attempt" }, deps);
     const after = await counts(world.id);
     await expect(runSceneAttempt(uid, world.id, prepared, { attemptId: "dup-attempt" }, deps)).rejects.toThrow();
