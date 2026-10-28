@@ -1,5 +1,6 @@
 import { CLIENT_HOLD_TIMEOUT_MS, SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
-import type { IntervalPreset, Prisma, StatusReason } from "@/generated/prisma/client";
+import type { IntervalPreset, Prisma } from "@/generated/prisma/client";
+import type { SimulationStateView } from "@/lib/simulation-view";
 import { prisma } from "@/server/db/client";
 import { requireOwnedWorld } from "@/server/db/scope";
 import { ConflictError } from "@/server/domain/errors";
@@ -20,18 +21,8 @@ import { logServerError } from "@/server/logging/log";
 // - lease(leaseOwner·leaseExpiresAt)는 Runner 소유다. 여기서는 PAUSED·IDLE이 될 때만 해제한다(§7.4 "해제").
 // - 사전 조건(start·resume): 연결 ACTIVE + 모델, 활성 캐릭터 2명 이상, 오늘 일일 한도 미도달.
 
-export type SimulationStateView = {
-  status: "IDLE" | "RUNNING" | "PAUSING" | "PAUSED";
-  statusReason: StatusReason | null;
-  runId: string | null;
-  intervalPreset: IntervalPreset;
-  nextSceneAt: string | null;
-  inFlight: boolean;
-  /** RUNNING인데 활성 SSE 연결이 없어 신규 호출을 보류 중 (§7.5) */
-  held: boolean;
-  /** 보류가 이 시각까지 이어지면 PAUSED(CLIENT_DISCONNECTED) */
-  holdDeadline: string | null;
-};
+// 상태 API·runtime.status payload. 화면(lib/simulation-view.ts)과 같은 정의를 쓴다
+export type { SimulationStateView };
 
 type Tx = Prisma.TransactionClient;
 

@@ -517,6 +517,13 @@ stateDiagram-v2
 - outbox 정리(`server/events/outbox-cleanup.ts`): RunnerHost 스위퍼가 10분마다(`OUTBOX_CLEANUP_INTERVAL_MS`) 기다리지 않고 실행한다. `createdAt`이 24시간 지난 `SimulationEvent`와 10분 넘게 갱신되지 않은 `SseConnection` 행을 DB 조건으로 지운다(여러 프로세스가 동시에 실행해도 안전). 장면·메시지·호출 기록은 건드리지 않는다. 지워진 커서로 재연결하면 기존 `sync.required` 경로를 탄다.
 - **운영 전제: 단일 프로세스.** EventBus 알림은 프로세스 내 리스너다. Runner가 쓴 이벤트는 같은 프로세스의 SSE 구독자에게 바로 전달되고, 알림이 유실되어도 15초 ping 때 outbox를 따라잡거나 재연결 시 재전송된다. 연결 보류 판정은 DB 기준이라 다중 인스턴스에서도 맞지만, 다른 인스턴스의 Runner가 쓴 이벤트는 다음 ping(최대 15초)까지 늦게 보인다. 웹 인스턴스를 여럿 두거나 Worker를 분리할 때는 PG NOTIFY 어댑터(§7.7·§15)가 필요하다.
 
+**Phase 5-4-4 구현 (실행 화면 연결)** — `app/worlds/[worldId]/scene-panel.tsx`, `lib/simulation-view.ts`
+- 화면에서 '대화 장면 생성' 버튼을 없애고 상태별 제어로 바꿨다: IDLE [▶ 시작] / RUNNING [⏸ 일시정지][⏹ 종료] / PAUSING [일시정지 중…][⏹ 종료] / PAUSED [▶ 재개][⏹ 종료]. 수동 생성 API(`POST /scenes`)는 남긴다.
+- 실행 속도(느리게·보통·빠르게)는 `PATCH /simulation/state`로 저장하고, 다른 탭은 `runtime.status`로 받는다.
+- 상태는 서버 기준이다. 첫 화면은 이벤트 커서를 먼저 읽고 상태·기록을 읽어 그린다(그 사이 변경은 SSE 재전송으로 따라잡음). 명령 응답·`runtime.status`만 반영하고, 명령 실패 시 `GET /simulation/state`로 다시 맞춘다. 전송 중에는 버튼을 막는다. 연결 복구로 start·resume을 부르지 않는다.
+- `scene.started` → "○○의 장면을 만들고 있습니다… N초 경과", `scene.committed`·`scene.failed`(같은 시도)·`inFlight=false`인 `runtime.status` → 해제. 새로고침 때 진행 중이면 시작 시각을 모르므로 화면을 연 시각부터 센다. `scene.failed`는 코드별 한국어 안내로 바꾸고 `STALE`·`ABORTED`(사용자 동작)는 알리지 않는다.
+- `sync.required`면 상태와 장면 기록을 다시 받는다(연출 없이). SSE·페이로드는 Zod로 파싱하고 형식이 다르면 무시한다.
+
 ### 7.3 취소 (D5)
 
 - Runner는 진행 중 호출마다 `AbortController`를 하나씩 둔다.
