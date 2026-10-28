@@ -182,7 +182,7 @@ describe("신체 상태와 사망", () => {
     const conditions = await prisma.characterCondition.findMany({ where: { worldId: world.id } });
     expect(conditions.filter((c) => c.vital === "DEAD").map((c) => c.characterId)).toEqual([a!.id]);
     expect(conditions.find((c) => c.characterId === a!.id)).toMatchObject({ deathCause: "극심한 추위가 오래 이어짐", deathWorldSeconds: EXTREME_LETHAL_WORLD_SECONDS });
-    expect(view.notes).toContainEqual(expect.objectContaining({ kind: "DEATH" }));
+    expect(view.notes).toContainEqual(expect.objectContaining({ kind: "DEATH", tone: "death", text: expect.stringMatching(/사망했다/) }));
 
     // 사망자는 참가자 후보에서 빠지고, 수정할 수 없다. 슬롯은 그대로 차지한다
     for (let i = 0; i < 5; i++) expect((await prepareScene(uid, world.id, deps())).characterIds).not.toContain(a!.id);

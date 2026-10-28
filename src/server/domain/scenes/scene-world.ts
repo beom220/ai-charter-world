@@ -1,6 +1,7 @@
 import { MEMORY_CONTENT_MAX_LENGTH } from "../../../../config/limits";
 import { findEventPreset, type EventPreset } from "../../../../config/world-events";
 import type { Prisma } from "@/generated/prisma/client";
+import { conditionTone, josa, type SceneNote } from "@/lib/scene-notes";
 import { prisma } from "@/server/db/client";
 import { ensureAutoEventPeriod } from "@/server/domain/events/auto-periods";
 import type { UserEventClaim } from "@/server/domain/events/user-events";
@@ -338,24 +339,26 @@ export const countAlive = (db: Tx | typeof prisma, worldId: string) =>
 
 // ── 대화 화면의 시스템 정보 (사건 배너·상태 변화). 캐릭터 말풍선과 섞지 않는다
 
-export type SceneNote = { kind: "EVENT_STARTED" | "USER_EVENT_STARTED" | "EVENT_RESOLVED" | "CONDITION" | "DEATH"; text: string };
+export type { SceneNote } from "@/lib/scene-notes";
 
 const DISCOMFORT_TEXT: Record<string, string> = { NONE: "없음", MILD: "경미", SEVERE: "심함", EXTREME: "극심" };
 
+// 표시 문구(7-4): 접두어 없이 본문만. 원인은 " — 원인"으로 붙인다. 분류(tone)는 이전/이후 단계로 정한다
 function changeText(name: string, c: { kind: string; fromValue: string; toValue: string; reason: string | null }): SceneNote {
-  if (c.kind === "DEATH") return { kind: "DEATH", text: `${name} 사망${c.reason ? ` — ${c.reason}` : ""}` };
-  const why = c.reason ? ` (${c.reason})` : "";
+  const tone = conditionTone(c.kind, c.fromValue, c.toValue);
+  const why = c.reason ? ` — ${c.reason}` : "";
+  if (c.kind === "DEATH") return { kind: "DEATH", tone, text: `${name}${josa(name, "이", "가")} 사망했다${why || "."}` };
   if (c.toValue.startsWith("PAIN_")) {
     const to = c.toValue.slice(5);
-    return { kind: "CONDITION", text: `${name}: ${to === "NONE" ? "고통이 가라앉음" : `고통(${DISCOMFORT_TEXT[to] ?? to})`}${why}` };
+    return { kind: "CONDITION", tone, text: `${name}: ${to === "NONE" ? "고통이 가라앉음" : `고통(${DISCOMFORT_TEXT[to] ?? to})`}${why}` };
   }
   if (c.kind === "THERMAL") {
     const [cause, level] = c.toValue.split("_") as [ThermalCauseValue, DiscomfortLevel];
-    return { kind: "CONDITION", text: `${name}: ${thermalLabel(cause, level)}` };
+    return { kind: "CONDITION", tone, text: `${name}: ${thermalLabel(cause, level)}` };
   }
   const label = INJURY_LABEL[c.toValue as InjuryLevel] ?? c.toValue;
   const verb = c.kind === "TREATMENT" ? "치료" : c.kind === "RECOVERY" ? "회복" : "부상";
-  return { kind: "CONDITION", text: `${name}: ${verb} → ${c.toValue === "NONE" ? "부상 없음" : label}${why}` };
+  return { kind: "CONDITION", tone, text: `${name}: ${verb} → ${c.toValue === "NONE" ? "부상 없음" : label}${why}` };
 }
 
 /** 장면별 시스템 정보 (사건 발생·해결, 신체 상태 변화) */
@@ -380,11 +383,11 @@ export async function loadSceneNotes(db: Tx | typeof prisma, worldId: string, sc
     if (e.startedSceneSeq !== null && idBySeq.has(e.startedSceneSeq)) {
       notes
         .get(idBySeq.get(e.startedSceneSeq)!)!
-        .push(e.kind === "USER_INTERVENTION" ? { kind: "USER_EVENT_STARTED", text: `사용자가 일으킨 사건: ${e.description}` } : { kind: "EVENT_STARTED", text: `사건 발생: ${e.title} — ${e.description}` });
+        .push({ kind: e.kind === "USER_INTERVENTION" ? "USER_EVENT_STARTED" : "EVENT_STARTED", tone: "event", text: e.description || e.title });
     }
     // 해결 배너는 과거(7-2-2) 기록만: 발생 장면에 끝난 것은 장면 반영 완료이므로 발생 배너 한 번만 보인다
     if (e.resolvedSceneSeq !== null && e.resolvedSceneSeq !== e.startedSceneSeq && idBySeq.has(e.resolvedSceneSeq)) {
-      notes.get(idBySeq.get(e.resolvedSceneSeq)!)!.push({ kind: "EVENT_RESOLVED", text: `사건 해결: ${e.title}${e.resolutionSummary ? ` — ${e.resolutionSummary}` : ""}` });
+      notes.get(idBySeq.get(e.resolvedSceneSeq)!)!.push({ kind: "EVENT_RESOLVED", tone: "event", text: `${e.title}${e.resolutionSummary ? ` — ${e.resolutionSummary}` : " — 해결됨"}` });
     }
   }
   for (const c of changes) if (c.sceneId) notes.get(c.sceneId)?.push(changeText(c.character.name, c));

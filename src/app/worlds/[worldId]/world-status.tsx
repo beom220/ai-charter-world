@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { USER_EVENT_PENDING_MAX, USER_EVENT_TEXT_MAX_LENGTH } from "../../../../config/limits";
 import { userEventTextLength } from "@/lib/schemas/world-event";
+import { noteText, noteTone, type NoteTone, type SceneNote } from "@/lib/scene-notes";
 import { liveWorldSeconds, worldCalendar } from "@/lib/world-clock";
 import { button } from "../ui";
 import { send } from "../world-form";
@@ -11,7 +12,8 @@ import { send } from "../world-form";
 // - 월드 시각: 서버 상태(worldClock: asOf 시각의 월드 초·흐르는 중)에서 지금까지를 계산해 1초마다 표시한다.
 //   폴링·SSE·재연결로 새 값이 와도 화면 값은 뒤로 가지 않는다(서버 값이 더 크면 따라간다).
 // - 사건(7-2-3): 사건은 장면에 한 번 일어나며 발생 배너는 그 장면에만 보인다(진행 중 사건 목록 없음).
-//   [사건 일으키기] 모달, 대기 목록·취소. 사용자 사건의 발생 배너는 자동 사건과 다른 색(USER_EVENT_STARTED)으로 보인다.
+//   [사건 일으키기] 모달, 대기 목록·취소.
+// - 사건·상태 메시지(7-4): 자동·사용자 사건은 같은 파란 테두리, 호전 초록, 악화 주홍, 사망 검정. 분류는 @/lib/scene-notes.
 
 type Clock = { seconds: number; running: boolean; asOf: string };
 
@@ -191,30 +193,31 @@ export function WorldEvents({ worldId, refreshKey }: { worldId: string; refreshK
   );
 }
 
-type Note = { kind: "EVENT_STARTED" | "USER_EVENT_STARTED" | "EVENT_RESOLVED" | "CONDITION" | "DEATH"; text: string };
+// 사건·상태 변화 말풍선(7-4): 흰 배경 + 분류별 테두리, 중앙 정렬, 내용 너비(최대 너비 제한). 라벨 없이 본문만 보인다
+const TONE_BORDER: Record<NoteTone, string> = {
+  event: "border-[#3B82F6]",
+  positive: "border-[#22C55E]",
+  negative: "border-[#F97316]",
+  death: "border-[#171717]",
+};
 
-/** 장면의 시스템 정보 (사건 발생·해결, 신체 상태 변화) */
-export function SceneNotes({ notes }: { notes: Note[] }) {
+/** 장면의 사건·상태 변화 메시지 (사건 발생·해결, 신체 상태 변화, 사망). 과거 기록과 SSE 장면이 같은 규칙으로 그려진다 */
+export function SceneNotes({ notes }: { notes: SceneNote[] }) {
   if (!notes.length) return null;
   return (
-    <ul className="flex flex-col gap-1">
-      {notes.map((n, i) => (
-        <li
-          key={i}
-          className={`rounded border px-2 py-1 text-xs ${
-            n.kind === "DEATH"
-              ? "border-red-600/40 bg-red-600/5"
-              : n.kind === "USER_EVENT_STARTED"
-                ? "border-sky-600/40 bg-sky-600/5"
-                : n.kind.startsWith("EVENT")
-                  ? "border-amber-600/40 bg-amber-600/5"
-                  : "border-foreground/15 bg-foreground/5"
-          }`}
-        >
-          <span className="font-semibold">시스템 · </span>
-          {n.text}
-        </li>
-      ))}
+    <ul className="flex flex-col items-center gap-1">
+      {notes.map((n, i) => {
+        const tone = noteTone(n);
+        return (
+          <li
+            key={i}
+            data-tone={tone}
+            className={`max-w-[min(90%,32rem)] rounded-lg border-[1.5px] bg-[#FFFFFF] px-3 py-1.5 text-center text-sm break-words whitespace-pre-wrap text-[#171717] ${TONE_BORDER[tone]}`}
+          >
+            {noteText(n.text)}
+          </li>
+        );
+      })}
     </ul>
   );
 }

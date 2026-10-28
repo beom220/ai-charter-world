@@ -133,7 +133,7 @@ describe("발생 순서·자동 사건과 같은 장면", () => {
     expect(await event(a.id)).toMatchObject({ status: "RESOLVED", startedSceneSeq: 3, resolvedSceneSeq: 3, resolutionSummary: null, claimedAttemptId: null, intensity: "MEDIUM", description: "하늘에서 거대한 호랑이 석상이 떨어졌다" });
     expect(await event(b.id)).toMatchObject({ status: "PENDING", claimedAttemptId: null });
     expect(await prisma.worldEvent.count({ where: { worldId: world.id, kind: "RANDOM", status: "RESOLVED", startedSceneSeq: 3 } })).toBe(1); // 자동 사건도 같은 장면에 발생
-    expect(first.notes).toContainEqual({ kind: "USER_EVENT_STARTED", text: "사용자가 일으킨 사건: 하늘에서 거대한 호랑이 석상이 떨어졌다" });
+    expect(first.notes).toContainEqual({ kind: "USER_EVENT_STARTED", tone: "event", text: "하늘에서 거대한 호랑이 석상이 떨어졌다" });
     expect(first.notes.filter((n) => n.kind === "EVENT_STARTED")).toHaveLength(1);
 
     await generateScene(uid, world.id, deps(sceneJson()));

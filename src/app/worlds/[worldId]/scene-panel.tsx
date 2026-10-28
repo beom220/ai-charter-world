@@ -21,11 +21,12 @@ import {
   type SimulationStateView,
   type SimulationView,
 } from "@/lib/simulation-view";
-import { button, STATUS_LABEL } from "../ui";
+import { button, MOOD_LABEL, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
 import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 import { worldCalendar } from "@/lib/world-clock";
 import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
+import type { SceneNote } from "@/lib/scene-notes";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
 // - 실행 상태의 기준은 서버 SimulationRuntime이다. 버튼은 start/pause/resume/stop API만 부르고, 화면 상태는 응답과
@@ -42,10 +43,10 @@ import { SceneNotes, WorldClock, WorldEvents } from "./world-status";
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
 // - 스크롤: 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
-// - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 말풍선과 구분된
-//   시스템 영역에 보여 준다. 사건 발생은 장면 대사 앞, 상태 변화(과거 기록의 사건 해결 포함)는 장면 대사가 모두 공개된 뒤에 보인다.
+// - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
+//   중앙 말풍선으로 보여 준다(7-4: 분류별 테두리, 라벨 없음). 사건 발생은 장면 대사 앞, 상태 변화(과거 기록의 사건 해결 포함)는 장면 대사가 모두 공개된 뒤에 보인다.
 // - 사용자 사건(Phase 7-2-3): [사건 일으키기]·대기 목록·취소(world-status.tsx). 사건 목록은 장면 시작·커밋·실패와 world_event.updated(등록·취소·발생)
-//   SSE, 재연결 때 서버에서 다시 읽는다. 사용자 사건 발생 배너는 자동 사건과 다른 색이다.
+//   SSE, 재연결 때 서버에서 다시 읽는다. 자동·사용자 사건은 같은 디자인이다.
 // - 월드 날짜: 각 발언의 부연설명(actionIntent) 아래에 그 장면의 월드 시각("yyyy-mm-dd hh:mm", 시작일 = 세계관 생성일 KST가 Day 0)을 붙이고, 피드에서 월드 날짜가
 //   바뀌는 장면(피드 첫 장면 포함) 앞에 "Day N" 구분선을 넣는다. 월드 시각이 없는 7-2-2 이전 장면은 표시하지 않는다.
 
@@ -58,7 +59,6 @@ type Message = {
   actionIntent: string | null;
   emotionCue: string | null;
 };
-type SceneNote = { kind: "EVENT_STARTED" | "USER_EVENT_STARTED" | "EVENT_RESOLVED" | "CONDITION" | "DEATH"; text: string };
 /** 장면 대사 앞에 보이는 사건 발생 배너 */
 const isStartNote = (n: SceneNote) => n.kind === "EVENT_STARTED" || n.kind === "USER_EVENT_STARTED";
 export type SceneItem = {
@@ -377,7 +377,7 @@ export function ScenePanel({
                   <div key={m.id} className="flex flex-col items-start">
                     <span className="text-sm font-semibold">
                       <SpeakerName worldId={worldId} message={m} activeIds={activeIds} />
-                      {m.emotionCue && <span className="font-normal text-foreground/60"> · {m.emotionCue}</span>}
+                      {m.emotionCue && <span className="font-normal text-foreground/60"> · {MOOD_LABEL[m.emotionCue.trim().toUpperCase()] ?? m.emotionCue}</span>}
                     </span>
                     <p className={`${bubble} break-words whitespace-pre-wrap`}>{m.dialogue}</p>
                     {m.actionIntent && <span className="text-xs text-foreground/60 italic">({m.actionIntent})</span>}
