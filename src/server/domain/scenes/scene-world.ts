@@ -224,7 +224,12 @@ export async function applySceneWorld(
     const ref = refs.find((r) => r.alias === alias);
     return ref ? (ref.id ?? newEventId) : null;
   };
-  const characters = await tx.character.findMany({ where: { worldId, deletedAt: null }, select: { id: true, condition: true } });
+  // 캐릭터 순서를 고정해 상태 변화 기록(말풍선) 순서가 장면마다 흔들리지 않게 한다
+  const characters = await tx.character.findMany({
+    where: { worldId, deletedAt: null },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, condition: true },
+  });
   for (const ch of characters) {
     const before: ConditionRow = { ...DEFAULT_CONDITION_STATE, ...(ch.condition ?? {}), characterId: ch.id };
     if (before.vital === "DEAD") continue;
@@ -370,12 +375,13 @@ export async function loadSceneNotes(db: Tx | typeof prisma, worldId: string, sc
   const [events, changes] = await Promise.all([
     db.worldEvent.findMany({
       where: { worldId, OR: [{ startedSceneSeq: { in: seqs } }, { resolvedSceneSeq: { in: seqs } }] },
-      orderBy: [{ startedSceneSeq: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ startedSceneSeq: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       select: { kind: true, title: true, description: true, startedSceneSeq: true, resolvedSceneSeq: true, resolutionSummary: true },
     }),
     db.characterConditionChange.findMany({
       where: { worldId, sceneId: { in: scenes.map((s) => s.id) } },
-      orderBy: { createdAt: "asc" },
+      // 같은 장면의 변화는 한 트랜잭션에서 만들어 createdAt이 같다. id(cuid, 생성 순)로 기록 순서(캐릭터 순 → 규칙 순)를 지킨다
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: { sceneId: true, kind: true, fromValue: true, toValue: true, reason: true, character: { select: { name: true } } },
     }),
   ]);

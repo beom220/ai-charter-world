@@ -2,6 +2,7 @@
 // - mergeScenes: 장면을 seq 오름차순(오래된 것 위)으로 합치고 id로 중복을 거른다.
 // - ScenePlayback: 새로 도착한 장면 발언을 하나의 큐로 순서대로 재생한다(쉼 → 입력 중 → 공개). 타이머는 항상 최대 1개.
 //   Gemini 토큰 스트리밍이 아니라 이미 저장된 장면의 재생 연출이다.
+// - sceneRevealed: 장면 끝 시스템 말풍선(상태 변화)을 보일 시점.
 // - isNearBottom·anchoredScrollTop: 자동 스크롤 여부와 이전 기록 추가 시 위치 유지 계산.
 
 export type FeedScene = { id: string; seq: number; messages: { id: string; turnIndex: number }[] };
@@ -18,6 +19,11 @@ export function mergeScenes<T extends FeedScene>(prev: T[], incoming: T[]): { sc
   if (!fresh.length) return { scenes: prev, fresh };
   fresh.sort((a, b) => a.seq - b.seq);
   return { scenes: [...prev, ...fresh].sort((a, b) => a.seq - b.seq), fresh };
+}
+
+/** 장면의 대사가 모두 공개되었는가 (입력 중·대기 발언이 없음). 다른 장면이 입력 중이어도 이미 공개된 장면에는 영향이 없다 */
+export function sceneRevealed(messages: readonly { id: string }[], pending: ReadonlySet<string>): boolean {
+  return messages.every((m) => !pending.has(m.id));
 }
 
 export type PlaybackTiming = { gapMs: readonly [number, number]; typingMs: readonly [number, number] };

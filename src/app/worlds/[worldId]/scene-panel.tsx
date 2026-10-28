@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SCENE_INTERVAL_MS, SCENE_PARTICIPANTS_MIN, SCENE_PLAYBACK_TIMING } from "../../../../config/limits";
 import { speakerHref } from "@/lib/character-form";
-import { anchoredScrollTop, isNearBottom, mergeScenes, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
+import { anchoredScrollTop, isNearBottom, mergeScenes, sceneRevealed, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
 import {
   applySimEvent,
   controlsFor,
@@ -132,6 +132,8 @@ export function ScenePanel({
   const aliveCount = characters.filter((c) => c.alive).length;
 
   const scenesRef = useRef(scenes);
+  // 마지막으로 받은 outbox 이벤트 id. 화면을 떠났다 돌아와 다시 연결할 때 처음 렌더 시점 커서가 아니라 여기서부터 이어 받는다
+  const cursorRef = useRef(eventCursor);
   const playbackRef = useRef<ScenePlayback | null>(null);
   const stickRef = useRef(true); // 하단 근처인가 (사용자 스크롤로 갱신)
   const speedDialog = useRef<HTMLDialogElement>(null);
@@ -147,13 +149,30 @@ export function ScenePanel({
   }, []);
 
   /** 새 장면만 피드에 넣는다. animate면 발언을 재생 큐에 넣는다(큐에 넣은 발언은 공개 전까지 그리지 않음) */
-  const addScenes = useCallback((incoming: SceneItem[], animate: boolean) => {
+  //  브라우저 탭이 숨겨져 있으면(타이머가 느려져 연출이 밀린다) 연출 없이 바로 넣는다
+  const addScenes = useCallback((incoming: SceneItem[], animate: boolean): number => {
     const { scenes: next, fresh } = mergeScenes(scenesRef.current, incoming);
-    if (!fresh.length) return;
+    if (!fresh.length) return 0;
     scenesRef.current = next;
-    if (animate) for (const s of fresh) playbackRef.current?.enqueue(s.messages.map((m) => m.id));
+    if (animate && document.visibilityState === "visible") for (const s of fresh) playbackRef.current?.enqueue(s.messages.map((m) => m.id));
     setScenes(next);
+    return fresh.length;
   }, []);
+
+  // 브라우저 탭을 숨겼다 돌아오면 밀린 연출을 건너뛰고 받은 대사를 모두 보여 준다 (숨김 중 타이머 지연으로 재생이 멈추거나 쌓이지 않게)
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") playbackRef.current?.flush();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  // 실행 상태가 바뀌면(SSE·명령 응답·재조회 모두) 저장 패널에도 알린다
+  const { status: runtimeStatus, inFlight: runtimeInFlight } = view.state;
+  useEffect(() => {
+    emitWorldEvent(RUNTIME_EVENT, { status: runtimeStatus, inFlight: runtimeInFlight });
+  }, [runtimeStatus, runtimeInFlight]);
 
   /** 서버 상태를 다시 읽는다 (명령 실패·sync.required) */
   const refreshState = useCallback(async () => {
@@ -170,7 +189,11 @@ export function ScenePanel({
 
   // 세계관 이벤트 구독. 이 연결은 장면 생성·실행 명령을 시작하지 않는다 (연결 자체가 서버의 연결 보류를 해제할 뿐)
   useEffect(() => {
-    const es = new EventSource(`/api/worlds/${worldId}/simulation/stream?lastEventId=${encodeURIComponent(eventCursor)}`);
+    const es = new EventSource(`/api/worlds/${worldId}/simulation/stream?lastEventId=${encodeURIComponent(cursorRef.current)}`);
+    const track = (e: Event) => {
+      const id = (e as MessageEvent).lastEventId;
+      if (id) cursorRef.current = id;
+    };
     // 이 화면의 연결 ID (서버가 연결 직후 알려 준다). 화면을 떠날 때 이 연결만 정리하도록 보낸다
     let connectionId: string | null = null;
     es.addEventListener("stream.ready", (e) => {
@@ -191,6 +214,7 @@ export function ScenePanel({
     };
     for (const type of SIM_EVENTS) {
       es.addEventListener(type, (e) => {
+        track(e);
         let payload: unknown;
         try {
           payload = JSON.parse((e as MessageEvent<string>).data);
@@ -199,10 +223,6 @@ export function ScenePanel({
         }
         setView((v) => applySimEvent(v, type, payload, Date.now()));
         if (type !== "runtime.status") setEventsTick((n) => n + 1); // 시작(점유)·커밋(발생)·실패(점유 해제)
-        if (type === "runtime.status") {
-          const parsed = simulationStateSchema.safeParse(payload);
-          if (parsed.success) emitWorldEvent(RUNTIME_EVENT, { status: parsed.data.status, inFlight: parsed.data.inFlight });
-        }
         if (type === "scene.committed") {
           const scene = (payload as { scene?: SceneItem }).scene;
           if (scene) addScenes([scene], true);
@@ -210,15 +230,23 @@ export function ScenePanel({
         }
       });
     }
-    es.addEventListener("saves.updated", () => emitWorldEvent(SAVES_EVENT));
-    es.addEventListener("world_event.updated", () => setEventsTick((n) => n + 1)); // 사용자 사건 등록·취소·발생
+    es.addEventListener("saves.updated", (e) => {
+      track(e);
+      emitWorldEvent(SAVES_EVENT);
+    });
+    es.addEventListener("world_event.updated", (e) => {
+      track(e);
+      setEventsTick((n) => n + 1); // 사용자 사건 등록·취소·발생
+    });
     // 불러오기: 화면 전체(세계관·캐릭터·기록·상태)를 서버에서 다시 그린다. 이 패널은 새 key로 다시 마운트된다
-    es.addEventListener("state.replaced", () => {
+    es.addEventListener("state.replaced", (e) => {
+      track(e);
       playbackRef.current?.flush();
       router.refresh();
     });
     // 재전송할 수 없으면 상태와 기록을 다시 받는다 (기록은 연출 없이)
-    es.addEventListener("sync.required", async () => {
+    es.addEventListener("sync.required", async (e) => {
+      track(e);
       void refreshState();
       const { ok, json } = await send(`/api/worlds/${worldId}/scenes`, "GET").catch(() => ({ ok: false, json: null }));
       if (ok) addScenes(json.scenes as SceneItem[], false);
@@ -238,7 +266,7 @@ export function ScenePanel({
         body: JSON.stringify({ connectionId }),
       }).catch(() => undefined);
     };
-  }, [worldId, eventCursor, addScenes, refreshState, refreshCharacters, router]);
+  }, [worldId, addScenes, refreshState, refreshCharacters, router]);
 
   // 하단 고정 영역 높이(안내 문구 유무·줄바꿈에 따라 바뀜)만큼 피드 아래를 비워 마지막 발언이 가리지 않게 한다
   useEffect(() => {
@@ -265,7 +293,7 @@ export function ScenePanel({
     } else if (stickRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [scenes, play]);
+  }, [scenes, play, dockHeight]);
 
   // 생성 경과 시간 표시. 이때는 발언자가 정해지지 않았으므로 캐릭터 입력 중 표시를 하지 않는다
   const generating = view.generating;
@@ -285,7 +313,7 @@ export function ScenePanel({
       if (!ok) return setError(json?.error?.message ?? "이전 기록을 불러오지 못했습니다.");
       const el = pageScroller();
       anchorRef.current = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight };
-      addScenes(json.scenes as SceneItem[], false);
+      if (!addScenes(json.scenes as SceneItem[], false)) anchorRef.current = null; // 붙인 것이 없으면 다음 갱신 때 엉뚱한 위치로 옮기지 않게
       setHasMore(json.hasMore);
     } catch {
       setError("이전 기록을 불러오지 못했습니다. 네트워크 상태를 확인하세요.");
@@ -364,6 +392,7 @@ export function ScenePanel({
         {scenes.map((s, i) => {
           const visible = s.messages.filter((m) => !play.pending.has(m.id) || play.typing === m.id);
           if (!visible.length) return null; // 재생 차례가 오기 전 장면은 제목도 숨긴다
+          const revealed = sceneRevealed(s.messages, play.pending); // 이 장면의 대사가 모두 공개됨 (다른 장면의 입력 중 표시와 무관)
           const at = s.worldSeconds != null ? worldCalendar(worldStartDate, s.worldSeconds) : null;
           const prev = scenes[i - 1]?.worldSeconds;
           const newDay = at !== null && (prev == null || worldCalendar(worldStartDate, prev).day !== at.day);
@@ -406,8 +435,8 @@ export function ScenePanel({
                   </div>
                 ),
               )}
-              {visible.length === s.messages.length && !play.typing && <SceneNotes notes={(s.notes ?? []).filter((n) => !isStartNote(n))} />}
-              {s.contextTruncated && visible.length === s.messages.length && !play.typing && (
+              {revealed && <SceneNotes notes={(s.notes ?? []).filter((n) => !isStartNote(n))} />}
+              {s.contextTruncated && revealed && (
                 <p className="text-[11px] text-foreground/50">세계관 컨텍스트 일부가 이번 장면에 반영되지 않았을 수 있습니다.</p>
               )}
             </div>

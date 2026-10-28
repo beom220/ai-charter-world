@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { anchoredScrollTop, isNearBottom, mergeScenes, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
+import { anchoredScrollTop, isNearBottom, mergeScenes, sceneRevealed, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
 
 // 대화 피드 연출 로직 (Phase 5-3 UX). 브라우저 재생 연출만 다루며 서버·Gemini와 무관하다.
 
@@ -54,6 +54,19 @@ describe("ScenePlayback", () => {
     expect(order).toEqual(["a0", null, "a1", null, "b0", null]);
     expect(last().pending.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("장면 끝 말풍선: 다음 장면이 입력 중이어도 이미 공개된 장면은 공개 상태를 유지하고, 입력 중·대기 발언이 있는 장면만 미공개다", () => {
+    const { playback, last } = make();
+    playback.enqueue(["a0"]);
+    vi.advanceTimersByTime(900 + 3000); // a0 공개
+    playback.enqueue(["b0", "b1"]);
+    vi.advanceTimersByTime(900); // b0 입력 중
+    expect(last().typing).toBe("b0");
+    expect(sceneRevealed([{ id: "a0" }], last().pending)).toBe(true);
+    expect(sceneRevealed([{ id: "b0" }, { id: "b1" }], last().pending)).toBe(false);
+    playback.flush();
+    expect(sceneRevealed([{ id: "b0" }, { id: "b1" }], last().pending)).toBe(true);
   });
 
   it("입력 중인 발언만 표시 대상이고, 그 다음 발언은 공개 전까지 pending에 남는다", () => {

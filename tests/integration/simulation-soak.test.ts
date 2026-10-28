@@ -8,6 +8,7 @@ import { cancelUserEvent, submitUserEvent } from "@/server/domain/events/user-ev
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { saveGeminiApiKey } from "@/server/domain/providers/gemini-connection";
 import { loadSave, runAutoSave } from "@/server/domain/saves/saves";
+import { listScenes } from "@/server/domain/scenes/generate-scene";
 import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
 import { runSimulationCommand } from "@/server/domain/simulation/control";
 import { touchWorldClock } from "@/server/domain/simulation/world-clock";
@@ -394,6 +395,11 @@ describe("신체 상태 장기 진행", () => {
     expect(await condition(x!.id)).toMatchObject({ injury: "MILD" });
     await withTarget(x!.name, { injury: { level: "MODERATE", cause: "낙상" } });
     expect(await condition(x!.id)).toMatchObject({ injury: "MODERATE" });
+    // 같은 장면의 상태 변화 말풍선은 기록 순서(부상 → 부상에 따른 고통)로 보인다
+    const injuryScene = await prisma.characterConditionChange.findFirstOrThrow({ where: { characterId: x!.id, toValue: "MODERATE" }, select: { scene: { select: { seq: true } } } });
+    const { scenes: [noted] } = await listScenes(s.uid, s.world.id, { beforeSeq: injuryScene.scene!.seq + 1, take: 1 });
+    const texts = noted!.notes.map((n) => n.text).filter((t) => t.startsWith(`${x!.name}:`));
+    expect(texts.map((t) => (t.includes("고통") ? "pain" : "injury"))).toEqual(["injury", "pain"]);
     await withTarget(x!.name, { treatment: "부목을 댔다" });
     expect(await condition(x!.id)).toMatchObject({ injury: "MILD" });
     // 경미한 부상은 월드 24시간 뒤 자연 회복 (실행 중 시간만 센다)
