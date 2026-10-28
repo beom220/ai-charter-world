@@ -203,4 +203,27 @@ describe("캐릭터 설정 변경 → 재개", () => {
     const fresh = await prepareScene(uid, world.id, deps);
     expect(await claimAttempt(world.id, rt.currentRunId!, "host-a", fresh, randomUUID(), deps.now())).toBe(true);
   });
+
+  it("수동 생성: Gemini 호출 중(IDLE) 설정이 바뀌면 장면을 저장하지 않고 점유를 풀며, 호출 기록은 남는다", async () => {
+    const { uid, world, chars, deps, prompts } = await setup("manual-fence");
+    const edited: GeminiKeyClient = {
+      ...deps.client,
+      generateJson: async (apiKey, request, meter) => {
+        // 호출이 진행 중인 IDLE 세계관: 설정 수정은 허용된다 (진행 중 장면 표시는 이 시도의 것)
+        await updateCharacter(uid, world.id, chars[0]!.id, input("호출 중 수정"));
+        return deps.client.generateJson(apiKey, request, meter);
+      },
+    };
+    await expect(generateScene(uid, world.id, { ...deps, client: edited })).rejects.toMatchObject({ status: 409, code: "SETTINGS_CHANGED" });
+    expect(prompts).toHaveLength(1);
+    expect(await prisma.conversationScene.count({ where: { worldId: world.id } })).toBe(0);
+    expect((await prisma.simulationRuntime.findUniqueOrThrow({ where: { worldId: world.id } })).inFlightAttemptId).toBeNull();
+    expect(await prisma.apiRequestLog.count({ where: { worldId: world.id } })).toBe(1);
+
+    // 다시 시도하면 새 설정으로 준비해 저장한다. 수동·자동 중복 방지도 그대로다
+    await generateScene(uid, world.id, deps);
+    expect(prompts[1]).toContain("이름: 호출 중 수정");
+    await runSimulationCommand(uid, world.id, "start", deps.now);
+    await expect(generateScene(uid, world.id, deps)).rejects.toMatchObject({ code: "SCENE_IN_PROGRESS" });
+  });
 });

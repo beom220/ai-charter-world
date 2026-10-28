@@ -5,7 +5,7 @@ import { prisma } from "@/server/db/client";
 import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId, type AuthenticatedUserId } from "@/server/domain/identity";
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
-import { prepareScene, runSceneAttempt, SceneValidationFailedError, type SceneDeps } from "@/server/domain/scenes/generate-scene";
+import { prepareScene, runSceneAttempt, SceneValidationFailedError, settingsUnchanged, type SceneDeps } from "@/server/domain/scenes/generate-scene";
 
 type PreparedScene = Awaited<ReturnType<typeof prepareScene>>;
 import { reconcileClientHold } from "@/server/domain/simulation/client-hold";
@@ -191,8 +191,7 @@ export async function claimAttempt(
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
     // 준비 이후 설정 수정·불러오기 등으로 changeSeq가 바뀌었으면 이전 설정으로 호출하지 않고 다음 단계에서 다시 준비한다
-    const gs = await tx.gameState.findUnique({ where: { worldId }, select: { changeSeq: true } });
-    if (gs?.changeSeq !== prepared.changeSeq) return false;
+    if (!(await settingsUnchanged(tx, worldId, prepared.changeSeq))) return false;
     const { count } = await tx.simulationRuntime.updateMany({
       where: {
         worldId,

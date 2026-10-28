@@ -126,6 +126,20 @@ async function loadRecentHistory(userId: AuthenticatedUserId, worldId: string, s
   }));
 }
 
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * 설정 펜싱 (Runner·수동 생성 공용): 장면 준비 때 읽은 changeSeq가 지금과 같은가. World 잠금을 잡은 트랜잭션에서 부른다.
+ * 다르면 준비 이후 설정 수정·불러오기 등이 있었으므로 그 준비(이전 설정)로 호출·커밋하지 않는다.
+ */
+export async function settingsUnchanged(tx: Tx, worldId: string, changeSeq: number): Promise<boolean> {
+  const gs = await tx.gameState.findUnique({ where: { worldId }, select: { changeSeq: true } });
+  return gs?.changeSeq === changeSeq;
+}
+
+/** 준비 이후 설정이 바뀌어 장면을 만들지 않음 (수동 생성) */
+const settingsChangedError = () => new ConflictError("SETTINGS_CHANGED", "장면을 준비하는 동안 설정이 바뀌어 이번 장면을 저장하지 않았습니다. 다시 시도하세요.");
+
 /** 장면 1회 시도 맥락 (수동 생성·Runner 공용). 점유(inFlightAttemptId)와 해제는 호출자가 한다 */
 export type SceneAttempt = {
   attemptId: string;
@@ -133,6 +147,11 @@ export type SceneAttempt = {
   runner?: { runId: string; leaseOwner: string };
   /** Gemini 요청 예약 직전에 호출한다. throw하면 요청을 보내지 않는다 (Runner의 호출 직전 재검증) */
   beforeRequest?: () => Promise<void>;
+  /**
+   * 수동 생성: 커밋 때 changeSeq가 준비 시점과 같아야 한다(IDLE에서는 호출 중에도 설정을 바꿀 수 있으므로).
+   * Runner는 진행 중 시도가 있으면 설정 수정이 거부되므로 쓰지 않는다(실행 중 속도 변경이 장면을 버리지 않게).
+   */
+  expectedChangeSeq?: number;
 };
 
 type PreparedScene = Awaited<ReturnType<typeof prepareScene>>;
@@ -206,21 +225,26 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
   const now = deps.now ?? (() => new Date());
   const prepared = await prepareScene(userId, worldId, deps);
 
-  // 2) 세계관당 진행 중 생성 1건 (실행 중인 시뮬레이션과도 겹치지 않게 IDLE·PAUSED에서만)
+  // 2) 세계관당 진행 중 생성 1건 (실행 중인 시뮬레이션과도 겹치지 않게 IDLE·PAUSED에서만).
+  //    Runner의 시도 기록과 같이 World 잠금 아래에서 설정 펜싱(changeSeq)을 확인한 뒤 점유한다 (잠금 순서 World → Runtime)
   const attemptId = randomUUID();
   const startedAt = now();
-  const claimed = await prisma.simulationRuntime.updateMany({
-    where: {
-      worldId,
-      status: { in: ["IDLE", "PAUSED"] },
-      OR: [{ inFlightAttemptId: null }, { inFlightStartedAt: { lt: new Date(startedAt.getTime() - SCENE_IN_FLIGHT_STALE_MS) } }],
-    },
-    data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "World" WHERE "id" = ${worldId} FOR UPDATE`;
+    if (!(await settingsUnchanged(tx, worldId, prepared.changeSeq))) throw settingsChangedError();
+    const claimed = await tx.simulationRuntime.updateMany({
+      where: {
+        worldId,
+        status: { in: ["IDLE", "PAUSED"] },
+        OR: [{ inFlightAttemptId: null }, { inFlightStartedAt: { lt: new Date(startedAt.getTime() - SCENE_IN_FLIGHT_STALE_MS) } }],
+      },
+      data: { inFlightAttemptId: attemptId, inFlightStartedAt: startedAt },
+    });
+    if (claimed.count === 0) throw new ConflictError("SCENE_IN_PROGRESS", "이 세계관에서 이미 장면을 생성하고 있습니다. 잠시 후 다시 시도하세요.");
   });
-  if (claimed.count === 0) throw new ConflictError("SCENE_IN_PROGRESS", "이 세계관에서 이미 장면을 생성하고 있습니다. 잠시 후 다시 시도하세요.");
 
   try {
-    return await runSceneAttempt(userId, worldId, prepared, { attemptId }, deps);
+    return await runSceneAttempt(userId, worldId, prepared, { attemptId, expectedChangeSeq: prepared.changeSeq }, deps);
   } finally {
     await prisma.simulationRuntime
       .updateMany({ where: { worldId, inFlightAttemptId: attemptId }, data: { inFlightAttemptId: null, inFlightStartedAt: null } })
@@ -306,7 +330,14 @@ export async function runSceneAttempt(
       if (!rt || rt.currentRunId !== attempt.runner.runId || rt.leaseOwner !== attempt.runner.leaseOwner || rt.inFlightAttemptId !== attemptId) {
         throw new ConflictError("SCENE_STALE", "생성하는 동안 실행 상태가 바뀌어 이번 장면을 저장하지 않았습니다.");
       }
+    } else {
+      // 수동 시도: 아직 이 시도가 점유 중이고(오래된 점유를 다른 시도가 가져가지 않았고) 준비 이후 설정이 그대로일 때만 커밋한다
+      const rt = await tx.simulationRuntime.findUnique({ where: { worldId }, select: { inFlightAttemptId: true } });
+      if (rt?.inFlightAttemptId !== attemptId) {
+        throw new ConflictError("SCENE_STALE", "생성하는 동안 실행 상태가 바뀌어 이번 장면을 저장하지 않았습니다.");
+      }
     }
+    if (attempt.expectedChangeSeq !== undefined && gs.changeSeq !== attempt.expectedChangeSeq) throw settingsChangedError();
     const stillActive = await tx.character.count({ where: { id: { in: characterIds }, worldId, deletedAt: null } });
     if (stillActive !== characterIds.length) {
       throw new ConflictError("STALE_REFERENCE", "생성하는 동안 참가 캐릭터가 삭제되어 이번 장면을 저장하지 않았습니다.");
