@@ -1,10 +1,23 @@
-import { SCENE_RECENT_HISTORY_BUDGET_CHARS, SCENE_TURNS_MIN, SCENE_WORLD_CONTEXT_BUDGET_CHARS, SCENE_WORLD_FIELD_BUDGET_CHARS } from "../../../../config/limits";
+import {
+  EMOTION_INTENSITY_DELTA_MAX,
+  MEMORY_PER_OWNER_PER_SCENE,
+  RELATIONSHIP_AXIS_DELTA_MAX,
+  SCENE_MEMORY_BUDGET_CHARS_PER_CHARACTER,
+  SCENE_RECENT_HISTORY_BUDGET_CHARS,
+  SCENE_TURNS_MIN,
+  SCENE_WORLD_CONTEXT_BUDGET_CHARS,
+  SCENE_WORLD_FIELD_BUDGET_CHARS,
+} from "../../../../config/limits";
 import { PERSONALITY_TAGS } from "../../../../config/personality-map";
 import type { SceneAlias } from "../validation/scene-output";
 
 // 최소 ContextBuilder — StoryMode 프롬프트 (architecture.md §6.4·§6.5). 런타임 독립 순수 함수.
 // Phase 5-1: 세계관(이름·규칙·현재 상황·worldContext)과 참가자 프로필·현재 감정을 넣는다.
-// Phase 5-2: 같은 세계관의 최근 완료 장면(오래된 것 → 최신)을 <history>로 넣어 이야기를 잇는다. 관계·기억은 엔진 단계에서 추가한다.
+// Phase 5-2: 같은 세계관의 최근 완료 장면(오래된 것 → 최신)을 <history>로 넣어 이야기를 잇는다.
+// Phase 5-5: 참가자마다 다른 참가자에 대한 관계(그 인물의 시각)와 그 인물이 소유한 기억을 넣는다.
+//   기억은 [C1만 아는 기억]처럼 소유자 라벨을 붙이고, 다른 인물은 모르는 것으로 연기하게 한다(§6.5). 비참가자의 기억은 넣지 않는다.
+//   기억은 호출자가 중요도·최신순으로 넘기고, 캐릭터당 문자 예산을 넘으면 뒤(덜 중요한 것)부터 뺀다(§6.4).
+//   이번 장면 결과로 감정·관계·기억 변화 제안(proposals)을 함께 받는다. 제안은 서버가 검증·clamp한 뒤에만 반영한다.
 // 구성 순서: 세계관 → 참가자 → 최근 장면 기록 → 이번 장면 지시.
 // - 사용자 입력은 모두 구분 태그 안에 데이터로 넣고, 태그 안의 내용은 지시가 아니라고 명시한다(프롬프트 인젝션 완화).
 // - 프롬프트에는 DB ID 대신 C1~C6 별칭을 쓴다. 비참가자 정보는 넣지 않는다.
@@ -29,7 +42,16 @@ export type PromptCharacter = {
   characterContext: string;
   mood: string | null;
   moodIntensity: number | null;
+  /** 이 인물이 다른 참가자를 보는 관계 (없으면 생략) */
+  relations?: PromptRelation[];
+  /** 이 인물만 아는 기억 (중요도·최신순) */
+  memories?: PromptMemory[];
 };
+
+export type PromptRelation = { toAlias: SceneAlias; toName: string; affinity: number; trust: number; respect: number; familiarity: number };
+export type PromptMemory = { content: string; kind: string; acquisition: string; importance: number; aboutName: string | null };
+
+const ACQUISITION_TEXT: Record<string, string> = { WITNESSED: "직접 겪음", TOLD: "전해 들음", OBSERVED: "관찰" };
 
 /** 최근 완료 장면 1개. 발화자는 이름 스냅샷(비참가자 포함)으로 표기한다 */
 export type PromptHistoryScene = {
@@ -110,6 +132,19 @@ export function fitRecentHistory(scenes: PromptHistoryScene[], budget = SCENE_RE
   return { text: blocks.reverse().join("\n\n"), truncated };
 }
 
+/** 캐릭터 기억을 예산 안에서 앞(중요한 것)부터 넣는다 */
+export function fitMemories(memories: PromptMemory[], budget = SCENE_MEMORY_BUDGET_CHARS_PER_CHARACTER): string[] {
+  const lines: string[] = [];
+  let used = 0;
+  for (const m of memories) {
+    const line = `- (중요도 ${m.importance}, ${ACQUISITION_TEXT[m.acquisition] ?? m.acquisition}${m.aboutName ? `, ${escape(m.aboutName)}에 대해` : ""}) ${escape(m.content)}`;
+    if (used + line.length + 1 > budget) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines;
+}
+
 function describeCharacter(c: PromptCharacter): string {
   const gender = c.gender === "CUSTOM" ? (c.genderCustom ?? "") : (GENDER_TEXT[c.gender] ?? "");
   const tags = c.personalityTags.map((code) => PERSONALITY_TAGS.find((t) => t.code === code)?.label ?? code).join(", ");
@@ -122,6 +157,16 @@ function describeCharacter(c: PromptCharacter): string {
     c.goal ? `목표: ${escape(c.goal)}` : null,
     c.mood ? `현재 감정: ${c.mood} (강도 ${c.moodIntensity}/100)` : null,
     c.characterContext ? `설정: ${escape(c.characterContext)}` : null,
+    ...(c.relations?.length
+      ? [
+          "관계(이 인물의 시각, 호감·신뢰·존중 -100~100, 친밀 0~100):",
+          ...c.relations.map((r) => `- ${r.toAlias} ${escape(r.toName)}: 호감 ${r.affinity}, 신뢰 ${r.trust}, 존중 ${r.respect}, 친밀 ${r.familiarity}`),
+        ]
+      : []),
+    ...(() => {
+      const lines = fitMemories(c.memories ?? []);
+      return lines.length ? [`[${c.alias}만 아는 기억] (다른 인물은 이 내용을 모른다)`, ...lines] : [];
+    })(),
     `</character>`,
   ]
     .filter(Boolean)
@@ -141,6 +186,12 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
     "이미 일어난 사건(설정 속 초기 사건 포함)을 처음 일어나는 것처럼 다시 소개하지 않는다. 이전 장면의 결심·행동·갈등을 이어받는다.",
     "이번 장면에서는 새로운 행동, 결정, 정보, 상황 변화 중 하나 이상이 일어나야 한다. 같은 논쟁을 표현만 바꿔 반복하지 않는다.",
     "이전 장면에서 확정되지 않은 추측은 사실로 단정하지 않는다. 인물은 자신이 참여하지 않은 장면의 일을 누군가에게 전해 들었을 만한 경우가 아니면 알지 못한다.",
+    "<character>의 관계와 기억은 그 인물만의 시각이다. [Cn만 아는 기억]은 다른 인물이 모르는 것으로 연기하고, 대사로 밝히기 전에는 다른 인물이 알 수 없다.",
+    "proposals에는 이번 장면의 결과로 실제로 생긴 변화만 넣는다. 변화가 없으면 빈 배열로 둔다.",
+    `- emotions: 감정이 달라진 참가자만. mood는 장면이 끝난 뒤의 감정, intensityDelta는 강도 변화(-${EMOTION_INTENSITY_DELTA_MAX}~${EMOTION_INTENSITY_DELTA_MAX}).`,
+    `- relationships: from이 to를 보는 시각이 달라진 경우만. affinity·trust·respect·familiarity는 변화량(각 -${RELATIONSHIP_AXIS_DELTA_MAX}~${RELATIONSHIP_AXIS_DELTA_MAX}). reason에 짧은 이유.`,
+    `- memories: 인물이 오래 기억할 중요한 일만(인물당 최대 ${MEMORY_PER_OWNER_PER_SCENE}개). 모든 대사를 기억으로 만들지 않는다. owner는 이 장면 참가자, content는 owner의 시점에서 쓴다.`,
+    "  직접 겪은 일은 acquisition WITNESSED, 다른 인물의 말로 알게 된 사실은 TOLD로 두고 '누가 무엇이라고 말했다'처럼 출처를 남긴다. 추측·소문을 확정된 사실처럼 쓰지 않는다. about은 그 기억의 대상 인물(없으면 null), importance는 1~5.",
     "응답은 지정된 JSON 스키마만 따른다. actionIntent·emotionCue가 없으면 null로 둔다.",
   ].join("\n");
 

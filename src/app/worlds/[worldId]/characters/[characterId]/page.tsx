@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { BIG_FIVE_LABEL, type BigFiveAxis } from "../../../../../../config/personality-map";
 import { getCurrentSession } from "@/server/auth/session";
 import { getCharacter } from "@/server/domain/characters/characters";
+import { getCharacterInsights, type RelationValues } from "@/server/domain/characters/insights";
 import { NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { LoginRequired, MOOD_LABEL } from "../../../ui";
@@ -12,7 +13,7 @@ import { CharacterForm } from "../character-form";
 import { genderText, tagLabel } from "../character-list";
 
 // 캐릭터 상세 패널과 편집 (PRD §6 /worlds/[worldId]/characters/[characterId]).
-// 감정·관계·기억은 여기서만 보여 준다(메인 대화창에는 변화 알림을 띄우지 않는다). 관계·기억은 엔진 구현 후 채운다.
+// 감정·관계·기억은 여기서만 보여 준다(메인 대화창에는 변화 알림을 띄우지 않는다). 변화 이력 없이 현재 값만 보여 준다(Phase 5-5).
 
 export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/[characterId]">) {
   return (
@@ -26,14 +27,28 @@ export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/c
 
 const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
 
+const MEMORY_KIND_LABEL: Record<string, string> = {
+  EVENT: "사건",
+  PROMISE: "약속",
+  CONFESSION: "고백",
+  CONFLICT: "갈등",
+  SECRET: "비밀",
+  IMPRESSION: "인상",
+  OTHER: "기타",
+};
+const ACQUISITION_LABEL: Record<string, string> = { WITNESSED: "직접 겪음", TOLD: "전해 들음", OBSERVED: "관찰" };
+
+const relationText = (r: RelationValues) => `호감 ${r.affinity} · 신뢰 ${r.trust} · 존중 ${r.respect} · 친밀 ${r.familiarity}`;
+
 async function CharacterDetail({ params }: { params: Promise<{ worldId: string; characterId: string }> }) {
   const session = await getCurrentSession();
   if (!session) return <LoginRequired />;
   const { worldId, characterId } = await params;
 
-  let c;
+  let c, insights;
   try {
-    c = await getCharacter(asAuthenticatedUserId(session.user.id), worldId, characterId);
+    const userId = asAuthenticatedUserId(session.user.id);
+    [c, insights] = await Promise.all([getCharacter(userId, worldId, characterId), getCharacterInsights(userId, worldId, characterId)]);
   } catch (error) {
     if (error instanceof NotFoundError) notFound();
     throw error;
@@ -69,13 +84,47 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
             ))}
           </dl>
         </section>
-        <section className={panel}>
+        <section className={`${panel} sm:col-span-2`}>
           <h2 className="text-sm font-semibold">관계</h2>
-          <p className="text-sm text-foreground/60">대화가 진행되면 다른 캐릭터와의 관계가 여기에 표시됩니다.</p>
+          {insights.relations.length === 0 ? (
+            <p className="text-sm text-foreground/60">다른 캐릭터가 없습니다.</p>
+          ) : (
+            <ul className="flex flex-col gap-2 text-sm">
+              {insights.relations.map((r) => (
+                <li key={r.otherId} className="flex flex-col">
+                  <Link href={`/worlds/${worldId}/characters/${r.otherId}`} className="font-medium underline">
+                    {r.otherName}
+                  </Link>
+                  <span className="text-foreground/80">
+                    {c.name} → {r.otherName}: {relationText(r.outgoing)}
+                  </span>
+                  <span className="text-foreground/60">
+                    {r.otherName} → {c.name}: {relationText(r.incoming)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-foreground/50">호감·신뢰·존중 -100~100, 친밀 0~100. 대화 장면마다 축별 최대 ±5씩 변합니다.</p>
         </section>
-        <section className={panel}>
+        <section className={`${panel} sm:col-span-2`}>
           <h2 className="text-sm font-semibold">기억</h2>
-          <p className="text-sm text-foreground/60">대화가 진행되면 이 캐릭터의 기억이 여기에 표시됩니다.</p>
+          {insights.memories.length === 0 ? (
+            <p className="text-sm text-foreground/60">대화가 진행되면 이 캐릭터가 중요하게 여긴 일이 여기에 기록됩니다.</p>
+          ) : (
+            <ul className="flex flex-col gap-2 text-sm">
+              {insights.memories.map((m) => (
+                <li key={m.id} className="flex flex-col">
+                  <span className="text-xs text-foreground/60">
+                    {MEMORY_KIND_LABEL[m.kind] ?? m.kind} · {ACQUISITION_LABEL[m.acquisition] ?? m.acquisition} · 중요도 {m.importance}
+                    {m.aboutName && ` · ${m.aboutName}에 대해`}
+                  </span>
+                  <span className="break-words whitespace-pre-wrap">{m.content}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-foreground/50">AI가 생성한 허구의 캐릭터 기억입니다. 이 캐릭터만 아는 내용이며 다른 캐릭터의 대화에는 쓰이지 않습니다.</p>
         </section>
       </div>
 

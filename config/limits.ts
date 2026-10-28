@@ -173,3 +173,26 @@ export const SSE_CONNECTION_PURGE_MS = 10 * 60 * 1000;
 
 /** outbox·연결 등록부 정리 주기 (RunnerHost 스위퍼에서 실행) */
 export const OUTBOX_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+// ── 감정·관계·기억 반영 (Phase 5-5, architecture.md §6.5~§6.7, A15) ──
+
+/** 장면당 변화량 상한 (확정, A15). 초과 제안은 clamp */
+export const EMOTION_INTENSITY_DELTA_MAX = 20;
+export const RELATIONSHIP_AXIS_DELTA_MAX = 5;
+
+/** 값 범위 (DB CHECK와 같음) */
+export const EMOTION_INTENSITY_RANGE = { min: 0, max: 100 } as const;
+export const RELATIONSHIP_AXIS_RANGE = { min: -100, max: 100 } as const;
+export const RELATIONSHIP_FAMILIARITY_RANGE = { min: 0, max: 100 } as const;
+
+/** 감정 행이 없을 때의 시작값 */
+export const EMOTION_DEFAULT = { mood: "NEUTRAL", intensity: 50 } as const;
+
+/** 장면당 저장하는 기억 수 상한: 캐릭터당 2개, 장면 전체 6개 (중요도 높은 것부터). 기억 내용 최대 300자 */
+export const MEMORY_PER_OWNER_PER_SCENE = 2;
+export const MEMORY_PER_SCENE_MAX = 6;
+export const MEMORY_CONTENT_MAX_LENGTH = 300;
+
+/** 다음 장면 프롬프트에 넣는 캐릭터별 기억: 중요도·최신순 최대 8개, 캐릭터당 1,500자 (§6.4 "중요도 낮은 것부터 제외") */
+export const SCENE_MEMORY_PER_CHARACTER = 8;
+export const SCENE_MEMORY_BUDGET_CHARS_PER_CHARACTER = 1_500;

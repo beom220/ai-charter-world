@@ -13,17 +13,19 @@ import { GeminiCallError, type GeminiKeyClient, type GeminiRequestMeter } from "
 import { logServerError } from "@/server/logging/log";
 import { AppError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
+import { applySceneProposals, loadParticipantContext } from "./scene-state";
 import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/server/domain/providers/gemini-verification";
 
 // 수동 대화 장면 1개 생성 (Phase 5-1 Vertical Slice, architecture.md §6.3~§6.7의 축소판). 런타임 독립.
 // 수동 생성(generateScene)은 버튼을 누를 때만 Gemini를 1회 호출한다. 자동 실행 Runner(engine/runner, Phase 5-4-2)는
-// 같은 prepareScene·runSceneAttempt를 쓰고 점유·해제·다음 예약만 따로 한다. 감정/관계/기억 반영은 없다.
+// 같은 prepareScene·runSceneAttempt를 쓰고 점유·해제·다음 예약만 따로 한다.
 //   1) 소유권 확인, 활성 캐릭터 중 참가자 2~3명 자동 선정(selectSceneParticipants), 연결(ACTIVE + 모델) 확인 — 외부 호출 없음
 //   2) SimulationRuntime.inFlightAttemptId로 세계관당 동시 생성 1건만 허용 (중복 클릭으로 인한 이중 과금 방지)
 //   2-1) 같은 세계관의 최근 완료 장면(최대 SCENE_RECENT_HISTORY_SCENES개)을 오래된 것부터 프롬프트에 넣는다 (Phase 5-2)
 //   3) UsageGuard meter를 거쳐 generateContent 1회 (자동 재시도 없음)
 //   4) Zod·별칭 검증 → 실패하면 아무것도 저장하지 않는다
-//   5) GameState 행 잠금 + stateVersion 펜싱 + attemptId UNIQUE로 단일 트랜잭션 커밋 (§6.7)
+//   5) GameState 행 잠금 + stateVersion 펜싱 + attemptId UNIQUE로 단일 트랜잭션 커밋 (§6.7).
+//      장면·발언과 함께 감정·관계·기억 제안을 clamp해 반영한다(Phase 5-5, scene-state.ts)
 //   6) 같은 트랜잭션에서 outbox에 scene.committed를 기록하고, 커밋 후 SSE 구독자에게 알린다 (Phase 5-3, §10.3)
 
 export type SceneDeps = { client?: GeminiKeyClient; material?: ProviderKeyMaterial; now?: () => Date; random?: () => number };
@@ -162,6 +164,9 @@ export async function prepareScene(userId: AuthenticatedUserId, worldId: string,
       moodIntensity: r.emotionState?.intensity ?? null,
     };
   });
+  // 참가자 사이 관계와 각자의 기억 (Phase 5-5). 비참가자의 기억은 넣지 않는다
+  const participantContext = await loadParticipantContext(userId, worldId, characters);
+  for (const c of characters) Object.assign(c, participantContext.get(c.id));
 
   const { modelId } = await requireUsableGeminiConnection(userId);
   const key = await loadKey(userId, deps.material ?? getProviderKeyMaterial());
@@ -311,6 +316,8 @@ export async function runSceneAttempt(
         };
       }),
     });
+    // 감정·관계·기억 제안 반영 (Phase 5-5). 같은 트랜잭션이므로 실패하면 장면과 함께 아무것도 저장되지 않는다
+    await applySceneProposals(tx, worldId, scene.id, characters, output.proposals);
     const next = await tx.gameState.update({
       where: { worldId },
       data: { stateVersion: { increment: 1 }, changeSeq: { increment: 1 }, nextSceneSeq: { increment: 1 }, lastCommittedAt: now() },

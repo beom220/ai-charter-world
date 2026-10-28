@@ -429,6 +429,18 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
   - 아직 없는 이벤트: `scene.started`·`scene.failed`(실패는 POST 응답으로만 알린다), outbox 24시간 정리 작업.
 - 커밋: §6.7에서 Run·lease 검사·관계/감정/기억을 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
 
+### 6.8.2 감정·관계·기억 반영 (Phase 5-5)
+
+수동 생성과 Runner가 같은 `prepareScene` → `runSceneAttempt`를 쓰므로 둘 다 적용된다.
+- 출력: §6.5 스키마 v1의 `proposals`를 요청한다(Gemini `responseJsonSchema`에서 필수). 서버 파싱은 `proposals`가 없으면 빈 제안으로 받는다. 기억 제안에 `acquisition`(`WITNESSED`·`TOLD`·`OBSERVED`, 기본 `WITNESSED`)을 더했다.
+- 기억 종류는 새 모델 없이 `CharacterMemory` 하나로 표현한다. 경험한 사건·대화는 `EVENT`·`PROMISE`·`CONFESSION`·`CONFLICT`·`SECRET` + `WITNESSED`, 대화로 알게 된 사실은 `TOLD`(출처를 밝힌 문장), 다른 인물에 대한 인식은 `IMPRESSION` + `aboutCharacterId`로 둔다.
+- 검증(`engine/validation/scene-output.ts`, §6.6): 이번 장면 매핑에 없는 별칭(비참가자·다른 세계관)은 `UNKNOWN_REFERENCE`, `from == to`는 `SELF_RELATIONSHIP`으로 장면 실패. 기억 소유자는 참가자 별칭만 가능하다(목격자만 기억). 기억은 중요도 순으로 캐릭터당 2개·장면당 6개만 남기고(`MEMORY_PER_*`), 자기 자신에 대한 `about`은 비운다.
+- clamp(`engine/commit/state-changes.ts`): 같은 캐릭터·같은 `(from,to)` 제안은 합산 후 감정 강도 ±20·관계 축별 ±5로 자르고, 값 범위(감정 0..100, 호감·신뢰·존중 -100..100, 친밀 0..100)로 자른다. `EmotionChange`·`RelationshipChange`에 원 제안값과 `clamped`를 남긴다. 기억 중요도는 1..5로 자른다. 관계가 없던 쌍은 baseline, 없으면 0에서 시작하고, 감정 행이 없으면 `NEUTRAL`·50에서 시작한다.
+- 커밋(`domain/scenes/scene-state.ts` `applySceneProposals`): §6.7 트랜잭션 안에서 장면·발언 다음에 감정 → 관계 → 기억을 반영하고, 그 뒤 GameState(`stateVersion`·`changeSeq`)·자동저장 메타·outbox를 갱신한다. 별칭은 이번 장면 참가자의 캐릭터 ID로만 되돌린다. 실패·펜싱 거부(`stateVersion`·Run·lease·attemptId)면 아무것도 남지 않는다. 같은 attemptId 결과가 다시 와도 `stateVersion`이 이미 올라 거부되고 `attemptId` UNIQUE가 2차로 막는다.
+- 다음 장면 컨텍스트(`loadParticipantContext`, §6.4): 참가자마다 다른 참가자를 보는 관계 4축과 그 인물이 소유한 기억(중요도·최신순 최대 8개, 캐릭터당 1,500자)을 `<character>` 안에 `[Cn만 아는 기억]` 라벨로 넣는다. 비참가자의 기억·관계는 넣지 않는다. 기억이 예산으로 빠져도 `contextTruncated`는 바꾸지 않는다(worldContext 전용).
+- 화면: 메인 피드는 대사만 보인다. 캐릭터 상세(`/worlds/[id]/characters/[cid]`)에서 현재 감정, 다른 활성 캐릭터와의 관계(양방향 현재 값), 이 캐릭터의 기억(중요도·최신순 30개)을 보여 준다. 변화 이력 화면은 없다.
+- 아직 없음: `scene.committed` payload의 관계·감정 변화·기억 요약(§10.2, 현재는 장면·대사만), 같은 사건의 `shareGroupId` 묶음, 반복 감지·동기 기반 SceneDirector.
+
 ### 6.9 AgentModeStrategy 확장 경로 (후속)
 
 - 참가자별 `CharacterKnowledgeView`를 각각 별도 호출에 넣는다. 그래서 정보 비대칭이 Story 모드보다 강하게 지켜진다.
