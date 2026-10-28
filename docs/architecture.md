@@ -1,10 +1,12 @@
 # AI Character World — 아키텍처 설계서
 
-> **문서 상태:** v1.0 (2026-10-27 최종 승인 반영)
-> **기준 문서:** `docs/requirements.md` (PRD v1.2), 2026-10-27 확정 기술 결정 D1~D9, A1~A17
+> **문서 상태:** v1.1 (2026-10-29 Phase 7 종료 기준 구현 정합화. v1.0: 2026-10-27 최종 승인)
+> **기준 문서:** `docs/requirements.md` (PRD v2.5), 2026-10-27 확정 기술 결정 D1~D9, A1~A17(이후 사용자 결정으로 바뀐 항목은 표에 표시)
 > **관련 문서:** `docs/database.md` (데이터 모델 상세)
 > **작성일:** 2026-10-27
-> **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). 7-1·7-2·7-4 완료, 7-3 캐릭터 직접 명령은 기획 제외. 단계별 현황과 남은 QA는 PRD §10.1
+> **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). 7-1·7-2(7-2-4 실제 Gemini 수동 검증 포함)·7-4 완료, 7-3 캐릭터 직접 명령은 기획 제외. 단계별 현황과 남은 QA는 PRD §10.1
+>
+> **읽는 법:** 각 절의 설계 서술 뒤에 "Phase N 구현"이 붙어 있으면 구현이 우선한다. 설계만 있고 구현되지 않은 항목은 §6.0 표에 모았다. 폐지된 정책은 "(폐지)"·"과거 설계"로 표시하고 짧게만 남긴다.
 
 이 문서는 PRD의 요구사항을 바꾸지 않고, 구현 방법을 정의한다. 버전 번호가 필요한 라이브러리는 설치 시점(Phase 1)에 최신 안정 버전으로 확정하고 이 문서를 갱신한다.
 
@@ -28,7 +30,7 @@
 | ID | 결정 | 이 문서의 반영 위치 |
 |---|---|---|
 | D1 | ConversationScene은 SimulationRun이 아니라 **GameState의 진행 이력**으로 관리 | §5, database.md §3.4 |
-| D2 | 장면 완료마다 자동저장 가능한 최신 상태 유지. 전체 대화 이력을 매번 복사하지 않음. 자동저장은 실제로 복원 가능해야 함 | §9.3 |
+| D2 | 장면 완료마다 자동저장 가능한 최신 상태 유지. 전체 대화 이력을 매번 복사하지 않음. 자동저장은 실제로 복원 가능해야 함 *(PRD v1.4로 대체: 실행 중 1시간 자동 저장 5슬롯 + 복구 지점, §9.3.1)* | §9.3 |
 | D3 | 관계·감정 변화량이 범위를 넘으면 **clamp**. 구조 오류·잘못된 참조는 **장면 실패** | §6.6 |
 | D4 | 모든 SSE 연결이 끊기면 신규 Gemini 요청 **즉시 보류**. **60초 이내 재연결 시 자동 재개**, 60초 초과 시 `PAUSED`(재접속 후 사용자가 재개). 진행 중 요청은 완료 후 정상 처리 *(2차 결정으로 개정)* | §7.5 |
 | D5 | 일시정지는 **진행 중인 장면 완료 후** 반영. 종료·불러오기는 요청 취소를 시도하고 **stateVersion 검증**으로 이전 결과 커밋 차단. 초기화는 `IDLE`·`PAUSED`에서만 허용하므로 취소 대상이 없음 *(2차 결정으로 개정)* | §7.3, §7.6 |
@@ -42,12 +44,12 @@
 | ID | 결정 | 근거 |
 |---|---|---|
 | A1 | PRD §7의 `SimulationSession`을 `SimulationRun`(시작~종료 1회 실행, 사용량 통계)으로 변경 | D1, D8 |
-| A2 | 자동저장은 **LIVE / MATERIALIZED 2-모드**로 구현 (§9.3) | D2, D7 |
+| A2 | ~~자동저장은 **LIVE / MATERIALIZED 2-모드**로 구현~~ **(폐지, Phase 6·PRD v1.4)** — 장면 커밋은 세이브 행을 갱신하지 않는다(§9.3) | D2, D7 |
 | A3 | 사용량 한도 도달 시 `PAUSED`(사유 `USAGE_LIMIT`)로 전환. 서킷 브레이커 차단은 `RUNNING` 유지 + 대기 | PRD FR-07 |
-| A4 | 시스템 오류 메시지는 `Message`와 분리된 `SystemNotice` 테이블에 저장하고 세이브에서 제외 | 실패 장면은 게임 상태가 아님 |
+| A4 | 시스템 오류 메시지는 `Message`와 분리된 `SystemNotice` 테이블에 저장하고 세이브에서 제외 *(테이블만 있고 기록하지 않음 — 실패는 SSE `scene.failed`로 화면 알림만, §6.0)* | 실패 장면은 게임 상태가 아님 |
 | A5 | 실행 중 초기화 거부. `IDLE`/`PAUSED`에서만, 진행 중 장면이 완전히 종료된 뒤 수행(`PAUSING` 거부) | PRD FR-09 |
 | A6 | 이벤트는 DB outbox(`SimulationEvent`)에 기록하고 SSE `Last-Event-ID`로 재전송 | 새로고침·재연결·Worker 분리 |
-| A7 | 수동 세이브 슬롯 세계관당 최대 **20개** | 스냅샷 용량 보호 |
+| A7 | ~~수동 세이브 슬롯 세계관당 최대 **20개**~~ **(변경, PRD v1.4)** → 수동 5 + 자동 5 + 복구 지점 1 | 스냅샷 용량 보호 |
 | A8 | HTTP 요청 본문 최대 **10MB**. 세계관 컨텍스트에는 글자 수 제한 없음 | HTTP 전송 계층 보호 |
 | A9 | 일일 사용량 한도의 날짜 기준 **Asia/Seoul(KST)** | 사용자 생활 시간대 |
 | A10 | 관계 범위: 호감도·신뢰도·존경심 **−100~100**, 친밀도 **0~100** | PRD FR-05 |
@@ -110,6 +112,8 @@ flowchart LR
     COM -->|outbox| DB
     SSE -->|재전송 + 구독| DB
 ```
+
+**구현 현황**: 위 그림은 설계 구성이다. 실제 엔진은 클래스·인터페이스 단위(SceneDirector·ContextBuilder·Strategy·MeteredLlmClient·StateCommitter)가 아니라 함수 단위로 구현했고, Server Actions·Worker는 쓰지 않는다. 대응 관계는 §6.0.
 
 **Worker 분리 후(Phase 9 이후 선택)**: `RunnerHost`를 별도 Node 프로세스(`worker/`)로 옮긴다. 웹 서버는 명령을 DB에 기록하고 `pg_notify`로 신호만 보낸다. Worker도 이벤트를 outbox에 기록하고 `pg_notify`로 알린다. 엔진 코드는 바뀌지 않는다(§7.7).
 
@@ -183,6 +187,8 @@ tests/
   unit/  integration/  e2e/
 ```
 
+**실제 구조 (Phase 7 종료 기준)**: 페이지는 `(public)`·`(app)` 그룹 없이 `app/{login,settings/providers,worlds/…}`에 있다(화면 URL은 PRD §6). `server/domain`은 `characters/ events/ providers/ saves/ scenes/ simulation/`과 `worlds.ts`, `server/engine`은 `commit/ context/ director/ runner/ usage/ validation/`이다. 위 초안의 `strategies/`·`reset/`·`history/`·`relationships/`·`templates/`·`worker/`, `config/gemini-pricing.ts`, API `saves/autosave/restore`·`reset`·`history`는 없다. 대신 `config/{character-backgrounds,world-events}.ts`, API `scenes`·`events`·`simulation/leave`·`saves/[saveId]/overwrite`·`characters/[characterId]/state`가 있다.
+
 **경계 규칙**: `server/engine`, `server/llm`, `server/events`는 `next/*`, `app/*`를 import하지 않는다. Phase 1에서 ESLint `no-restricted-imports`로 강제한다.
 
 ### 5.1 server-only 적용 정책과 경계 (2026-10-27 확정)
@@ -205,11 +211,32 @@ tests/
 
 ## 6. 시뮬레이션 엔진
 
+### 6.0 설계 대비 구현 현황 (Phase 7 종료 기준, 2026-10-29)
+
+§6.1~§6.9는 설계다. 실제 구현은 아래와 같고, 이 표에 "미구현"인 항목은 완료로 보지 않는다.
+
+| 설계 항목 | 실제 구현 | 상태 |
+|---|---|---|
+| `SceneDirector` 동기 선정·후보 점수·다양성 패널티·반복 감지 (§6.8) | `engine/director/select-participants.ts` `selectSceneParticipants`: 대화 가능한 생존 캐릭터 중 2~3명 무작위(난수 주입 가능). 동기는 정하지 않는다(장면 `motiveType = MIXED`, 사건 장면만 `WORLD_EVENT`) | 참가자 선정만 구현, 나머지 미구현 |
+| `ContextBuilder`·토큰 예산 (§6.4) | `engine/context/story-prompt.ts` `buildStoryPrompt` + `domain/scenes/scene-state.ts` `loadParticipantContext`. 토큰 추정 없이 **문자 수 예산**: worldContext 30,000자(문단 단위, 넘치면 `contextTruncated`), 세계 필드 4,000자, 최근 장면 5개·8,000자(세계 전체 기록, 오래된 턴부터 제외), 기억 캐릭터당 8개·1,500자(`config/limits.ts`). 참가자별 단기 기억 뷰·세계관 저장 시 예상 토큰 안내·`context.truncated` 이벤트는 없다 | 문자 수 예산으로 구현 |
+| `SceneGenerationStrategy`·`MeteredLlmClient`·`LlmProvider` (§6.2) | 전략 인터페이스 없음. `domain/scenes/generate-scene.ts` `prepareScene` → `runSceneAttempt`가 프롬프트 → `GeminiKeyClient.generateJson`(UsageGuard meter 경유, §8.3) → 검증 → 커밋을 한다. Mock은 `llm/mock/gemini-mock.ts` | Story 모드 1회 호출만 구현 |
+| `AgentModeStrategy` (§6.9) | `GameState.strategyMode` 컬럼만 있고 항상 `STORY` | 미구현(후속) |
+| `SceneValidator` (§6.6) | `engine/validation/scene-output.ts` `parseSceneOutput`(Zod + 별칭 검사) + 커밋 때 clamp(`engine/commit/state-changes.ts`)·신체 상태 규칙(`condition-rules.ts`) | 구현 |
+| `StateCommitter` (§6.7) | `runSceneAttempt`의 커밋 트랜잭션 + `applySceneProposals`·`applySceneWorld` | 구현 |
+| 진행 중 호출 취소 `AbortController` (§7.3) | 없음. 종료·lease 상실 결과는 커밋 펜싱으로만 버린다 | 미구현 |
+| `SystemNotice` 기록 (A4) | 테이블만 있음. 실패는 outbox `scene.failed` → 하단 알림 카드(저장 안 함) | 미구현 |
+| SSE 이벤트 (§10.2) | `runtime.status`·`scene.started`·`scene.committed`·`scene.failed`·`state.replaced`·`saves.updated`·`world_event.updated`·`sync.required`·`stream.ready` | `context.truncated`·`api.log`·`usage.updated`·`breaker.updated` 미구현 |
+| 예상 비용 (§8.3) | `config/gemini-pricing.ts` 없음, `estimatedCostMicros`는 0/NULL | 미구현 |
+| 사용자 한도 설정 UI·API (§8.3) | `dailyRequestLimit`·`dailyTokenLimit` DB 값만 적용(기본 NULL = 없음) | 미구현 |
+| 하단 API 로그 탭·Run별 사용량 표시 (§12, PRD FR-07·FR-09) | `ApiRequestLog`·`SimulationRun` 카운터는 기록하지만 화면은 없다 | 미구현 |
+| 진행 초기화·대화 기록 삭제·최신 자동저장 복원 (§9.2·§9.4·§9.5) | API·화면 없음 | 미구현 |
+| `WorkerRunnerHost`·PG NOTIFY (§7.7) | `InProcessRunnerHost`만. 단일 프로세스 전제(§15) | 미구현(후속) |
+
 ### 6.1 모듈과 책임
 
 | 모듈 | 책임 |
 |---|---|
-| `SimulationRunner` | 세계관 1개의 루프. lease 획득·갱신, 상태 확인, 장면 시도, 간격 대기, 취소 감지 |
+| `SimulationRunner` | 세계관 1개의 루프. lease 획득·갱신, 상태 확인, 장면 시도, 간격 대기, 취소 감지 (구현: `engine/runner/` §7.2 Phase 5-4-2) |
 | `SceneDirector` | 비LLM 장면 계획: 동기 선정, 참가자 선정, 다양성 패널티 |
 | `ContextBuilder` | 참가자별 `CharacterKnowledgeView` 생성, 토큰 예산 적용 |
 | `SceneGenerationStrategy` | 계획 + 컨텍스트로 `SceneDraft` 생성. `StoryModeStrategy`(MVP), `AgentModeStrategy`(후속) |
@@ -275,7 +302,9 @@ SimulationRunner.tick()
     ─ 대기 중 상태 변경 감지 시 즉시 깨어남
 ```
 
-### 6.4 ContextBuilder와 토큰 예산 (D6)
+### 6.4 ContextBuilder와 토큰 예산 (D6) — 설계
+
+> 실제 구현은 토큰 추정 없는 문자 수 예산이다(수치와 범위는 §6.0, §6.8.1·§6.8.2). 참가자별 단기 기억 뷰·세계관 저장 시 예상 토큰 안내·`context.truncated` 이벤트는 미구현이고, worldContext 일부 미반영은 장면 `contextTruncated`와 피드 문구로만 알린다.
 
 **참가자별 지식 뷰 (`CharacterKnowledgeView`)**: 캐릭터마다 아래 정보만 담는다. 비참가자의 정보는 들어가지 않는다.
 - 프로필: 이름·성별·나이·성격 태그·Big Five 수치·목표·캐릭터 컨텍스트(≤300자)·현재 감정
@@ -352,6 +381,8 @@ SimulationRunner.tick()
 }
 ```
 
+**현행 출력 스키마 (Phase 7 종료 기준, `engine/validation/scene-output.ts`)**: 위 v1에 선택 필드가 더해졌다. 기억에 `acquisition`(Phase 5-5)·`eventRef`(7-2-3), 최상위에 `events[{ref, realization, usedFallback, danger}]`(7-2-3, 해결 필드 없음)·`conditions[{character, thermal, pain, injury, treatment, death, eventRef}]`(7-2-2). 선택 필드는 형식이 틀리면 비우고 장면은 저장한다(§13.5·§13.6).
+
 ### 6.6 SceneValidator 규칙 (D3)
 
 | 검사 | 위반 시 |
@@ -378,29 +409,33 @@ BEGIN
   SELECT … FROM "GameState" WHERE "worldId" = $1 FOR UPDATE      -- 세계관 단위 직렬화 지점
   IF gameState.stateVersion ≠ expectedVersion       → ROLLBACK, STALE  (종료·불러오기가 끼어듦)
   IF runtime.currentRunId ≠ runId OR runtime.leaseOwner ≠ me → ROLLBACK, STALE
-  IF 참조 캐릭터 중 삭제된 캐릭터가 있음              → ROLLBACK, VALIDATION_ERROR(STALE_REFERENCE)
+  IF 참조 캐릭터 중 삭제된 캐릭터가 있음              → ROLLBACK, STALE_REFERENCE (scene.failed code STALE)
   INSERT ConversationScene(seq = nextSceneSeq, attemptId UNIQUE)  -- 중복 커밋은 UNIQUE 위반 → 멱등 처리
   INSERT SceneParticipant, Message (speakerNameSnapshot 포함)
   UPSERT RelationshipState (없으면 baseline 또는 기본값으로 생성) → clamp 적용 → INSERT RelationshipChange
   UPDATE EmotionState → INSERT EmotionChange
   INSERT CharacterMemory
   UPDATE GameState SET stateVersion += 1, changeSeq += 1, nextSceneSeq += 1, lastCommittedAt = now()
-  UPDATE SaveGame(AUTO) → LIVE 모드로 전환, 메타데이터 갱신 (§9.3)
+  (세이브 행은 갱신하지 않음 — Phase 6에서 LIVE 자동저장 폐지, §9.3.1)
   INSERT SimulationEvent (scene.committed …)                        -- outbox
 COMMIT
 → EventBus.notify(worldId, lastEventId)
 ```
 
+- **실제 커밋 순서 (Phase 7 종료 기준, `runSceneAttempt`)**: World `FOR UPDATE` → GameState `FOR UPDATE` → `stateVersion` 펜싱 → (Runner) Runtime `FOR UPDATE` 후 `currentRunId`·`leaseOwner`·`inFlightAttemptId` 확인 / (수동) 점유 확인 → (수동) `settingsSeq` 확인 → 참가자 삭제 확인 → 월드 시계 정산(`settleWorldClock keep`) → 장면·참가자·발언 → 감정·관계·기억(`applySceneProposals`) → 사건 반영·사건별 기억·신체 상태(`applySceneWorld`, §13.6·§13.5) → 생존자 2명 미만이면 RUNNING → PAUSING(`NOT_ENOUGH_CHARACTERS`) → GameState 갱신 → outbox `scene.committed`(+`world_event.updated`). 이 트랜잭션은 세이브 행을 건드리지 않는다.
 - **멱등성**: `attemptId`가 UNIQUE이다. 네트워크 재시도나 중복 처리로 같은 시도가 두 번 커밋되면 두 번째는 UNIQUE 위반이 되고, 이미 커밋된 것으로 간주한다.
 - **펜싱**: 종료·불러오기는 `stateVersion`을 올린다. 그 전에 시작된 시도는 커밋 단계에서 반드시 거부된다. 초기화도 버전을 올리지만 `IDLE`·`PAUSED`에서만 실행되므로 거부할 진행 중 시도가 없다. 일시정지와 SSE 연결 보류는 버전을 올리지 않으므로 진행 중인 장면이 정상 커밋된다(D4, D5).
 - **트랜잭션 밖 처리**: `ApiRequestLog`, `SimulationRun` 카운터, `ApiUsageDaily`는 장면 성공 여부와 무관하게 기록한다(실패도 비용이 발생하므로).
 - **설정 편집은 펜싱하지 않음**: 캐릭터·세계관 설정 편집은 `stateVersion`을 올리지 않고, 복구 지점 판정용 `changeSeq`와 설정 펜싱용 `settingsSeq`만 올린다(§9.3). `settingsSeq`는 세계관·캐릭터 설정 변경과 불러오기에서만 오르고, 실행 속도 변경·사건 등록은 올리지 않는다(Phase 7-2-0).
 - **설정 편집 가능 상태(PRD v1.7)**: 세계관 수정·캐릭터 생성/수정/삭제는 `IDLE`, 또는 `inFlightAttemptId IS NULL`인 `PAUSED`에서만 허용한다. World 잠금 뒤 `SimulationRuntime`을 `FOR UPDATE`로 읽어 확인하고(잠금 순서 World → Runtime), 아니면 409 `SETTINGS_LOCKED`. Runner의 시도 기록도 World 잠금 아래에서 하므로 편집과 호출 시작이 겹치지 않는다. 화면도 같은 규칙(`settingsEditable`)으로 버튼을 막는다.
+- **사망 캐릭터 수정 불가(PRD v2.0)**: 사망한 캐릭터의 설정 수정은 실행 상태와 관계없이 409 `CHARACTER_DEAD`(`domain/characters/characters.ts`). 삭제와 슬롯 계산은 일반 규칙을 따른다(사망자도 활성 6명에 포함).
 - **세계관 설정 영구 잠금(PRD v1.8)**: World 잠금 뒤 `ConversationScene`이 1개라도 있으면 실행 상태 확인 전에 409 `WORLD_SETTINGS_LOCKED`. 장면 수는 현재 활성 상태 기준이므로 불러오기로 장면이 0개가 되면 다시 수정할 수 있다. `getWorld`가 `settingsLocked`를 돌려주고 설정 화면은 입력을 막는다.
 - **이전 설정으로 호출 금지**: Runner·수동 생성은 장면 준비 때 읽은 `settingsSeq`를 시도 기록 트랜잭션(World 잠금)에서 다시 확인하고(`settingsUnchanged`), 다르면 기록하지 않는다. 수동 생성은 IDLE에서 호출 중에도 설정을 바꿀 수 있으므로 커밋 때도 확인해 다르면 409 `SETTINGS_CHANGED`로 저장하지 않는다. 설정은 매 장면 DB에서 새로 읽는다.
 - **프롬프트 우선순위**: `<world>`·`<character>`는 현재 유효한 설정이며 `<history>`·기억과 어긋나면 설정을 따른다. 마지막 설정 변경 시각(`World.updatedAt`, 캐릭터 `updatedAt` 최댓값)보다 먼저 만든 장면에는 "장면 #N까지 이전 설정" 표시를 붙인다. 기존 장면·기억은 지우지 않는다.
 
-### 6.8 SceneDirector (비LLM 장면 계획)
+### 6.8 SceneDirector (비LLM 장면 계획) — 설계, 대부분 미구현
+
+> 현재 구현은 참가자 무작위 선정뿐이다(§6.0). 아래 1~4(동기·점수·패널티·반복 감지)는 구현되지 않았다. 5는 생존자 기준으로 구현됐다(사망자·삭제 캐릭터 제외, 2명 미만이면 시작·재개 거부).
 
 1. **동기 후보**: 활성 `WorldEvent`(현재 상황 포함), 관계 긴장(높은 호감·낮은 신뢰 등 극단값), 캐릭터 목표.
 2. **참가자 후보 점수**: 각 2~3인 조합에 대해 아래처럼 계산한다.
@@ -431,8 +466,8 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
   - SSE `GET /api/worlds/[worldId]/simulation/stream`(`server/events/world-stream.ts`): 소유권 확인 후 열고, `SseConnection`을 등록·10초 갱신·종료 시 삭제한다. 첫 연결은 페이지 렌더 시점 커서(`?lastEventId`), 재연결은 `Last-Event-ID` 이후만 재전송한다. 커서가 이 세계관 이벤트가 아니거나 밀린 이벤트가 `SSE_REPLAY_MAX_EVENTS`(100)를 넘으면 `sync.required`. 15초 ping 때 outbox를 따라잡는다. 보류(`clientHoldSince`) 처리는 Runner 단계에서 추가한다.
   - 서버는 저장된 장면을 한 번에 보내고, 브라우저가 하나의 재생 큐(`lib/scene-feed.ts` `ScenePlayback`)로 발언마다 "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 템포는 `SCENE_PLAYBACK_TIMING`(쉼 500~900ms, 입력 중 1.5~3초, 연출 전용, 장면 간격 15/5/1초와 별개)이다. 처음 불러온 기록·이전 기록은 연출 없이 즉시 표시한다. POST 응답과 SSE가 같은 장면을 줄 수 있으므로 화면은 장면 id로 한 번만 넣는다.
   - 화면은 오래된 장면이 위인 연속 대화 피드다(seq·turnIndex 오름차순). 하단 근처일 때만 새 발언을 따라 스크롤하고, 이전 기록을 위에 붙일 때는 보던 위치를 유지한다.
-  - 아직 없는 이벤트: `scene.started`·`scene.failed`(실패는 POST 응답으로만 알린다), outbox 24시간 정리 작업.
-- 커밋: §6.7에서 Run·lease 검사·관계/감정/기억을 뺀 축소판(GameState 잠금, `stateVersion` 펜싱, `attemptId` UNIQUE, 자동저장 LIVE 메타 갱신). `runId = null`, `motiveType = MIXED`.
+  - (5-3 당시) `scene.started`·`scene.failed`·outbox 정리는 Phase 5-4-3에서 추가됐다. 첫 연결 커서는 Phase 7-4부터 "마지막으로 받은 이벤트"를 쓴다(§13.7).
+- 커밋: §6.7과 같은 `runSceneAttempt`를 쓴다(Run·lease 대신 점유·`settingsSeq` 확인). `runId = null`. 세이브 행은 갱신하지 않는다(Phase 6).
 
 ### 6.8.2 감정·관계·기억 반영 (Phase 5-5)
 
@@ -444,9 +479,9 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
 - 커밋(`domain/scenes/scene-state.ts` `applySceneProposals`): §6.7 트랜잭션 안에서 장면·발언 다음에 감정 → 관계 → 기억을 반영하고, 그 뒤 GameState(`stateVersion`·`changeSeq`)·자동저장 메타·outbox를 갱신한다. 별칭은 이번 장면 참가자의 캐릭터 ID로만 되돌린다. 실패·펜싱 거부(`stateVersion`·Run·lease·attemptId)면 아무것도 남지 않는다. 같은 attemptId 결과가 다시 와도 `stateVersion`이 이미 올라 거부되고 `attemptId` UNIQUE가 2차로 막는다.
 - 다음 장면 컨텍스트(`loadParticipantContext`, §6.4): 참가자마다 다른 참가자를 보는 관계 4축과 그 인물이 소유한 기억(중요도·최신순 최대 8개, 캐릭터당 1,500자)을 `<character>` 안에 `[Cn만 아는 기억]` 라벨로 넣는다. 비참가자의 기억·관계는 넣지 않는다. 기억이 예산으로 빠져도 `contextTruncated`는 바꾸지 않는다(worldContext 전용).
 - 화면: 메인 피드는 대사만 보인다. 캐릭터 상세(`/worlds/[id]/characters/[cid]`)에서 현재 감정, 다른 활성 캐릭터와의 관계(양방향 현재 값), 이 캐릭터의 기억(중요도·최신순 30개)을 보여 준다. 변화 이력 화면은 없다.
-- 아직 없음: `scene.committed` payload의 관계·감정 변화·기억 요약(§10.2, 현재는 장면·대사만), 같은 사건의 `shareGroupId` 묶음, 반복 감지·동기 기반 SceneDirector.
+- 아직 없음: `scene.committed` payload의 관계·감정 변화·기억 요약(§10.2, 현재는 장면·대사·시스템 노트만), 반복 감지·동기 기반 SceneDirector. `shareGroupId`는 Phase 7-2-3부터 사건별 기억 연결에 쓴다(§13.6).
 
-### 6.9 AgentModeStrategy 확장 경로 (후속)
+### 6.9 AgentModeStrategy 확장 경로 (후속, 미구현)
 
 - 참가자별 `CharacterKnowledgeView`를 각각 별도 호출에 넣는다. 그래서 정보 비대칭이 Story 모드보다 강하게 지켜진다.
 - 진행 방식: 턴마다 화자를 선택 → 해당 캐릭터만 호출 → 결과를 누적 → 종료 조건 판정 → 같은 `SceneDraft` 형식으로 반환한다.
@@ -466,18 +501,18 @@ stateDiagram-v2
     RUNNING --> PAUSING: pause (진행 중 장면 있음)
     RUNNING --> PAUSED: pause (진행 중 장면 없음)
     PAUSING --> PAUSED: 진행 중 장면 완료(커밋 또는 실패)
-    RUNNING --> PAUSED: SSE 보류 60초 초과 / 사용량 한도 도달
+    RUNNING --> PAUSED: SSE 보류 60초 초과 / 마지막 대화 화면 이탈 / 사용량 한도 / 키 무효
+    RUNNING --> PAUSING: 위 사유 + 진행 중 장면 있음, 또는 사망으로 생존자 2명 미만(장면 커밋 중)
     PAUSED --> RUNNING: resume (같은 Run)
-    RUNNING --> IDLE: stop (취소 + stateVersion++)
+    RUNNING --> IDLE: stop (stateVersion++)
     PAUSING --> IDLE: stop
     PAUSED --> IDLE: stop
-    IDLE --> IDLE: load / reset
-    PAUSED --> IDLE: load / reset
-    RUNNING --> IDLE: load (취소 + stateVersion++)
-    PAUSING --> IDLE: load
+    IDLE --> IDLE: load (진행 중 시도 없음일 때만)
 ```
 
-- `statusReason`: `USER`, `CLIENT_DISCONNECTED`, `USAGE_LIMIT`, `KEY_INVALID`, `LOADED`, `RESET`, `SERVER_RECOVERY`.
+- 불러오기는 `IDLE`이고 진행 중 시도가 없을 때만 허용한다(PRD v1.4, §9.3.1). 설계 초안의 "실행 중 불러오기(취소 + stateVersion++)"와 `reset` 전이는 쓰지 않는다(진행 초기화는 미구현, §6.0).
+
+- `statusReason`: `USER`, `CLIENT_DISCONNECTED`, `USAGE_LIMIT`, `KEY_INVALID`, `LOADED`, `RESET`, `SERVER_RECOVERY`, `NOT_ENOUGH_CHARACTERS`(Phase 7-2-2). `RESET`·`SERVER_RECOVERY`는 enum에만 있고 현재 쓰는 경로가 없다.
 - **SSE 연결 보류**는 별도 상태가 아니라 `RUNNING`의 하위 조건이다(`clientHoldSince IS NOT NULL`). 보류 중에는 신규 호출을 시작하지 않으며, 60초 이내 재연결되면 `RUNNING` 그대로 재개된다(§7.5).
 - **실패한 장면은 상태를 바꾸지 않는다**(PRD FR-09). 실행 중이면 계속 `RUNNING`이다.
 - **서킷 브레이커 차단(429·5xx·네트워크 연속 실패)**: `RUNNING`을 유지한 채 `blockedUntil`까지 신규 호출을 보류한다(PRD §5.3 "paused 전환과 별개").
@@ -487,7 +522,7 @@ stateDiagram-v2
 
 | 명령 | 허용 상태 | 동작 |
 |---|---|---|
-| `POST start` | IDLE | 사전 조건 검사(키 ACTIVE, 활성 캐릭터 ≥ 2, 한도 여유) → `SimulationRun` 생성 → `RUNNING` → RunnerHost 신호 (SSE 연결 전이면 보류 상태로 시작, 연결되면 진행) |
+| `POST start` | IDLE | 사전 조건 검사(키 ACTIVE, 대화 가능한 생존 캐릭터 ≥ 2, 한도 여유) → `SimulationRun` 생성 → `RUNNING` → RunnerHost 신호 (SSE 연결 전이면 보류 상태로 시작, 연결되면 진행) |
 | `POST pause` | RUNNING | 진행 중 장면이 있으면 `PAUSING`, 없으면 `PAUSED`. 진행 중 요청은 취소하지 않음 |
 | `POST resume` | PAUSED | 사전 조건 재검사 → `RUNNING` → 신호 |
 | `POST stop` | RUNNING / PAUSING / PAUSED | 트랜잭션: `stateVersion += 1`, `IDLE`, Run 종료 → 취소 신호 |
@@ -500,10 +535,10 @@ stateDiagram-v2
 - `server/engine/runner/transitions.ts` `decideTransition`: 위 표의 전이. 목표 상태면 noop(200, `changed: false`), 그 밖은 409 `INVALID_TRANSITION`. `PAUSING`에서의 resume은 409(진행 중 장면 완료 후 `PAUSED`에서 재개).
 - `server/domain/simulation/control.ts`: 명령마다 한 트랜잭션에서 World 행 잠금 → (stop: GameState `stateVersion += 1`) → `SimulationRuntime` 전이 → outbox `runtime.status`. 커밋 후 `notifyWorld`. 같은 세계관 명령은 World 잠금으로 직렬화되어 동시 start도 Run 1개다.
   - start·resume 사전 조건: 연결 ACTIVE + 모델, 활성 캐릭터 ≥ 2, 오늘 일일 한도 미도달(`assertDailyUsageAvailable`, 읽기 전용 — 실제 예약은 호출 직전 UsageGuard). 서킷 브레이커 차단은 시작을 막지 않는다(§7.1, `RUNNING` 유지·호출 보류).
-  - lease는 Runner 소유다. 제어 명령은 `PAUSED`·`IDLE`이 될 때만 해제한다. `PAUSING`은 진행 중 장면이 끝나면 `settlePausing`이 `PAUSED`로 마무리한다(현재는 수동 장면 생성의 종료 처리에서 호출).
+  - lease는 Runner 소유다. 제어 명령은 `PAUSED`·`IDLE`이 될 때만 해제한다. `PAUSING`은 진행 중 장면이 끝나면 `settlePausing`이 `PAUSED`로 마무리한다(Runner 시도 종료 처리와 수동 장면 생성의 종료 처리에서 호출).
   - `runtime.status` payload: `status, statusReason, runId, intervalPreset, nextSceneAt, inFlight, held`(held는 5-4-3에서 채움).
 - API: `GET·PATCH /simulation/state`(PATCH `{ intervalPreset }` = 실행 속도, 바뀐 경우에만 `changeSeq += 1`), `POST /simulation/{start,pause,resume,stop}`.
-- 아직 없음: SSE 연결 보류(`clientHoldSince`), 5-4-3.
+- (5-4-1 당시 없던 SSE 연결 보류는 5-4-3에서 구현.)
 
 **Phase 5-4-2 구현 (자동 실행 Runner)** — `server/engine/runner/`: `host.ts`(InProcessRunnerHost), `world-tick.ts`(세계관 1단계), `schedule.ts`(다음 예약), `signal.ts`
 - 시작·종료: `instrumentation.ts` `register()`(Node runtime, `next build` 단계 제외) → `startRunnerHost()`. `globalThis` 단일 인스턴스라 HMR·중복 호출에도 1개다. 부팅 직후 1회 + 15초마다 스위퍼가 `RUNNING·PAUSING`이고 lease가 비었거나 만료·내 것인 세계관에 Runner를 붙인다. 제어 명령은 커밋 후 `signalRunner(worldId)`만 부른다(없으면 무시). `shutdown()`은 스위퍼 중지 → Runner 중단·대기 → 진행 중 시도가 없는 내 lease 해제. 타이머는 `unref`. 비정상 종료는 lease 만료(30초) 후 스위퍼가 이어받는다.
@@ -513,11 +548,13 @@ stateDiagram-v2
 - 종료 처리(한 트랜잭션): 진행 중 표시 해제 + 다음 예약 또는 일시정지 + outbox `runtime.status`, 이어서 `settlePausing`.
   - 성공: `nextSceneAt = 완료 시각 + max(설정 간격, 발언 수 × (쉼 900ms + 입력 중 3초))`(재생 시간 백프레셔, 브라우저 신호는 기다리지 않음). 속도는 종료 시점의 `intervalPreset`을 쓴다.
   - 실패(검증·요청 오류·참가자 부족 등): 상태는 `RUNNING` 유지, 같은 요청을 다시 보내지 않는다. 간격 max(설정, 5초)에서 연속 실패마다 2배, 최대 5분(`RUNNER_FAILURE_BACKOFF_*`, 프로세스 메모리 카운터).
+  - **Run 경계(Phase 7-4, `2e29eb3`)**: 다음 예약(`nextSceneAt`)과 연속 실패 수는 그 시도의 Run이 아직 실행 중인 현재 Run일 때만 반영한다. 진행 중 stop → 바로 start 하면 이전 Run의 늦은 결과(펜싱 거부, `scene.failed STALE`)가 새 Run의 첫 장면을 미루거나 실패 간격을 늘리지 않는다.
   - 브레이커 열림(`CircuitOpenError`): `RUNNING` 유지, `max(간격, blockedUntil)`.
   - 일일 한도(`UsageLimitError`) → `PAUSED(USAGE_LIMIT)`. 연결 미준비·삭제·키 무효(`KEY_INVALID`·`PERMISSION_DENIED`) → `PAUSED(KEY_INVALID)`. 둘 다 lease 해제, 자동 재개 없음.
   - 요청 전 중단(일시정지·종료·lease 상실, 키 교체): 외부 호출 없음, 실패로 세지 않음.
 - 수동 생성(`POST /scenes`)은 기존대로 `IDLE`·`PAUSED`에서만 점유하므로 `RUNNING`·`PAUSING`에서는 409 `SCENE_IN_PROGRESS`다.
 - 아직 없음: 진행 중 호출 `AbortController` 취소(현재는 펜싱만), Worker 분리.
+- 검증: `tests/integration/simulation-runner.test.ts`(lease 경쟁·진행 중 pause/stop·재시작 복구·한도·실패 간격·stop→start), `simulation-soak.test.ts`(가짜 시계·Mock으로 50장면 연속 실행, 두 호스트 동시 실행·lease 탈취 후 늦은 커밋 거부).
 
 **Phase 5-4-3 구현 (SSE 연결 보류·장면 이벤트·outbox 정리)**
 - 보류 판정(`server/domain/simulation/client-hold.ts` `reconcileClientHold`): World 잠금 → Runtime 재확인 → 활성 연결 수(`lastSeenAt` 30초 이내, `SSE_CONNECTION_ACTIVE_MS`) → 조건부 갱신 → outbox `runtime.status`를 한 트랜잭션에서 한다. 바뀐 경우에만 이벤트를 쓰고, 커밋 후 알림 + Runner 신호.
@@ -541,7 +578,9 @@ stateDiagram-v2
 - `scene.started` → "○○의 장면을 만들고 있습니다… N초 경과", `scene.committed`·`scene.failed`(같은 시도)·`inFlight=false`인 `runtime.status` → 해제. 새로고침 때 진행 중이면 시작 시각을 모르므로 화면을 연 시각부터 센다. `scene.failed`는 코드별 한국어 안내로 바꾸고 `STALE`·`ABORTED`(사용자 동작)는 알리지 않는다.
 - `sync.required`면 상태와 장면 기록을 다시 받는다(연출 없이). SSE·페이로드는 Zod로 파싱하고 형식이 다르면 무시한다.
 
-### 7.3 취소 (D5)
+### 7.3 취소 (D5) — 설계, 미구현
+
+> 현재 진행 중 Gemini 호출을 중단하는 `AbortController`는 없다. 종료·lease 상실 뒤 도착한 결과는 커밋 펜싱(`stateVersion`·Run·lease·attempt)으로만 버린다. 아래는 후속 설계다.
 
 - Runner는 진행 중 호출마다 `AbortController`를 하나씩 둔다.
 - **같은 프로세스**: 명령 처리기의 `RunnerHost.signal()` → Runner가 상태를 다시 읽고 → `stop`·`load`이면 `abort()`를 호출한다. `pause`와 SSE 연결 보류는 취소하지 않는다.
@@ -561,9 +600,9 @@ stateDiagram-v2
      AND ("leaseOwner" IS NULL OR "leaseOwner" = :me OR "leaseExpiresAt" < now())
   ```
   갱신된 행이 1이면 획득한 것이다.
-- **갱신**: 10초마다 heartbeat. 갱신에 실패하면(다른 소유자가 가져감) 즉시 루프를 멈추고 진행 중 호출을 취소한다.
+- **갱신**: 10초마다 heartbeat(진행 중 호출 동안). 갱신 실패는 기록만 하고, 다음 단계의 획득 실패로 Runner가 종료된다. 진행 중 호출은 취소하지 않으며 늦은 결과는 커밋 펜싱으로 거부된다.
 - **해제**: `PAUSED`·`IDLE`로 바뀌면 `leaseOwner = NULL`.
-- **소유자 ID**: `hostname:pid:bootId`. 같은 프로세스 안에서는 `globalThis.__runnerRegistry`(worldId → Runner)로 중복 생성을 막는다. 개발 서버 HMR로 모듈이 다시 로드되어도 레지스트리는 유지된다. 레지스트리가 깨지더라도 lease가 2차로 막는다.
+- **소유자 ID**: `hostname:pid:bootId`. 같은 프로세스 안에서는 `globalThis.__inProcessRunnerHost`의 Runner 맵(worldId → Runner)으로 중복 생성을 막는다. 개발 서버 HMR로 모듈이 다시 로드되어도 레지스트리는 유지된다. 레지스트리가 깨지더라도 lease가 2차로 막는다.
 - **복구 스위퍼**: 15초마다 실행된다. `status IN (RUNNING, PAUSING)`인데 lease가 만료된 세계관을 찾아 다시 획득한다.
   - `PAUSING`이었다면 → `PAUSED`로 전환한다.
   - `RUNNING`이었다면 → 루프를 재개한다. 활성 SSE 연결이 없으면 §7.5의 보류 규칙이 그대로 적용된다(보류 시작 시각은 기존 `clientHoldSince` 유지, 없으면 지금).
@@ -606,9 +645,9 @@ stateDiagram-v2
 ### 7.6 저장·불러오기·초기화와 실행의 동기화
 
 - 저장·덮어쓰기·불러오기·초기화·기록 삭제·장면 커밋은 모두 같은 `GameState` 행 잠금(`FOR UPDATE`)을 잡는다. 그래서 세계관 단위로 직렬화되고, 항상 장면 경계에서만 실행된다(PRD FR-12).
-- 수동 저장은 실행 중에도 허용한다. 마지막으로 커밋된 장면까지만 담긴다. 진행 중인 장면은 포함되지 않는다.
-- 불러오기는 실행 중에도 허용한다. 같은 트랜잭션에서 `stateVersion += 1`, `IDLE` 전환을 하고 취소 신호를 보낸다. 불러온 직후 상태는 항상 `IDLE`이다(PRD FR-12).
-- 초기화는 `IDLE`·`PAUSED`에서만 허용한다(PRD FR-09 "실행 중 초기화 불허"). `RUNNING`·`PAUSING`(진행 중 장면 완료 대기)에서는 409로 거부한다. `PAUSED`는 진행 중 장면이 완전히 종료된 뒤에만 도달하는 상태이므로 따로 취소할 필요가 없다. 펜싱용으로 `stateVersion`은 올린다.
+- 수동 저장·자동 저장은 실행 중에도 허용한다. 마지막으로 커밋된 장면까지만 담긴다. 진행 중인 장면은 포함되지 않는다.
+- 불러오기는 **`IDLE`이고 진행 중 시도가 없을 때만** 허용한다(PRD v1.4, 아니면 409 `LOAD_REQUIRES_IDLE`). 같은 트랜잭션에서 `stateVersion += 1`로 이전 시도의 늦은 결과를 막는다. 불러온 직후 상태는 항상 `IDLE(LOADED)`이다(§9.3.1). *(설계 초안의 "실행 중 불러오기 + 취소 신호"는 폐지)*
+- 초기화(설계): `IDLE`·`PAUSED`에서만 허용(PRD FR-09). **미구현**(§6.0).
 
 ### 7.7 RunnerHost와 Worker 분리
 
@@ -744,7 +783,7 @@ export interface RunnerHost {
   - 키 무효: 연결 `INVALID`, 키를 교체할 때까지 차단.
   - 성공하면 초기화한다. 키를 교체하면 **백오프(브레이커) 상태만 초기화**하고, 사용자가 설정한 일일 한도와 사용량 집계는 유지한다(D8).
 - **한도 도달 후 재개**: 사용자가 한도를 올리거나 KST 날짜가 바뀐 뒤 직접 재개한다. 자동으로 재개하지 않는다.
-- **Run별 기록**: `SimulationRun`에 요청 수·성공·실패·입출력·thinking 토큰·예상 비용을 누적한다. 시뮬레이션 화면의 "세션별 사용량" 표시에 쓴다(PRD FR-07).
+- **Run별 기록**: `SimulationRun`에 요청 수·성공·실패·입출력·thinking 토큰·예상 비용을 누적한다. 시뮬레이션 화면의 "세션별 사용량" 표시에 쓴다(PRD FR-07). *(카운터 누적은 구현, 화면 표시·예상 비용은 미구현 — §6.0)*
 - **예상 비용**: `config/gemini-pricing.ts`(모델별 단가, 출처 URL, 기준일)로 계산하고 "예상치"로 표시한다. 실제 청구는 Google 측에서 확인하라고 안내한다. "영구 무료" 같은 문구는 쓰지 않는다(PRD §8.3).
 
 **Phase 3-3 구현** — `server/engine/usage/`: `usage-guard.ts`(DB 예약·정산, `createUsageMeter`), `breaker.ts`(브레이커 상태 전이, 순수 함수), `metering.ts`(결과·사용량 분류), `kst.ts`, `errors.ts`
@@ -791,9 +830,9 @@ export interface RunnerHost {
 |---|---|---|
 | 설정 | World, Character, RelationshipBaseline, 실행 설정 | 사용자가 편집 |
 | 활성 진행 상태 | GameState, ConversationScene·Message, RelationshipState·Change, EmotionState·Change, CharacterMemory, WorldEvent | 장면마다 커밋 |
-| 스냅샷 | GameSnapshot(JSONB, `schemaVersion`) | 수동 슬롯과 자동저장이 참조 |
+| 스냅샷 | GameSnapshot(JSONB, `schemaVersion`, 현재 v4) | 수동·자동 슬롯과 복구 지점이 참조 |
 
-**스냅샷에 포함**: 설정 계층 전체(삭제된 캐릭터 포함) + 활성 진행 상태 전체.
+**스냅샷에 포함**: 설정 계층 전체(삭제된 캐릭터 포함) + 활성 진행 상태 전체(Phase 7부터 캐릭터 배경, 사건·자동 사건 구간, 신체 상태와 변화 이력, 월드 시간 포함 — 스냅샷 v4, `claimedAttemptId`·시계 기준 시각 제외).
 **스냅샷에서 제외**: 인증 정보, API 키·연결, 사용량·한도, ApiRequestLog, SimulationRun, SystemNotice, SimulationEvent.
 
 ### 9.2 흐름
@@ -803,53 +842,44 @@ export interface RunnerHost {
 | **새 저장** | 슬롯 수 확인 → 활성 상태를 캡처(`REPEATABLE READ`) → GameSnapshot 생성 → SaveGame(MANUAL) 생성 |
 | **덮어쓰기** | 확인 절차(UI) → 새 GameSnapshot 생성 → SaveGame.snapshotId 교체 → 이전 스냅샷 삭제 |
 | **삭제** | 확인 절차(UI) → SaveGame과 그 스냅샷 삭제. 다른 슬롯과 세계관은 그대로 |
-| **불러오기** (D7) | ① payload 검증·마이그레이션(트랜잭션 전)<br>② 실행 중이면 `stateVersion += 1`, `IDLE`, Run 종료, 취소 신호<br>③ 복구 지점 규칙(§9.3)에 따라 현재 상태를 자동저장으로 실체화하거나 기존 복구 지점 유지<br>④ 활성 진행 상태 삭제<br>⑤ 설정(World·Character·Baseline·실행 설정)을 스냅샷 값으로 복원. 스냅샷에 없는 캐릭터는 제거<br>⑥ 진행 상태 복원(원래 ID 유지), `nextSceneSeq` 복원<br>⑦ `stateVersion += 1`, `changeSeq += 1` → AUTO `replacedAtChangeSeq` 기록, `state.replaced` 이벤트 |
-| **최신 자동저장 복원** | LIVE면 이미 현재 상태이므로 실행만 `IDLE`로 정리한다. MATERIALIZED면 불러오기와 같은 방식으로 적용한 뒤 LIVE로 되돌린다 |
+| **불러오기** (D7) | ① payload 검증·마이그레이션<br>② `IDLE`이고 진행 중 시도 없음 확인(아니면 409)<br>③ 복구 지점 규칙(§9.3)에 따라 현재 상태를 복구 지점(RECOVERY)으로 캡처하거나 기존 복구 지점 유지<br>④ 활성 진행 상태 삭제<br>⑤ 설정(World·Character·Baseline·실행 설정)을 스냅샷 값으로 복원. 스냅샷에 없는 캐릭터는 제거<br>⑥ 진행 상태 복원(원래 ID 유지), `nextSceneSeq` 복원<br>⑦ `stateVersion += 1`, `changeSeq += 1` → RECOVERY `replacedAtChangeSeq` 기록, `state.replaced` 이벤트 (상세는 §9.3.1) |
+| ~~최신 자동저장 복원~~ | (폐지) LIVE/MATERIALIZED 모드와 함께 없어졌다. 자동 저장 슬롯·복구 지점도 일반 불러오기로 복원한다 |
 
 - 불러오기 전에 세계관·캐릭터 편집 화면에 저장하지 않은 변경이 있으면, 클라이언트가 저장·폐기 여부를 확인한다(PRD FR-12).
 - 불러오기는 Gemini를 호출하지 않는다. 사용자가 시작을 눌러야 호출이 재개된다.
 - 복원 시 6명 상한도 검증한다. 스냅샷 생성 시점에 6명 이하가 보장되지만 방어적으로 다시 확인한다.
 
-### 9.3 자동저장: LIVE / MATERIALIZED 모드 (D2)
+### 9.3 복구 지점과 changeSeq 규칙 (D7, A13 — 현행)
 
-**핵심 관찰**: 활성 진행 상태는 장면마다 트랜잭션으로 커밋된다. 따라서 "최신 확정 장면의 상태"는 늘 DB에 완전하고 일관된 형태로 있다. 이 상태를 별도 사본으로 만들 필요가 생기는 순간은 **활성 상태가 다른 상태로 교체되기 직전**(불러오기·초기화)뿐이다.
+> **과거 설계(폐지, Phase 6·PRD v1.4)**: 처음 설계는 AUTO 행 1개를 LIVE(= 현재 활성 상태, 장면 커밋마다 메타만 갱신) / MATERIALIZED(교체 직전 사본) 두 모드로 운용하고 "최신 자동저장 복원"을 두었다. 지금은 쓰지 않는다. 장면 커밋은 세이브 행을 갱신하지 않고, 자동 저장은 실행 중 1시간 간격 스냅샷 5슬롯, 교체 직전 상태는 별도 복구 지점(`RECOVERY`) 1개가 맡는다(§9.3.1).
 
-| 모드 | 의미 | 데이터 |
-|---|---|---|
-| **LIVE** | 자동저장 = 현재 활성 상태 (최신 확정 장면 시점) | 스냅샷 없음. SaveGame(AUTO)에 메타데이터만 둠(장면 수, `stateVersion`, 갱신 시각) |
-| **MATERIALIZED** | 자동저장 = 교체 직전의 상태 사본 | GameSnapshot 1개 |
+**핵심 관찰(유지)**: 활성 진행 상태는 장면마다 트랜잭션으로 커밋되므로 브라우저 종료·새로고침·서버 재시작 뒤에도 그대로 이어진다. 별도 사본이 필요한 순간은 활성 상태가 다른 상태로 교체되기 직전(불러오기)이다.
 
-- **장면 커밋**: 자동저장을 LIVE로 두고(MATERIALIZED 스냅샷이 있으면 삭제) 메타데이터만 갱신한다. 장면마다 드는 비용은 행 1개 UPDATE다. 전체 이력을 복사하지 않는다.
-- **불러오기·초기화 직전**: LIVE라면 현재 활성 상태를 1회 캡처해 MATERIALIZED로 바꾼다. 그래서 "불러오기 전 상태"를 언제든 되돌릴 수 있다.
-- 불러오기·초기화 뒤 다음 장면이 커밋되면 다시 LIVE가 된다. PRD FR-12 "초기화 후 다음 확정 장면부터 새 자동저장 상태로 갱신"과 같은 동작이다.
-- **브라우저 종료·새로고침·서버 재시작**: 활성 상태가 곧 최신 자동저장이므로 별도 복구 절차 없이 그대로 이어진다.
-
-**"불러오기 전 현재 진행 상태를 복구 지점으로 보존"(D7)의 구현 — 최종 확정 (A13)**
+**"불러오기 전 현재 진행 상태를 복구 지점으로 보존"(D7)의 구현 — 최종 확정 (A13, 현행)**
 
 변경 감지에는 `GameState.changeSeq`를 쓴다. 게임 상태를 바꾸는 모든 작업이 이 값을 1씩 올린다:
 - 장면 커밋
-- 세계관 설정 수정, 캐릭터 생성·수정·삭제, 초기 관계(Baseline) 수정, 실행 설정 수정
-- 대화 기록 삭제
+- 세계관 설정 수정, 캐릭터 생성·수정·삭제, 실행 속도 변경, 사용자 사건 등록·취소
+- (설계) 초기 관계 수정, 대화 기록 삭제 — 화면·API 미구현
 
-불러오기·초기화를 적용한 직후에는 `changeSeq`를 올린 뒤, 그 값을 AUTO 행의 `replacedAtChangeSeq`에 기록한다.
+불러오기를 적용한 직후에는 `changeSeq`를 올린 뒤, 그 값을 RECOVERY 행의 `replacedAtChangeSeq`에 기록한다.
 
-| 불러오기·초기화 직전 상태 | 처리 |
+| 불러오기 직전 상태 | 처리 |
 |---|---|
-| LIVE | 현재 활성 상태를 캡처해 MATERIALIZED로 바꾼다. 복구 지점 = 불러오기 직전 상태 |
-| MATERIALIZED이고 `changeSeq == replacedAtChangeSeq` (교체 이후 변경 없음) | **최초 복구 지점을 유지**한다 |
-| MATERIALIZED이고 `changeSeq > replacedAtChangeSeq` (교체 이후 설정 수정·기록 삭제 등 변경 있음) | 현재 상태를 다시 캡처해 **복구 지점을 교체**한다 |
+| 복구 지점 없음 | 현재 활성 상태를 캡처해 복구 지점으로 둔다 |
+| `changeSeq == replacedAtChangeSeq` (직전 불러오기 이후 변경 없음) | **최초 복구 지점을 유지**한다 |
+| `changeSeq > replacedAtChangeSeq` (장면 진행·설정 수정 등 변경 있음) | 현재 상태를 다시 캡처해 **복구 지점을 교체**한다 |
 
 예시:
 - 100장면 진행 → A 불러오기 → B 불러오기: 복구 지점 = "100장면 상태" (유지)
 - 100장면 진행 → A 불러오기 → 캐릭터 설정 수정 → B 불러오기: 복구 지점 = "A + 설정 수정 상태" (교체)
 
-**최신 자동저장 복원** 시에는 복구 지점을 다시 캡처하지 않는다. 다시 캡처하면 복원할 대상이 현재 상태로 바뀌어 버리기 때문이다. MATERIALIZED 상태에서 변경이 있었다면(`changeSeq > replacedAtChangeSeq`), 확인 대화상자에서 "불러온 뒤의 변경 사항은 사라집니다"라고 안내한다.
-
-- 수동 슬롯을 덮어쓰지 않는다. 세계관당 AUTO 행은 1개만 둔다(DB 제약).
+- 복구 지점 자체를 불러오면 현재 상태와 맞바꾼다(§9.3.1).
+- 수동·자동 슬롯은 복구 지점 규칙으로 덮어쓰지 않는다. 세계관당 RECOVERY 행은 1개다(DB 제약).
 
 ### 9.3.1 Phase 6 구현 (세이브 슬롯 정책 변경, PRD v1.4)
 
-§9.2·§9.3의 "AUTO 1개(LIVE/MATERIALIZED)"와 20슬롯은 아래로 바뀌었다. 복구 지점 규칙(changeSeq, A13)은 그대로다.
+설계 초안의 "AUTO 1개(LIVE/MATERIALIZED)"와 20슬롯은 아래로 바뀌었다(§9.3에 과거 설계로 요약). 복구 지점 규칙(changeSeq, A13)은 그대로다.
 - **종류**: `MANUAL`(최대 5) · `AUTO`(슬롯 1~5, 1시간 순환) · `RECOVERY`(세계관당 1, 사용자 목록 10개에 미포함). 기존 AUTO 행은 마이그레이션에서 값 이름만 바뀌어 RECOVERY가 됐다(`autoForWorldId` → `recoveryForWorldId`). 스키마 추가: `SaveGame.autoSlot`, `SimulationRuntime.nextAutoSaveAt`.
 - **LIVE 모드 폐지**: 장면 커밋은 세이브 행을 건드리지 않는다. 활성 진행 상태는 여전히 장면마다 커밋되므로 재시작 후에도 그대로 이어진다. 복구 지점은 다음 불러오기 때만 교체된다(이전에는 다음 장면 커밋 때 지워졌다 — 데이터 손실 방지를 위해 바꿈).
 - **잠금·일관성**(`domain/saves/saves.ts`): 저장·덮어쓰기·불러오기·자동 저장 모두 World → GameState(→ Runtime) `FOR UPDATE` 한 트랜잭션(제한 30초). 장면 커밋도 GameState를 잠그므로 캡처는 항상 장면 경계의 한 시점이며 진행 중 Gemini 결과는 들어가지 않는다. World 잠금으로 동시 저장도 수동 5개를 넘지 못한다.
@@ -862,7 +892,9 @@ export interface RunnerHost {
 - **캐릭터 상세 실시간 갱신**: 상세 화면이 SSE를 구독해 `scene.committed`면 `GET /characters/[id]/state`(감정·관계·기억)를 다시 읽는다. 요청 번호로 가장 최근 요청의 응답만 반영한다. `state.replaced`면 페이지를 다시 그린다.
 - API: `GET·POST /saves`, `PATCH·DELETE /saves/[saveId]`, `POST /saves/[saveId]/overwrite`, `POST /saves/[saveId]/load`(수동·자동·복구 지점 공통), `GET /characters/[characterId]/state`.
 
-### 9.4 진행 초기화 (PRD FR-09, FR-12)
+### 9.4 진행 초기화 (PRD FR-09, FR-12) — 설계, 미구현
+
+> API·화면이 없다(§6.0). 구현할 때 복구 지점 규칙은 §9.3(RECOVERY)을 따른다.
 
 - **허용 상태**: `IDLE`, `PAUSED`. `RUNNING`·`PAUSING`에서는 거부한다(진행 중 장면이 완전히 종료된 뒤에만 수행). 확인 대화상자를 거친다.
 - **선택 항목**(복수 선택 가능):
@@ -870,17 +902,17 @@ export interface RunnerHost {
   - 기억: 기억 전체 삭제
   - 관계: 관계를 baseline 값으로 복원, 관계 변화 이력 삭제
   - 감정: 감정을 캐릭터 초기 감정으로 복원, 감정 변화 이력 삭제
-- 복구 지점 규칙(§9.3)에 따라 자동저장을 실체화하거나 기존 복구 지점을 유지한다. 그다음 `stateVersion += 1`, `changeSeq += 1` → AUTO `replacedAtChangeSeq` 기록, `state.replaced` 이벤트를 보낸다.
+- 복구 지점 규칙(§9.3)에 따라 현재 상태를 복구 지점으로 캡처하거나 기존 복구 지점을 유지한다. 그다음 `stateVersion += 1`, `changeSeq += 1` → RECOVERY `replacedAtChangeSeq` 기록, `state.replaced` 이벤트를 보낸다.
 - 수동 세이브는 그대로 둔다. 세계관·캐릭터 기본 설정도 그대로 둔다.
 
-### 9.5 대화 기록 삭제 (D9)
+### 9.5 대화 기록 삭제 (D9) — 설계, 미구현
+
+> API·화면이 없다(§6.0).
 
 - **대상**: **현재 게임(활성 진행 상태)의 기록만** 삭제한다.
 - **범위**: 장면 단건, 선택한 여러 장면, 전체.
 - **처리**: 장면과 메시지를 삭제한다. 기억의 `sourceSceneId`, 관계·감정 변화 이력의 `sceneId`는 `NULL`로 바꾼다. 기억·관계·감정 값 자체는 그대로다.
-- **세이브와의 관계**:
-  - 수동 세이브와 MATERIALIZED 자동저장은 독립된 스냅샷이므로 영향이 없다.
-  - LIVE 자동저장은 "현재 활성 상태"이므로 삭제가 반영된다.
+- **세이브와의 관계**: 수동·자동 슬롯과 복구 지점은 모두 독립된 스냅샷이므로 영향이 없다.
 - **삭제 확인 대화상자 안내**: "이 기록은 기존 수동 세이브에는 남아 있습니다. 완전히 지우려면 해당 세이브도 삭제하세요."
 - **단기 기억 영향**: 단기 기억은 메시지에서 만들어지므로, 삭제한 대화는 이후 장면의 최근 대화 문맥에서 빠진다.
 - 실행 중에도 허용한다. `stateVersion`은 올리지 않고 `changeSeq`만 올린다(§9.3). 진행 중 장면의 `seq`는 `nextSceneSeq` 카운터로 정해지므로 충돌이 없다.
@@ -902,7 +934,7 @@ export interface RunnerHost {
 - `GET /api/worlds/[worldId]/simulation/stream`
 - 설정: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. 기본 Node.js runtime에서 요청 시점에 실행된다.
   - Phase 2-3 확인: `cacheComponents`가 켜져 있으면 segment config `runtime`은 빌드 오류이고 `dynamic`은 대체 대상이다. 그래서 둘 다 선언하지 않는다(Node.js runtime이 기본이고, 요청 시점 API를 쓰는 Route Handler는 매 요청 실행된다).
-- **연결 시**: 세션·소유권 확인 → `Last-Event-ID` 이후의 outbox 이벤트를 재전송 → 구독 시작.
+- **연결 시**: 세션·소유권 확인 → 커서(재연결은 `Last-Event-ID` 헤더, 화면이 새로 여는 연결은 `?lastEventId`) 이후의 outbox 이벤트를 재전송 → 구독 시작. 대화 화면은 `?lastEventId`로 페이지 렌더 시점 커서가 아니라 **마지막으로 받은 이벤트 id**를 보낸다(Phase 7-4, §13.7). 캐릭터 상세는 `?watch=1`(연결 등록부에 기록하지 않음).
   - `Last-Event-ID`가 없거나 너무 오래되었으면 `sync.required`를 보낸다. 클라이언트는 REST로 전체 상태를 다시 받는다.
 - **연결 등록**: 연결 시 `SseConnection` INSERT + 보류 해제 시도, 10초마다 `lastSeenAt` 갱신, 종료 시 DELETE + 마지막 연결이면 보류 시작(§7.5).
 - **연결 중**: 15초마다 `: ping` 주석을 보낸다.
@@ -910,19 +942,21 @@ export interface RunnerHost {
 
 ### 10.2 이벤트 타입
 
-| type | payload 요지 |
-|---|---|
-| `runtime.status` | status, statusReason, runId, nextSceneAt, inFlight 여부, held(SSE 연결 보류 여부), holdDeadline |
-| `scene.started` | attemptId, 참가자 |
-| `scene.committed` | scene, messages, 관계 변화(clamp 여부), 감정 변화, 생성된 기억 요약 |
-| `scene.failed` | attemptId, code(NETWORK_ERROR / HTTP_ERROR / VALIDATION_ERROR), 사용자 메시지 |
-| `context.truncated` | attemptId, 미반영 구간 요약(문단 수 등) |
-| `api.log` | ApiRequestLog 요약(키·헤더·컨텍스트 원문 없음) |
-| `usage.updated` | Run 통계, 연결 당일 사용량·한도 |
-| `breaker.updated` | blockedUntil, 사유 |
-| `state.replaced` | worldId, reason(load / recovery), stateVersion → 클라이언트 재조회 (Phase 6) |
-| `saves.updated` | worldId → 저장 목록만 다시 읽음 (Phase 6, 대화 피드는 그대로) |
-| `sync.required` | 재전송 불가, 전체 재조회 필요 |
+| type | payload 요지 | 구현 |
+|---|---|---|
+| `runtime.status` | status, statusReason, runId, intervalPreset, nextSceneAt, inFlight, held, holdDeadline, worldClock{seconds, running, asOf} | 구현 |
+| `scene.started` | worldId, attemptId, startedAt, participants(이름) — Runner 시도만 | 구현 |
+| `scene.committed` | scene{id, seq, title, summary, contextTruncated, worldSeconds, notes(사건 발생·상태 변화·사망), createdAt, messages[id, turnIndex, speakerCharacterId, speakerName, dialogue, actionIntent, emotionCue]} — 관계·감정 변화·기억 요약은 없다 | 구현 |
+| `scene.failed` | worldId, attemptId, failedAt, code(`VALIDATION_ERROR`·`NETWORK_ERROR`·`HTTP_ERROR`·`USAGE_LIMIT`·`BACKOFF`·`KEY_INVALID`·`STALE`·`ABORTED`·`RESULT_LOST`·`INTERNAL_ERROR`). 메시지는 화면이 코드로 만든다 | 구현 |
+| `state.replaced` | worldId, reason(load / recovery), stateVersion → 화면 전체 재조회 (Phase 6) | 구현 |
+| `saves.updated` | worldId → 저장 목록만 다시 읽음 (Phase 6) | 구현 |
+| `world_event.updated` | worldId, reason(submitted·cancelled·started), eventId → 대기 사건 목록 재조회 (Phase 7-2-3) | 구현 |
+| `sync.required` | 재전송 불가(커서 무효·100건 초과), 상태·기록 재조회 | 구현 |
+| `stream.ready` | connectionId (outbox 이벤트 아님, id 없음). 대화 화면 이탈 알림에 쓴다 | 구현 |
+| `context.truncated` | attemptId, 미반영 구간 요약 | 미구현(장면 `contextTruncated`로 대신) |
+| `api.log` | ApiRequestLog 요약 | 미구현 |
+| `usage.updated` | Run 통계, 연결 당일 사용량·한도 | 미구현 |
+| `breaker.updated` | blockedUntil, 사유 | 미구현 |
 
 ### 10.3 EventBus와 outbox
 
@@ -935,7 +969,7 @@ export interface EventBus {
 ```
 
 - 상태를 바꾸는 이벤트(`scene.committed`, `state.replaced` 등)는 상태 커밋과 같은 트랜잭션에서 outbox에 기록한다. "상태는 바뀌었는데 이벤트는 유실"되는 일이 없다.
-- 커밋과 무관한 이벤트(`api.log`, `scene.failed`, `usage.updated`)는 별도 짧은 트랜잭션으로 기록한다.
+- 커밋과 무관한 이벤트는 별도 짧은 트랜잭션으로 기록한다(현재 `scene.failed`는 시도 종료 처리 트랜잭션에서 기록).
 - **보관**: outbox는 **24시간** 보관하고(확정, A16) 주기적으로 정리한다. 24시간보다 오래된 `Last-Event-ID`로 재연결하면 `sync.required`를 보낸다. 영구 기록은 원본 테이블(Message, ApiRequestLog 등)이 맡는다.
 
 ---
@@ -1019,10 +1053,14 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **집계**: 요청 수·성공 수·실패 수는 `SimulationRun` 카운터를 쓴다.
 - **로그 보관**: ApiRequestLog는 30일 보관 후 삭제한다(확정, A11). 사용자는 로그를 직접 삭제할 수 있다.
 - **STALE 결과**(펜싱으로 거부): ApiRequestLog에는 SUCCESS로 남지만 장면은 커밋되지 않는다. 대화창에는 표시하지 않는다.
+- **구현 현황**: `ApiRequestLog` 기록·30일 보관 정책 값은 있으나 **API 로그 탭 화면과 사용자 삭제 기능, 정리 작업은 미구현**이다(§6.0). 대화창 실패 안내는 저장하지 않는 하단 알림 카드다. `ABORTED` 결과는 취소 기능이 없어 현재 생기지 않는다.
 
 ---
 
-## 13. 캐릭터 랜덤 생성 (비LLM)
+## 13. 캐릭터·세계 확장과 대화 화면
+
+### 13.1 캐릭터 랜덤 생성 (비LLM)
+
 
 - **데이터**: `server/domain/characters/random/`
   - 이름 풀: 세계관 템플릿·문화권별
@@ -1046,8 +1084,9 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
   - 새로고침·탭 닫기처럼 알림이 없는 종료는 기존 연결 보류가 맡는다: 연결이 0이 되면 Runner가 즉시 신규 호출을 멈추고(사용자 관점에서 새 장면 없음), 60초 안에 돌아오면(새로고침) 그대로 이어지며, 지나면 PAUSED.
   - 캐릭터 상세의 SSE는 보기 전용(`?watch=1`, 연결 등록부에 기록하지 않음)이라 대화 화면 연결로 세지 않는다.
   - PAUSED로 바뀐 뒤 대화 화면에 돌아와도 자동 재개하지 않는다(재개 버튼). Runner·lease·inFlight·stateVersion 펜싱·사용량 한도는 바꾸지 않았다.
+- **실행 컨트롤 위치(7-4)**: 실행·속도·[사건 일으키기]·[저장]·[불러오기]는 화면 하단 고정 바에 있고, 생성 중 표시·시작 안내·시스템 안내·오류는 바로 위 알림 카드다. 피드는 자체 스크롤 없이 페이지 스크롤을 쓴다.
 
-### 13.1 캐릭터 배경 (Phase 7-1, PRD v1.5)
+### 13.3 캐릭터 배경 (Phase 7-1, PRD v1.5)
 
 - **단일 소스**: `config/character-backgrounds.ts`의 고정 프리셋 44종 `{id, name, description, rarity, stage}`. DB(`Character.childhoodBackgroundId`·`adulthoodBackgroundId`, nullable)와 세이브에는 ID만 저장하고 이름·설명은 상수에서 찾는다.
 - **규칙**: 유년기 필수. 성년기는 확정 나이 19세 이상 필수·18세 이하 불가(`adulthoodBackgroundIssue`). Zod는 나이가 있을 때 검사하고, 나이를 비운 입력은 도메인이 나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 다시 검사해 400으로 거절한다. DB CHECK `character_adulthood_age`가 2차 방어. 기존 NULL 캐릭터는 조회·렌더링되고, 수정할 때 선택해야 저장된다.
@@ -1056,7 +1095,18 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **컨텍스트**: `<character>`에 `과거 배경: 유년기 — 이름(설명) / 성년기 — 이름(설명)` 한 줄. 시스템 지시로 과거 경험일 뿐 현재 성격·감정·관계·기억·세계 규칙보다 우선하지 않고, 매 장면 설명하거나 현재 사건처럼 쓰지 않게 한다. 호출 수·출력 스키마는 그대로.
 - **세이브**: 스냅샷 v2(`lib/snapshot/v2.ts`) = v1 + 캐릭터 배경 ID. v1은 저장된 원본·checksum 그대로 검증한 뒤 읽을 때 `migrateV1ToV2`로 배경 NULL을 채운다. v2는 알 수 없는 배경 ID·18세 이하 성년기를 `SAVE_INVALID`로 거절한다.
 
-### 13.4 월드 시간·사건 진행·신체 상태 반영 (Phase 7-2-2, PRD v2.0)
+### 13.4 사건 시스템과 캐릭터 신체 상태 — 데이터 기반 (Phase 7-2-0·7-2-1, PRD v1.9)
+
+실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터 → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 수동 검증. **모두 완료**(7-2-4는 §13.8). 이 절은 7-2-0·7-2-1의 데이터 기반이다. 현행 신체 상태 규칙은 §13.5, 사건 반영 규칙은 §13.6이 우선한다.
+
+- **모델**: 기존 `WorldEvent`를 확장한다(별도 Incident 없음). `kind`에 `RANDOM`(자동)·`USER_INTERVENTION`(사용자), `status`에 `PENDING`·`CANCELLED` 추가. `presetId`·`intensity`·`requestId`(`(worldId, requestId)` UNIQUE)·`startedSceneSeq`·`lastSceneSeq`·`resolvedSceneSeq`·`resolutionSummary`·`claimedAttemptId`(진행 중 시도 점유, 스냅샷 제외)·`cancelledAt`. 진행 순서는 `startedSceneSeq → createdAt → id`.
+- **자동 사건 구간**: `WorldEventPeriod(worldId, periodIndex)` PK = 구간당 1행. 순수 함수 `engine/director/auto-events.ts`(`autoEventPeriodOf`·`rollAutoEventPeriod`·`pickAutoEventPreset`)와 영속화 `domain/events/auto-periods.ts`(`ensureAutoEventPeriod`: `ON CONFLICT DO NOTHING` 후 저장된 결과를 읽음). 7-2-2에서 Runner·수동 생성의 시도 기록 트랜잭션(World 잠금·펜싱 안)에서 호출하고, 발생(프리셋 확정·사건 생성·`firedAt`)은 장면 커밋 트랜잭션에서 한다. 구간 중간에 처음 판정하면(기존 진행 세계관·v1·v2 불러오기) 지난 장면에는 예약하지 않는다.
+- **프리셋**: `config/world-events.ts` 24종 `{id, category, title, description, intensity, urgent, fallbackId}`. 생물 프리셋만 `fallbackId`(생물이 불가능한 세계관에서 결정적으로 대체, 장면 응답이 대체 여부를 알린다).
+- **신체 상태**: `CharacterCondition` 1:1(체온·부상(=통증 단계)·원인·발생/마지막 변화 장면·생존·사망 원인/장면/시각)과 `CharacterConditionChange` 이력(장면·사건 참조 선택). 감정과 분리하며 Character 행(설정)에 두지 않는다 — Character `updatedAt`은 프롬프트의 설정 변경 표시 기준이기 때문이다. *(과거 설계: 장면 수 기준 자연 회복 `naturalInjuryRecovery` — 7-2-2에서 폐지, 월드 시간 기준으로 대체 §13.5.)* 단계 구성도 7-2-2에서 온도 원인·단계와 고통으로 재구성됐다. 사망자도 `deletedAt`이 NULL이므로 활성 6명 슬롯을 차지한다. DB CHECK: 사망 기록 필수·부상 원인 필수.
+- **Gemini**: 장면당 1회 유지. 사건 구체화·온도·부상·치료·사망 제안은 7-2-2에서 기존 구조화 출력에 선택 필드로 통합하고(사건별 진행/해결 필드는 v2.2에서 폐지), 서버가 Zod·도메인 규칙으로 검증한 것만 커밋 트랜잭션에서 반영한다. 사망자 발화·다른 사건 ID 종료 제안은 확정하지 않는다.
+- **세이브**: 스냅샷 v3(`lib/snapshot/v3.ts`) = v2 + 확장 사건 필드·`eventPeriods`·`characterConditions`·`conditionChanges`. 읽기는 v1 → v2 → v3(`migrateV2ToV3`: 사건 새 필드 NULL, 구간 없음, 모두 생존·정상·부상 없음). `snapshotV3Error`가 프리셋 ID·대기 3건·구간 당첨/예약 일치·캐릭터별 상태 1개·사망 기록·참조를 검사한다.
+
+### 13.5 월드 시간·자동 사건 연결·신체 상태 반영 (Phase 7-2-2, PRD v2.0)
 
 실행 명세: `docs/PHASE_7_2_2_EVENTS_CONDITIONS_WORLD_TIME.md`. 구현 전 조사 결과 기존 월드 시계는 없었고, 실행 속도(`intervalPreset`)는 장면 간격만 정한다(월드 시간 배율과 무관, 곱하지 않음).
 
@@ -1067,12 +1117,14 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
   - 상태 API·`runtime.status`에 `worldClock { seconds, running, asOf }`. 화면은 asOf 이후 실제 시간 × 36을 더해 1초마다 표시하고, 새 값이 와도 이미 보인 값 아래로 내려가지 않는다.
   - 표시(v2.3, `lib/world-clock.ts`): `formatWorldTime` = `Day N, HH:MM`(Day 0부터, 프롬프트·캐릭터 상세). 대화 화면은 `worldStartDate`(세계관 `createdAt`의 KST 날짜) 00:00을 Day 0으로 두고 `worldCalendar`로 `Day N · yyyy-mm-dd hh:mm`을 보인다. 각 발언의 부연설명 아래에 장면 `worldSeconds`의 날짜·시각(상단 "월드 1일 = 실제 40분" 안내는 없음), 월드 날짜가 바뀌는 장면 앞에 `Day N` 구분선. 저장 값은 `worldSeconds` 그대로(표시용 날짜).
 - **자동 사건 연결**: Runner `claimAttempt`·수동 생성 점유 트랜잭션(World 잠금·펜싱 안)에서 `claimAutoEvent` → `ensureAutoEventPeriod`(구간당 1행)로 판정하고, 예약 장면이면 프리셋을 구간 행에 고정한다(재시도도 같은 프리셋). 사건 행 생성·`firedAt`은 장면 커밋 트랜잭션에서만 → 실패·펜싱 거부 시 사건 없음, 다음 시도가 발생시킨다.
-- **사건 진행·해결** (`domain/scenes/scene-world.ts`): ACTIVE 사건을 오래된 순(E1…, 최대 9개, 설명 120자)으로 `<events>`에 넣고(9개를 넘으면 오래된 7개 + 나머지 중 가장 오래 다루지 않은 2개를 돌려 넣는 `pickPromptEvents`, `EVENT_PROMPT_ROTATING_SLOTS` — 7-2-2 실검증에서 새 사건이 영구히 빠지는 결함을 고침), 출력 `events[{ref, status, resolutionSummary, realization, usedFallback}]`(선택)을 별칭으로만 되돌린다. 요약이 있는 RESOLVED만 해결(고강도 새 사건은 첫 장면에 해결 불가), 없는 별칭·요약 없는 해결은 무시, 결과가 없으면 진행 중으로 `lastSceneSeq`만 갱신. 생물 대체 응답이면 대체 프리셋으로 기록. 장면 `motiveType = WORLD_EVENT`, `motiveRef` = 사건.
-- **신체 상태** (`engine/commit/condition-rules.ts`, 순수 함수): 커밋 때 정산한 월드 시간으로 살아 있는 모든 캐릭터에 적용(참가자만 출력 `conditions` 제안 반영). 순서: 치료 → 부상 악화 → 고통 → 온도 → 자연 회복 → 극심 추적 → 사망. 사망 시 생존자 2명 미만이면 RUNNING → PAUSING(`NOT_ENOUGH_CHARACTERS`, 시계 정지) → 시도 종료 후 PAUSED. 시작·재개·참가자 선정은 생존자만 센다. 사망 캐릭터 수정은 409 `CHARACTER_DEAD`.
-- **화면**: 대화 피드의 말풍선은 캐릭터 발화만. 사건 발생은 장면 대사 앞, 해결·상태 변화·사망은 대사 공개 뒤에 시스템 줄로(`SceneView.notes`), 진행 중 사건 목록(`GET /api/worlds/[id]/events`)과 월드 시각은 피드 위. 캐릭터 목록 배지·상세 신체 상태 패널(실시간 갱신).
+- ~~**사건 진행·해결**~~ **(폐지, PRD v2.2)**: 7-2-2에서는 ACTIVE 사건을 `<events>`에 계속 넣고(최대 9개, `pickPromptEvents` 순환) 출력의 해결 요약으로 RESOLVED 처리했다. 7-2-3 정책 변경(`e027bb0`)으로 진행 중 사건 장기 추적·해결 판정·순환이 모두 없어졌다. 현행은 §13.6(장면에 한 번 반영).
+- **신체 상태** (`engine/commit/condition-rules.ts`, 순수 함수, PRD FR-10a): 자연 회복(부상 약간 아픔 24h·아픔 72h·매우 아픔 168h마다 한 단계, 위독은 치료 없이 회복 없음, 고통 12h)·극심 지속 생명 위험(12h)·사망 확정(48h)은 모두 **월드 시간** 기준이다(장면 수 기준 회복 폐지). 커밋 때 정산한 월드 시간으로 살아 있는 모든 캐릭터에 적용(참가자만 출력 `conditions` 제안 반영). 순서: 치료 → 부상 악화 → 고통 → 온도 → 자연 회복 → 극심 추적 → 사망. 사망 시 생존자 2명 미만이면 RUNNING → PAUSING(`NOT_ENOUGH_CHARACTERS`, 시계 정지) → 시도 종료 후 PAUSED. 시작·재개·참가자 선정은 생존자만 센다. 사망 캐릭터 수정은 409 `CHARACTER_DEAD`.
+- **화면**: 대화 피드의 말풍선은 캐릭터 발화만. 사건 발생은 장면 대사 앞, 상태 변화·사망(과거 기록의 해결 포함)은 그 장면 대사가 모두 공개된 뒤 시스템 말풍선으로(`SceneView.notes`, 표시 규칙 §13.7). 월드 시각은 피드 위. 진행 중 사건 목록은 없다(v2.2). 캐릭터 목록 배지·상세 신체 상태 패널(실시간 갱신).
 - **세이브**: 스냅샷 v4(`lib/snapshot/v4.ts`) = v3 + `gameState.worldSeconds`·장면/사건/변화의 월드 시각·신체 상태 재구성. `migrateV3ToV4`는 DB 마이그레이션 20261028150000과 같은 보존적 매핑. 시계 기준(anchor)은 담지 않는다.
 
-**Phase 7-2-3 사용자 지정 사건·사건 1회 반영 (PRD v2.1·v2.2)** — `domain/events/user-events.ts`, `domain/scenes/scene-world.ts`, `engine/commit/event-rules.ts`. 위 7-2-2의 "사건 진행·해결"(진행 중 사건 주입·`pickPromptEvents`·해결 요약)은 v2.2에서 폐지됐다.
+### 13.6 사용자 지정 사건·사건 1회 반영 (Phase 7-2-3, PRD v2.1·v2.2)
+
+`domain/events/user-events.ts`, `domain/scenes/scene-world.ts`, `engine/commit/event-rules.ts`. §13.5의 "사건 진행·해결"(진행 중 사건 주입·`pickPromptEvents`·해결 요약)은 v2.2에서 폐지됐다. 사건별 기억 보장은 `b63d76d`에서 보완했다.
 
 - **사건 1회 반영**: `<events>`에는 이번 장면의 새 사건(자동 사건 프리셋, 점유한 사용자 사건)만 E1·E2로 넣는다. 출력 `events[{ref, realization, usedFallback, danger}]`(선택, 해결 필드 없음 — 예전 `status`·`resolutionSummary`·`resolutionKind`가 와도 버림). 장면 커밋 트랜잭션에서 사건을 **장면 반영 완료**로 기록: 새 상태값 없이 `status = RESOLVED`(신규 사건에서는 해결 완료가 아니라 "그 장면에 반영됨"), `startedSceneSeq = resolvedSceneSeq = lastSceneSeq = 장면`, `resolutionSummary = NULL`. 이후 프롬프트에 다시 넣지 않는다. 과거 ACTIVE 사건은 그대로 두되 주입·갱신하지 않고, 과거 RESOLVED(해결 요약 있음)는 기록으로 남는다. 해결 배너는 `resolvedSceneSeq ≠ startedSceneSeq`인 과거 기록만.
 - **사건 기억(사건별)**: 같은 트랜잭션에서 `rememberEvents` — ① 출력 `proposals.memories[].eventRef`(선택, 이번 장면 사건 별칭)가 있는 모델 기억은 `shareGroupId = 사건 id`로 잇는다. ② 살아 있는 참가자 × 발생한 사건마다 그 사건 id를 `shareGroupId`로 가진 기억이 없으면 `WITNESSED` 사실 기억 1개(`이 사건을 직접 겪었다 — …`, 중요도 3·고강도 4)를 만든다 → 모델이 그 사건 기억을 냈으면 중복 없음, 사건을 가리키지 않는 모델 기억은 사건 기억으로 세지 않음. 비참가자에게는 만들지 않는다. 실패·펜싱이면 장면과 함께 롤백.
@@ -1081,19 +1133,27 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **점유**: Runner `claimAttempt`·수동 생성 점유 트랜잭션(World 잠금, `inFlightAttemptId` 기록 직후)에서 `claimUserEvent`가 다른 시도 ID로 남은 점유를 풀고 가장 오래된 PENDING 1건에 `claimedAttemptId`를 단다. 실패·펜싱·건너뜀은 `finishAttempt`·수동 `finally`의 `releaseUserEventClaim`으로 해제. 커밋 트랜잭션은 "PENDING이고 이 시도가 점유 중"일 때만 장면 반영 완료로 바꾸고, 아니면 장면 전체를 `SCENE_STALE`로 버린다(취소된 사건이 대사에 남지 않음).
 - **취소**: PENDING이고 점유한 시도가 지금 진행 중(`inFlightAttemptId` 일치, `SCENE_IN_FLIGHT_STALE_MS` 이내)이 아닐 때만. 오래된 점유는 취소하며 점유를 지운다(늦은 커밋은 위 확인으로 거부).
 - **강도**: 사용자 사건 `intensity = MEDIUM`, 장면 전체 고강도는 자동 HIGH 사건만. `danger`(NONE·ATTACK·DISASTER·ACCIDENT)가 사용자 사건의 실제 위험을 보고하고 캐릭터 `conditions[].eventRef`가 그 사건이면 그 캐릭터에게만 고강도 한도, 위험이 없는 사용자 사건을 가리키는 부상·사망 제안은 버린다. 사건이 지나도 신체 상태는 초기화하지 않는다.
-- **화면**: 대화 탭 `[사건 일으키기]` 모달(200자·남은 글자 수·명령이 아니라는 안내), 대기 목록·취소(점유 중이면 "장면에 반영 중"). 진행 중 사건 목록은 없다. 장면 노트 `EVENT_STARTED`·`USER_EVENT_STARTED`(다른 색)는 발생 장면에 한 번. 대기 목록은 `scene.started`·`scene.committed`·`scene.failed`·`world_event.updated`·재연결 때 다시 읽는다.
+- **화면**: 대화 탭 `[사건 일으키기]` 모달(200자·남은 글자 수·명령이 아니라는 안내), 대기 목록·취소(점유 중이면 "장면에 반영 중"). 진행 중 사건 목록은 없다. 장면 노트 `EVENT_STARTED`·`USER_EVENT_STARTED`는 발생 장면에 한 번(7-2-3 당시 사용자 사건은 다른 색이었으나 7-4에서 자동·사용자 사건 모두 같은 파란 테두리로 통일, §13.7). 대기 목록은 `scene.started`·`scene.committed`·`scene.failed`·`world_event.updated`·재연결 때 다시 읽는다.
 - **세이브**: 스냅샷 v4 그대로(사건 필드는 v3부터 포함, `claimedAttemptId` 제외 → 복원 시 점유 없음). 구조 변경·DB 마이그레이션 없음.
 
-### 13.3 사건 시스템과 캐릭터 신체 상태 (Phase 7-2, PRD v1.9)
+### 13.7 대화창 사건·상태 표시와 클라이언트 안정성 (Phase 7-4)
 
-실행 명세: `docs/PHASE_7_2_EVENTS_AND_CHARACTER_CONDITIONS.md`(확정, 초기 설계안 `PHASE_7_2_EVENTS_DESIGN.md`보다 우선). 구현 단계: 7-2-0 `settingsSeq` → 7-2-1 데이터 → 7-2-2 자동 사건·상태 반영 → 7-2-3 사용자 사건 → 7-2-4 실제 Gemini 스파이크. **7-2-0~7-2-3 완료, 7-2-4는 미실시(PRD §10.1 남은 QA).** 이 절의 자연 회복(장면 수 기준)·사건 진행/해결 서술은 당시 설계이며, 현행 규칙은 §13.4(월드 시간 기준 회복, 사건 1회 반영)가 우선한다.
+실행 명세: `docs/PHASE_7_4_CHAT_EVENT_UI.md`. 표시 규칙은 `lib/scene-notes.ts`(순수 함수, 단위 테스트), 그리기는 `app/worlds/[worldId]/world-status.tsx` `SceneNotes`, 재생은 `lib/scene-feed.ts`·`scene-panel.tsx`.
 
-- **모델**: 기존 `WorldEvent`를 확장한다(별도 Incident 없음). `kind`에 `RANDOM`(자동)·`USER_INTERVENTION`(사용자), `status`에 `PENDING`·`CANCELLED` 추가. `presetId`·`intensity`·`requestId`(`(worldId, requestId)` UNIQUE)·`startedSceneSeq`·`lastSceneSeq`·`resolvedSceneSeq`·`resolutionSummary`·`claimedAttemptId`(진행 중 시도 점유, 스냅샷 제외)·`cancelledAt`. 진행 순서는 `startedSceneSeq → createdAt → id`.
-- **자동 사건 구간**: `WorldEventPeriod(worldId, periodIndex)` PK = 구간당 1행. 순수 함수 `engine/director/auto-events.ts`(`autoEventPeriodOf`·`rollAutoEventPeriod`·`pickAutoEventPreset`)와 영속화 `domain/events/auto-periods.ts`(`ensureAutoEventPeriod`: `ON CONFLICT DO NOTHING` 후 저장된 결과를 읽음). 7-2-2에서 Runner·수동 생성의 시도 기록 트랜잭션(World 잠금·펜싱 안)에서 호출하고, 발생(프리셋 확정·사건 생성·`firedAt`)은 장면 커밋 트랜잭션에서 한다. 구간 중간에 처음 판정하면(기존 진행 세계관·v1·v2 불러오기) 지난 장면에는 예약하지 않는다.
-- **프리셋**: `config/world-events.ts` 24종 `{id, category, title, description, intensity, urgent, fallbackId}`. 생물 프리셋만 `fallbackId`(생물이 불가능한 세계관에서 결정적으로 대체, 장면 응답이 대체 여부를 알린다).
-- **신체 상태**: `CharacterCondition` 1:1(체온·부상(=통증 단계)·원인·발생/마지막 변화 장면·생존·사망 원인/장면/시각)과 `CharacterConditionChange` 이력(장면·사건 참조 선택). 감정과 분리하며 Character 행(설정)에 두지 않는다 — Character `updatedAt`은 프롬프트의 설정 변경 표시 기준이기 때문이다. 자연 회복은 `engine/commit/condition-rules.ts` `naturalInjuryRecovery`(장면 수 기준, `INJURY_NATURAL_RECOVERY_SCENES`). 사망자도 `deletedAt`이 NULL이므로 활성 6명 슬롯을 차지한다. DB CHECK: 사망 기록 필수·부상 원인 필수.
-- **Gemini**: 장면당 1회 유지. 사건 구체화·사건별 진행/해결·온도·부상·치료·사망 제안은 7-2-2에서 기존 구조화 출력에 선택 필드로 통합하고, 서버가 Zod·도메인 규칙으로 검증한 것만 커밋 트랜잭션에서 반영한다. 사망자 발화·다른 사건 ID 종료 제안은 확정하지 않는다.
-- **세이브**: 스냅샷 v3(`lib/snapshot/v3.ts`) = v2 + 확장 사건 필드·`eventPeriods`·`characterConditions`·`conditionChanges`. 읽기는 v1 → v2 → v3(`migrateV2ToV3`: 사건 새 필드 NULL, 구간 없음, 모두 생존·정상·부상 없음). `snapshotV3Error`가 프리셋 ID·대기 3건·구간 당첨/예약 일치·캐릭터별 상태 1개·사망 기록·참조를 검사한다.
+- **말풍선 색**: 캐릭터 발화와 분리된 중앙 시스템 말풍선. 흰 배경(약간 투명) + 분류별 1.5px 테두리. 사건(자동·사용자 모두) **파랑**, 신체 상태 호전 **초록**, 악화 **주홍**, 사망 **검정**(사망이 다른 분류보다 우선). 호전·악화는 변화의 이전/이후 단계로 정하고, 같거나 알 수 없으면 종류(치료·회복 = 호전)로 정한다. "시스템:"·"사건 발생:" 같은 기술적 접두어는 화면에서만 걷어 낸다.
+- **공개 순서**: 사건 발생 말풍선은 그 장면의 첫 발언이 보일 때 대사 앞에, 상태 변화 말풍선은 **그 장면의** 대사가 모두 공개된 뒤에 보인다(`sceneRevealed`). 다른 장면이 입력 중이어도 이미 공개된 장면의 말풍선은 사라지지 않는다(`e64c620` 이전에는 입력 중 표시마다 모든 장면의 상태 말풍선이 사라졌다 다시 나타나 스크롤이 흔들렸다). 같은 장면의 상태 변화는 캐릭터 순(sortOrder·생성 순) → 규칙 순(치료 → 부상 → 고통 → 온도 → 자연 회복 → 사망)으로 기록하고, 조회는 `createdAt, id` 순이다.
+- **SSE 재연결 커서**: 화면을 떠났다 돌아와 다시 연결할 때 마지막으로 받은 이벤트 id부터 이어 받는다(브라우저 자동 재연결은 `Last-Event-ID`). 장면은 id로 한 번만 넣고 발언은 한 번만 재생한다.
+- **탭 숨김**: 브라우저 탭이 숨겨진 동안 도착한 장면은 타이핑 연출 없이 바로 넣고, 다시 보이면 밀린 연출을 건너뛰고 받은 대사를 모두 보여 준다(타이머 지연으로 재생이 멈추거나 쌓이지 않게). 대화 화면을 떠날 때(앱 탭 이동·언마운트)도 남은 연출을 마무리한다.
+- **상태 동기화**: 실행 상태가 바뀌면(SSE·명령 응답·재조회 모두) 저장 패널에 알린다. 마지막 대화 화면 이탈 시 일시정지는 §13.2.
+- **스크롤**: 하단 근처일 때만 따라 내려가고, 하단 알림 카드 높이가 바뀌어도 맨 아래를 유지한다. 이전 기록 불러오기 결과가 비면 위치 기준점을 지운다.
+- **알려진 한계**: 장면이 수천 개 쌓이면 재생 상태가 바뀔 때마다 피드 전체를 다시 그린다(측정·최적화 미실시). 실제 브라우저 최종 검증 미실시(PRD §10.1).
+
+### 13.8 실제 Gemini 수동 검증 (Phase 7-2-4)
+
+- **실시**: 2026-10-28, 기준 커밋 `b63d76d`, 모델 `gemini-3.5-flash-lite`, 사용자 보유 BYOK, UsageGuard 경유, 수동 생성 경로(`generateScene`, IDLE) **2회**(장면 #3·#4). 전용 테스트 세계관을 새로 만들어 기존 데이터는 바꾸지 않았다. 보고서: 로컬 `result/2026-10-28-2121.md`(Git 제외).
+- **검증한 것**: #3에 자동 사건(극심한 기상 변화, HIGH)과 사용자 사건(곰 출현)이 함께 주입되어 둘 다 실제로 일어났고, 캐릭터가 명령이 아닌 자율 반응을 보였다. 두 사건 모두 #3에서 `RESOLVED`(장면 반영 완료, 해결 요약 없음), 자동 사건 구간 1회 발생. 기억은 참가자 2명 × 사건 2개 = 4개(모델 기억 2개 + 서버 보완 2개, 비참가자 0, 중복 없음). #4에는 `<events>`가 없었고 기록·기억으로 곰 대치가 이어졌으며, 신체 상태(추움 경미)가 유지됐다.
+- **DB 대조(2026-10-29, 읽기 전용)**: 해당 세계관의 `ApiRequestLog` SUCCESS 2건(2026-10-28 21:21 KST), 장면 #3·#4, 사건 2건 `RESOLVED`(`startedSceneSeq = resolvedSceneSeq = 3`), 사건 연결 기억 4개가 남아 있어 보고서와 일치한다.
+- **관찰(미수정)**: 모델이 한 기억에 두 사건을 함께 적는 경우가 있어 서버 보완 기억과 내용이 일부 겹친다. `emotionCue` 언어 혼용(화면에서는 한국어 변환·영어 숨김으로 처리, `aaef380`).
 
 ---
 
@@ -1105,9 +1165,9 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 | 통합 | StateCommitter 펜싱·멱등성, lease 경쟁, 6명 동시 생성, 저장·불러오기·초기화 직렬화, 소유권 우회 시도 | Vitest + Docker PostgreSQL |
 | 엔진 시나리오 | MockProvider 스크립트(정상, 잘못된 JSON, 잘못된 참조, 범위 초과, 429 연속, 네트워크 오류, 지연 후 취소) | Vitest |
 | E2E | PRD §11 MVP 승인 시나리오 1~16 (Google 로그인은 테스트용 세션 주입) | Playwright + MockProvider |
-| 수동 | 실제 Gemini 키 연결, 구조화 출력 품질, 비용 표시, 토큰 예산·기본 모델 확정 | Phase 3·5 스파이크 |
+| 수동 | 실제 Gemini 키 연결, 구조화 출력 품질, 비용 표시, 토큰 예산·기본 모델 확정 | Phase 3·5 스파이크, 7-2-4 사건 검증(§13.8) |
 
-**Phase 7 종료 시점 검증 현황 (2026-10-29)**: 단위·통합 테스트로 확인했다. `tests/integration/simulation-soak.test.ts`가 가짜 시계·Mock Gemini로 여러 장면을 연속 실행해 실행 제어·월드 시계·연결 보류·자동/사용자 사건·기억·신체 상태·저장/불러오기·실패·lease를 함께 검증한다. E2E(Playwright)와 실제 브라우저 최종 검증, 실제 Gemini 스파이크(7-2-4)는 미실시다(PRD §10.1).
+**Phase 7 종료 시점 검증 현황 (2026-10-29)**: 단위·통합 테스트(Vitest, Docker PostgreSQL)로 확인했다. `tests/integration/simulation-soak.test.ts`가 가짜 시계·Mock Gemini로 여러 장면을 연속 실행해 실행 제어·월드 시계·연결 보류·자동/사용자 사건·기억·신체 상태·저장/불러오기·실패·lease를 함께 검증한다. 실제 Gemini 수동 검증(7-2-4)은 2회 실시했다(§13.8). **E2E(Playwright 미도입)와 실제 브라우저 최종 검증은 미실시**다(PRD §10.1). 위 표의 단위 "SceneDirector(seed)·토큰 예산"은 해당 설계가 구현되지 않아 참가자 선정·문자 수 예산 테스트로 대신한다.
 
 **필수 복구 테스트 (A14)**. Phase 7a 완료 조건에 포함한다.
 1. **서버 재시작 복구**: `RUNNING` 중 프로세스 강제 종료 → 재시작 → 스위퍼가 lease 만료 후 재획득하고 루프를 재개한다. 커밋된 장면 수와 `stateVersion`이 일관된지 확인한다.

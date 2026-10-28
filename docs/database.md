@@ -4,6 +4,7 @@
 > **기준 문서:** `docs/requirements.md` (PRD v1.2), `docs/architecture.md` (결정 D1~D9, A1~A17)
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
+> **v1.5 (2026-10-29)**: Phase 7 종료 기준 정합화 — 폐지된 LIVE/MATERIALIZED 자동저장 서술을 복구 지점(RECOVERY) 기준으로 정정(§3.6·§5.2·§5.4·§6·§7), `StatusReason`에 `NOT_ENOUGH_CHARACTERS` 반영. 스키마·마이그레이션 변경 없음.
 > **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). Phase 7 마이그레이션은 7-1(20261028120000)·7-2-1(20261028140000)·7-2-2(20261028150000), 스냅샷 v4. 7-2-3·7-4는 스키마 변경 없음. 단계별 현황은 PRD §10.1
 
 아래 Prisma 코드 블록은 **설계 기준**이다. 실제 구현은 `prisma/schema.prisma`와 `prisma/migrations/`에 있다(Phase 2-1). 구현에서 확정된 차이는 다음과 같다.
@@ -484,7 +485,7 @@ model WorldEvent {
 
 ```prisma
 enum RuntimeStatus { IDLE RUNNING PAUSING PAUSED }
-enum StatusReason  { USER CLIENT_DISCONNECTED USAGE_LIMIT KEY_INVALID LOADED RESET SERVER_RECOVERY }
+enum StatusReason  { USER CLIENT_DISCONNECTED USAGE_LIMIT KEY_INVALID LOADED RESET SERVER_RECOVERY NOT_ENOUGH_CHARACTERS }   // NOT_ENOUGH_CHARACTERS: Phase 7-2-2 (생존자 2명 미만)
 enum ApiOutcome    { SUCCESS HTTP_ERROR NETWORK_ERROR VALIDATION_ERROR ABORTED PENDING }   // PENDING: 예약됨·응답 대기 (Phase 3-3)
 enum ApiUsageStatus { REPORTED MISSING UNKNOWN NOT_APPLICABLE }                           // 토큰 사용량 상태 (Phase 3-3)
 
@@ -658,8 +659,8 @@ model GameSnapshot {
 }
 ```
 
-- **`autoForWorldId` 기법**: PostgreSQL의 UNIQUE는 NULL을 여러 개 허용한다. MANUAL 행은 NULL, AUTO 행만 `worldId` 값을 가지므로, 부분 인덱스 없이 "세계관당 AUTO 1개"를 보장한다.
-- **AUTO 행 생성 시점**: 세계관을 만들 때 GameState·SimulationRuntime과 함께 만든다.
+- **`recoveryForWorldId` 기법** (Phase 6 전 이름 `autoForWorldId`): PostgreSQL의 UNIQUE는 NULL을 여러 개 허용한다. MANUAL·AUTO 행은 NULL, RECOVERY 행만 `worldId` 값을 가지므로, 부분 인덱스 없이 "세계관당 복구 지점 1개"를 보장한다.
+- **RECOVERY 행 생성 시점**: 세계관을 만들 때 GameState·SimulationRuntime과 함께 만든다(`snapshotId = null` = 아직 복구 지점 없음). AUTO 행(1시간 자동 저장 슬롯 1~5)은 첫 자동 저장 때 만든다.
 - **MANUAL 행**은 `snapshotId`가 항상 NOT NULL이다(앱에서 보장, CHECK 제약 추가).
 
 ---
@@ -822,7 +823,7 @@ type SnapshotV1 = {
 
 **캡처** `captureActiveState(tx, worldId)`:
 - `REPEATABLE READ` 트랜잭션 안에서 GameState를 `FOR UPDATE`로 잠근 뒤, 위 구조를 조회한다.
-- 수동 저장, 덮어쓰기, 자동저장 실체화가 모두 이 함수를 공유한다.
+- 수동 저장, 덮어쓰기, 1시간 자동 저장, 불러오기 직전 복구 지점 캡처가 모두 이 함수를 공유한다.
 
 **적용** `applySnapshot(tx, worldId, snapshot)`:
 1. 진행 상태 삭제:
@@ -833,7 +834,7 @@ type SnapshotV1 = {
 2. World 설정 필드 UPDATE, GameState 실행 설정·`nextSceneSeq` UPDATE.
 3. 캐릭터:
    - 스냅샷의 캐릭터는 **원래 ID로 UPSERT**한다(`deletedAt` 포함).
-   - 스냅샷에 없는 현재 캐릭터는 **실제 DELETE**한다. 직전 상태는 자동저장 실체화로 보존되어 있다.
+   - 스냅샷에 없는 현재 캐릭터는 **실제 DELETE**한다. 직전 상태는 복구 지점(RECOVERY)으로 보존되어 있다.
 4. Baseline, 장면·참가자·메시지, 관계·변화, 감정·변화, 기억, 이벤트를 원래 ID로 INSERT한다(`createMany`).
 5. `stateVersion += 1`, Runtime → `IDLE`(사유 `LOADED`), outbox에 `state.replaced`를 기록한다.
 
@@ -850,21 +851,21 @@ type SnapshotV1 = {
 - `schemaVersion > CURRENT`인 스냅샷은 불러오기를 거부한다.
 - **무결성 검증**: 불러올 때 `checksum`(정규화된 JSON 문자열의 SHA-256)이 일치하지 않으면 거부한다.
 
-### 5.4 자동저장 모드 전이 (D2)
+### 5.4 복구 지점 전이 (D7, A13 — 현행)
 
-| 시점 | AUTO 행 처리 |
+> **과거 설계(폐지, Phase 6)**: AUTO 행 1개를 LIVE / MATERIALIZED 모드로 운용하고 장면 커밋마다 메타데이터를 갱신하던 방식은 쓰지 않는다. 장면 커밋은 세이브 행을 건드리지 않는다. 자동 저장(AUTO 1~5)은 실행 중 1시간마다 만드는 일반 스냅샷이다(§3.6, PRD v1.4).
+
+| 시점 | RECOVERY 행 처리 |
 |---|---|
-| 세계관 생성 | AUTO 행 생성(`snapshotId = null`, LIVE) |
-| 장면 커밋 | MATERIALIZED였다면 스냅샷 삭제 → `snapshotId = null`. `sceneCount`, `stateVersionAtSave`, `updatedAt` 갱신 |
-| 불러오기·초기화 직전 (D7, A13) | ① LIVE → `captureActiveState` → GameSnapshot 생성 → `snapshotId` 연결(MATERIALIZED)<br>② MATERIALIZED이고 `GameState.changeSeq == replacedAtChangeSeq` → **기존 복구 지점 유지**<br>③ MATERIALIZED이고 `changeSeq > replacedAtChangeSeq` → 새로 캡처 → 새 스냅샷으로 교체, 이전 스냅샷 삭제 |
-| 불러오기·초기화 적용 직후 | `changeSeq += 1` 후 그 값을 `replacedAtChangeSeq`에 기록 |
-| 최신 자동저장 복원 | LIVE면 적용할 내용 없음. MATERIALIZED면 다시 캡처하지 않고 `applySnapshot` → 스냅샷 삭제 → LIVE, `replacedAtChangeSeq = null`. 교체 이후 변경이 있었다면 UI가 "불러온 뒤의 변경 사항은 사라집니다"라고 확인한다 |
-| 기록 삭제 | 변경 없음. LIVE 자동저장에는 삭제가 자연스럽게 반영된다 |
+| 세계관 생성 | RECOVERY 행 생성(`snapshotId = null`) |
+| 불러오기 직전 (D7, A13) | ① 스냅샷 없음 → `captureActiveState` → GameSnapshot 생성 → `snapshotId` 연결<br>② `GameState.changeSeq == replacedAtChangeSeq` → **기존 복구 지점 유지**<br>③ `changeSeq > replacedAtChangeSeq` → 새로 캡처 → 새 스냅샷으로 교체, 이전 스냅샷 삭제 |
+| 불러오기 적용 직후 | `changeSeq += 1` 후 그 값을 `replacedAtChangeSeq`에 기록 |
+| 복구 지점 불러오기 | 현재 상태를 새 복구 지점으로 캡처한 뒤 이전 복구 지점을 적용(맞바꾸기) |
+| 장면 커밋·설정 수정·사건 등록 | RECOVERY 행은 그대로. `changeSeq`만 올라 다음 불러오기 때 ③이 된다 |
 
 **규칙의 근거 (A13, 최종 승인)**:
-- 교체 이후 아무 변경이 없으면, 현재 활성 상태는 방금 불러온 슬롯이나 초기화 결과와 같다. 그래서 원래 진행 상태(최초 복구 지점)를 보존한다.
-- 교체 이후 사용자가 설정을 수정하거나 기록을 삭제했다면, 그 상태는 어디에도 없는 새 상태다. 그래서 다음 불러오기 전에 복구 지점으로 보존한다.
-- 장면 커밋이 일어나면 LIVE로 돌아가므로 ①이 적용된다.
+- 교체 이후 아무 변경이 없으면, 현재 활성 상태는 방금 불러온 슬롯과 같다. 그래서 원래 진행 상태(최초 복구 지점)를 보존한다.
+- 교체 이후 장면이 진행되거나 사용자가 설정을 수정했다면, 그 상태는 어디에도 없는 새 상태다. 그래서 다음 불러오기 전에 복구 지점으로 보존한다.
 
 ---
 
@@ -880,14 +881,14 @@ await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UP
 
 | # | 작업 | 잠금 | 핵심 단계 | stateVersion | changeSeq |
 |---|---|---|---|---|---|
-| 6.1 | 장면 커밋 | GameState | 펜싱 검사 → INSERT 장면(UNIQUE attemptId) → 관계·감정·기억 → AUTO LIVE → outbox | +1 | +1 |
+| 6.1 | 장면 커밋 | World → GameState (→ Runtime) | 펜싱 검사 → INSERT 장면(UNIQUE attemptId) → 관계·감정·기억 → 사건 반영·사건별 기억·신체 상태 → outbox (세이브 행은 갱신하지 않음, Phase 6) | +1 | +1 |
 | 6.2 | 제어 명령(stop) | GameState | Runtime 조건부 UPDATE → Run 종료 | +1 | — |
 | 6.3 | 수동 저장 / 덮어쓰기 | GameState (REPEATABLE READ) | 슬롯 수 확인 → 캡처 → Snapshot·SaveGame | — | — |
-| 6.4 | 불러오기 / 자동저장 복원 | GameState | 실행 정리 → 복구 지점 규칙(§5.4) → applySnapshot → AUTO `replacedAtChangeSeq` 기록 | +1 (실행 정리 시 추가 +1 가능) | +1 |
-| 6.5 | 진행 초기화 | GameState | 상태 확인(IDLE/PAUSED만, RUNNING·PAUSING 거부) → 복구 지점 규칙(§5.4) → 선택 항목 삭제·복원 → AUTO `replacedAtChangeSeq` 기록 | +1 | +1 |
+| 6.4 | 불러오기 (수동·자동·복구 지점 공통) | World → GameState → Runtime | `IDLE`·진행 중 시도 없음 확인(아니면 409) → 복구 지점 규칙(§5.4) → applySnapshot → RECOVERY `replacedAtChangeSeq` 기록 | +1 | +1 |
+| 6.5 | 진행 초기화 (미구현) | GameState | 상태 확인(IDLE/PAUSED만, RUNNING·PAUSING 거부) → 복구 지점 규칙(§5.4) → 선택 항목 삭제·복원 → RECOVERY `replacedAtChangeSeq` 기록 | +1 | +1 |
 | 6.6 | 캐릭터 생성 | World 행 `FOR UPDATE` → GameState | 활성 수 < 6 확인 → INSERT Character + EmotionState(초기값) | — | +1 |
 | 6.7 | 캐릭터 수정·삭제, 세계관·Baseline·실행 설정 수정 (세계관·캐릭터 설정은 `IDLE` 또는 진행 중 장면 없는 `PAUSED`에서만, World → Runtime `FOR UPDATE`로 확인. 세계관은 장면이 1개라도 있으면 항상 거부) | World 행 → GameState | 수정 저장 / 삭제는 `deletedAt = now()` (관계·기억 행 유지, 이후 선정·컨텍스트에서 제외) | — | +1 |
-| 6.8 | 대화 기록 삭제 | GameState | 장면 DELETE (Message Cascade, 기억·변화 이력 SetNull) | — | +1 |
+| 6.8 | 대화 기록 삭제 (미구현) | GameState | 장면 DELETE (Message Cascade, 기억·변화 이력 SetNull) | — | +1 |
 | 6.9 | 세계관 삭제 | — | Runtime IDLE + 취소 신호 → World DELETE (전체 Cascade) | — | — |
 | 6.10 | SSE 연결 종료 | — | `SseConnection` DELETE → 활성 연결 0이면 `UPDATE SimulationRuntime SET clientHoldSince = now() WHERE status = 'RUNNING' AND clientHoldSince IS NULL` | — | — |
 | 6.11 | SSE 재연결 | — | `SseConnection` INSERT → `UPDATE … SET clientHoldSince = NULL WHERE status = 'RUNNING'` | — | — |
@@ -910,7 +911,7 @@ await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UP
 | **계정 삭제** | User → Session·Account·AiProviderConnection(→ ApiUsageDaily)·World(→ 하위 전체)·ApiRequestLog 연쇄 삭제 |
 | **세계관 삭제** (D9) | 캐릭터·진행 상태·세이브·스냅샷·Run·로그·알림·outbox 전부 연쇄 삭제. UI에서 세이브 슬롯과 진행 기록까지 삭제된다고 경고하고 재확인한다(PRD FR-03) |
 | **캐릭터 삭제** | 소프트 삭제. 메시지·참가 기록·관계·기억 보존. 화면에 "삭제된 캐릭터"로 표시. 불러오기로 해당 캐릭터가 스냅샷에 없는 경우에만 실제 삭제(Message는 SetNull + 이름 스냅샷) |
-| **대화 기록 삭제** (D9) | 현재 게임(활성 진행 상태)의 장면·메시지만 삭제. 기억·관계·감정과 변화 이력의 값은 유지(scene 참조만 NULL). 수동 세이브·MATERIALIZED 자동저장은 영향 없음. 확인창에서 "기존 세이브에는 기록이 남아 있을 수 있음" 안내 |
+| **대화 기록 삭제** (D9) | 현재 게임(활성 진행 상태)의 장면·메시지만 삭제. 기억·관계·감정과 변화 이력의 값은 유지(scene 참조만 NULL). 모든 세이브(수동·자동·복구 지점)는 독립 스냅샷이라 영향 없음(미구현 기능). 확인창에서 "기존 세이브에는 기록이 남아 있을 수 있음" 안내 |
 | **세이브 삭제** | SaveGame + GameSnapshot 삭제. 다른 슬롯·활성 상태 영향 없음 |
 | **API 키 삭제** | 연결 행 삭제(사용량 집계 연쇄 삭제). ApiRequestLog의 `connectionId`는 SetNull |
 | **ApiRequestLog** | 30일 후 배치 삭제(확정, A11). 사용자 직접 삭제 가능 |
