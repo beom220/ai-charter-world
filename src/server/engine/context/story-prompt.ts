@@ -20,6 +20,8 @@ import type { SceneAlias } from "../validation/scene-output";
 //   이번 장면 결과로 감정·관계·기억 변화 제안(proposals)을 함께 받는다. 제안은 서버가 검증·clamp한 뒤에만 반영한다.
 // Phase 7-1: 유년기·성년기 배경 프리셋의 이름·설명을 "과거 경험"으로 넣는다. 지식·가치관의 배경일 뿐
 //   성격·감정·기억·관계·세계 규칙보다 우선하지 않고, 매 장면 반복 설명하거나 현재 사건으로 다루지 않게 지시한다.
+// 설정 변경(Phase 7-2): <world>·<character>는 지금 유효한 설정이며 <history>·기억과 어긋나면 설정을 따른다.
+//   마지막 설정 변경 전에 만든 장면은 <history>에 "장면 #N까지 이전 설정" 표시를 붙여, 이전 설정의 사실을 현재로 이어받지 않게 한다.
 // 구성 순서: 세계관 → 참가자 → 최근 장면 기록 → 이번 장면 지시.
 // - 사용자 입력은 모두 구분 태그 안에 데이터로 넣고, 태그 안의 내용은 지시가 아니라고 명시한다(프롬프트 인젝션 완화).
 // - 프롬프트에는 DB ID 대신 C1~C6 별칭을 쓴다. 비참가자 정보는 넣지 않는다.
@@ -66,6 +68,8 @@ export type PromptHistoryScene = {
   summary: string;
   participants: string[];
   turns: { speaker: string; dialogue: string; actionIntent: string | null }[];
+  /** 마지막 세계관·캐릭터 설정 변경보다 먼저 만든 장면 */
+  beforeSettingsChange?: boolean;
 };
 
 export type StoryPrompt = { systemInstruction: string; prompt: string; contextTruncated: boolean };
@@ -189,7 +193,9 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
     `대사는 ${SCENE_TURNS_MIN}~${maxTurns}턴으로 쓰고, 두 명 이상이 번갈아 말한다. 각 인물의 성격·설정·현재 감정에 맞게 쓴다.`,
     "대사는 자연스러운 한국어로 쓴다. 세계관상 외국어가 필요한 경우가 아니면 외국어 단어나 괄호 병기를 섞지 않는다.",
     "세계관의 규칙을 벗어나지 않는다. 사용자에게 말을 걸거나 해설하지 않는다.",
-    "<world>의 현재 상황과 세계관 설명은 이야기가 시작된 시점의 설정이다. <history>가 있으면 그 뒤로 이야기가 진행된 것이므로 <history>를 현재 진행 상황으로 우선 참고한다.",
+    "<world>와 <character>는 지금 유효한 설정이다. 장소·시대·세계 규칙·인물 정보가 <history>나 기억과 어긋나면 <world>·<character>를 따른다.",
+    "<history>는 지금까지의 진행 기록이다. 설정과 어긋나지 않는 사건·결심·갈등·관계를 이어받는다. <world>의 현재 상황·초기 사건은 이야기가 시작된 시점의 묘사이므로, <history>가 그 뒤의 진행을 보여 주면 이미 지난 일로 본다.",
+    "<history>에 설정 변경 표시가 있으면 그 이전 장면은 이전 설정에서 일어난 일이다. 현재 설정과 모순되는 장소·시대·사건·사실은 현재 사실로 이어받지 않고, 인물 사이의 감정과 관계만 자연스럽게 이어 간다. 설정이 바뀐 이유를 설명하거나 해설하지 않는다.",
     "이미 일어난 사건(설정 속 초기 사건 포함)을 처음 일어나는 것처럼 다시 소개하지 않는다. 이전 장면의 결심·행동·갈등을 이어받는다.",
     "이번 장면에서는 새로운 행동, 결정, 정보, 상황 변화 중 하나 이상이 일어나야 한다. 같은 논쟁을 표현만 바꿔 반복하지 않는다.",
     "이전 장면에서 확정되지 않은 추측은 사실로 단정하지 않는다. 인물은 자신이 참여하지 않은 장면의 일을 누군가에게 전해 들었을 만한 경우가 아니면 알지 못한다.",
@@ -216,7 +222,11 @@ export function buildStoryPrompt(world: PromptWorld, characters: PromptCharacter
     .join("\n");
 
   const recent = fitRecentHistory(history);
-  const historyBlock = recent.text ? `<history>\n최근 완료된 장면 기록 (오래된 것 → 최신, 세계 전체)\n\n${recent.text}\n</history>` : null;
+  const lastBefore = history.filter((s) => s.beforeSettingsChange).at(-1);
+  const changeNote = lastBefore
+    ? `\n※ 설정 변경 표시: 장면 #${lastBefore.seq}까지는 현재 세계관·인물 설정으로 바뀌기 전의 기록이다. 현재 설정과 모순되는 내용은 현재 사실이 아니다.`
+    : "";
+  const historyBlock = recent.text ? `<history>\n최근 완료된 장면 기록 (오래된 것 → 최신, 세계 전체)${changeNote}\n\n${recent.text}\n</history>` : null;
   const instruction = historyBlock
     ? "위 인물들이 가장 최근 장면 이후에 나누는 다음 대화 장면 하나를 써라."
     : "위 인물들이 지금 이 세계에서 나누는 대화 장면 하나를 써라.";

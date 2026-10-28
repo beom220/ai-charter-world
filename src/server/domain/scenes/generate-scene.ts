@@ -98,8 +98,11 @@ export async function listScenes(
   return { scenes: rows.slice(0, take).map(toView), hasMore: rows.length > take };
 }
 
-/** 프롬프트용 최근 완료 장면 (오래된 것 → 최신). 커밋된 장면만 저장되므로 저장된 장면 = 완료 장면 */
-async function loadRecentHistory(userId: AuthenticatedUserId, worldId: string): Promise<PromptHistoryScene[]> {
+/**
+ * 프롬프트용 최근 완료 장면 (오래된 것 → 최신). 커밋된 장면만 저장되므로 저장된 장면 = 완료 장면.
+ * settingsChangedAt보다 먼저 만든 장면은 "설정 변경 이전" 기록으로 표시한다 (과거 대화가 현재 설정을 덮어쓰지 않게)
+ */
+async function loadRecentHistory(userId: AuthenticatedUserId, worldId: string, settingsChangedAt: Date): Promise<PromptHistoryScene[]> {
   const rows = await prisma.conversationScene.findMany({
     where: { worldId, world: { ownerId: userId } },
     orderBy: { seq: "desc" },
@@ -108,6 +111,7 @@ async function loadRecentHistory(userId: AuthenticatedUserId, worldId: string): 
       seq: true,
       title: true,
       summary: true,
+      createdAt: true,
       participants: { select: { nameSnapshot: true, alias: true }, orderBy: { alias: "asc" } },
       messages: { orderBy: { turnIndex: "asc" }, select: { speakerNameSnapshot: true, dialogue: true, actionIntent: true } },
     },
@@ -118,6 +122,7 @@ async function loadRecentHistory(userId: AuthenticatedUserId, worldId: string): 
     summary: r.summary,
     participants: r.participants.map((p) => p.nameSnapshot),
     turns: r.messages.map((m) => ({ speaker: m.speakerNameSnapshot, dialogue: m.dialogue, actionIntent: m.actionIntent })),
+    beforeSettingsChange: r.createdAt < settingsChangedAt,
   }));
 }
 
@@ -134,10 +139,17 @@ type PreparedScene = Awaited<ReturnType<typeof prepareScene>>;
 
 /** 1) 소유권·참가자·연결 확인과 키 로드 (외부 호출 없음) */
 export async function prepareScene(userId: AuthenticatedUserId, worldId: string, deps: SceneDeps = {}) {
-  // 1) 소유권·참가자·연결 확인 (외부 호출 전)
+  // 1) 소유권·참가자·연결 확인 (외부 호출 전). 세계관·캐릭터 설정은 장면마다 DB에서 새로 읽는다(캐시 없음)
   const world = await prisma.world.findFirst({
     where: { id: worldId, ownerId: userId },
-    select: { name: true, worldRules: true, currentSituation: true, worldContext: true, gameState: { select: { maxTurnsPerScene: true } } },
+    select: {
+      name: true,
+      worldRules: true,
+      currentSituation: true,
+      worldContext: true,
+      updatedAt: true,
+      gameState: { select: { maxTurnsPerScene: true, changeSeq: true } },
+    },
   });
   if (!world?.gameState) throw new NotFoundError();
   // 참가자는 서버가 정한다. 삭제된 캐릭터는 후보에서 제외한다
@@ -170,9 +182,14 @@ export async function prepareScene(userId: AuthenticatedUserId, worldId: string,
   const participantContext = await loadParticipantContext(userId, worldId, characters);
   for (const c of characters) Object.assign(c, participantContext.get(c.id));
 
+  // 마지막 설정 변경 시각: 세계관 수정, 캐릭터 생성·수정·삭제(삭제된 캐릭터 포함) 중 가장 늦은 것
+  const { _max } = await prisma.character.aggregate({ where: { worldId }, _max: { updatedAt: true } });
+  const settingsChangedAt = _max.updatedAt && _max.updatedAt > world.updatedAt ? _max.updatedAt : world.updatedAt;
+
   const { modelId } = await requireUsableGeminiConnection(userId);
   const key = await loadKey(userId, deps.material ?? getProviderKeyMaterial());
-  return { world, characters, characterIds, modelId, key };
+  // changeSeq: Runner가 시도를 기록할 때 준비 이후 설정이 바뀌지 않았는지 확인한다 (이전 설정으로 호출하지 않게)
+  return { world, characters, characterIds, modelId, key, settingsChangedAt, changeSeq: world.gameState.changeSeq };
 }
 
 /** 배경 ID → 프롬프트용 이름·설명 (알 수 없는 ID·NULL은 넣지 않는다) */
@@ -216,7 +233,7 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
 export async function runSceneAttempt(
   userId: AuthenticatedUserId,
   worldId: string,
-  { world, characters, characterIds, modelId, key }: PreparedScene,
+  { world, characters, characterIds, modelId, key, settingsChangedAt }: PreparedScene,
   attempt: SceneAttempt,
   deps: SceneDeps = {},
 ): Promise<SceneView> {
@@ -225,7 +242,7 @@ export async function runSceneAttempt(
   const expected = await prisma.gameState.findUniqueOrThrow({ where: { worldId }, select: { stateVersion: true, maxTurnsPerScene: true } });
   const maxTurns = expected.maxTurnsPerScene;
   const aliases = characters.map((c) => c.alias);
-  const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId));
+  const prompt = buildStoryPrompt(world, characters, maxTurns, await loadRecentHistory(userId, worldId, settingsChangedAt));
 
   // 3) UsageGuard를 거친 Gemini 호출 1회
   const usageMeter = createUsageMeter(

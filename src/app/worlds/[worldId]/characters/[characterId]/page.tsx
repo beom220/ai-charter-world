@@ -151,6 +151,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           title="캐릭터를 삭제할까요?"
           path={`/api/worlds/${worldId}/characters/${c.id}`}
           redirectTo={`/worlds/${worldId}`}
+          lockWorldId={worldId}
         >
           <strong>{c.name}</strong>은(는) 이후 대화에 참가하지 않습니다. 지난 대화·기억·관계 기록은 남고, 과거 대사에는 &quot;삭제된 캐릭터&quot;로
           표시됩니다.

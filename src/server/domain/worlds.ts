@@ -1,7 +1,8 @@
 import type { WorldInput } from "@/lib/schemas/world";
 import { prisma } from "@/server/db/client";
 import { ownedWorldWhere, requireOwnedWorld } from "@/server/db/scope";
-import { NotFoundError } from "@/server/domain/errors";
+import { SETTINGS_LOCKED_MESSAGE, settingsEditable } from "@/lib/simulation-view";
+import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 
 // 세계관 CRUD (PRD FR-03, database.md §6). 런타임 독립 모듈.
@@ -88,7 +89,20 @@ export async function lockOwnedWorld(tx: Parameters<Parameters<typeof prisma.$tr
 }
 
 /**
- * 세계관 설정 수정 (database.md §6.7). 실행 중에도 허용하고 stateVersion은 올리지 않는다(architecture.md §6.7).
+ * 설정 변경 가능 상태 확인 (World 잠금 뒤 호출, 잠금 순서 World → Runtime). RUNNING·PAUSING, PAUSED + 진행 중 장면이면 409.
+ * Runner의 시도 기록도 World 잠금 아래에서 하므로 이 트랜잭션이 끝날 때까지 새 장면 호출이 시작되지 않는다.
+ */
+export async function assertSettingsEditable(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], worldId: string): Promise<void> {
+  const [rt] = await tx.$queryRaw<{ status: RuntimeStatusView; inFlightAttemptId: string | null }[]>`
+    SELECT "status", "inFlightAttemptId" FROM "SimulationRuntime" WHERE "worldId" = ${worldId} FOR UPDATE`;
+  if (!rt || !settingsEditable({ status: rt.status, inFlight: rt.inFlightAttemptId !== null })) {
+    throw new ConflictError("SETTINGS_LOCKED", SETTINGS_LOCKED_MESSAGE);
+  }
+}
+
+/**
+ * 세계관 설정 수정 (database.md §6.7). 중지(IDLE)나 진행 중 장면이 없는 일시정지(PAUSED)에서만 허용하고 stateVersion은 올리지 않는다.
+ * 저장한 설정은 다음 장면 준비 때 DB에서 다시 읽어 반영한다(architecture.md §6.7).
  * 실제로 값이 바뀐 경우에만 GameState.changeSeq += 1 (복구 지점 판정, A13).
  */
 export async function updateWorld(
@@ -100,6 +114,7 @@ export async function updateWorld(
     await lockOwnedWorld(tx, userId, worldId);
     const current = await requireOwnedWorld(userId, worldId, tx);
     if (current.name === input.name && current.worldContext === input.worldContext) return false;
+    await assertSettingsEditable(tx, worldId);
 
     await tx.world.update({ where: { id: worldId }, data: { name: input.name, worldContext: input.worldContext } });
     await tx.$executeRaw`UPDATE "GameState" SET "changeSeq" = "changeSeq" + 1, "updatedAt" = now() WHERE "worldId" = ${worldId}`;

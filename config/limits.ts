@@ -146,6 +146,8 @@ export const RUNNER_LEASE_RENEW_MS = 10_000;
 
 /** Runner가 대기 중에도 DB 상태를 다시 읽는 최대 간격 (신호 유실 대비, §7.3) */
 export const RUNNER_POLL_INTERVAL_MS = 2_000;
+/** 설정 화면: 실행 중·진행 중 장면 때문에 수정이 막혀 있는 동안 실행 상태를 다시 확인하는 간격 (Phase 7-2) */
+export const SETTINGS_LOCK_POLL_MS = 3_000;
 
 /** 복구 스위퍼 주기: lease가 비었거나 만료된 RUNNING·PAUSING 세계관을 찾아 Runner를 붙인다 (§7.4) */
 export const RUNNER_SWEEP_INTERVAL_MS = 15_000;

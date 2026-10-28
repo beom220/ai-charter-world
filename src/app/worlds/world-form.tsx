@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { MAX_REQUEST_BODY_BYTES, WORLD_NAME_MAX_LENGTH } from "../../../config/limits";
 import { worldInputSchema } from "@/lib/schemas/world";
+import Link from "next/link";
+import { SettingsLockedNotice, useSettingsEditable } from "./settings-lock";
 import { button } from "./ui";
 
 // 세계관 생성·수정 폼과 삭제 확인 대화상자 (PRD FR-03). 최소 UI.
@@ -25,6 +27,7 @@ export function WorldForm({ initial }: { initial: Initial }) {
   const [worldContext, setWorldContext] = useState(initial?.worldContext ?? "");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const editable = useSettingsEditable(initial?.id ?? null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,7 +45,7 @@ export function WorldForm({ initial }: { initial: Initial }) {
         : await send("/api/worlds", "POST", parsed.data);
       if (!ok) return setNotice({ kind: "error", text: json?.error?.message ?? "요청을 처리하지 못했습니다." });
       if (!initial) return router.push(`/worlds/${json.world.id}`);
-      setNotice({ kind: "ok", text: json.changed ? "저장했습니다." : "변경된 내용이 없습니다." });
+      setNotice({ kind: "ok", text: json.changed ? "저장했습니다. 다음 장면부터 반영됩니다." : "변경된 내용이 없습니다." });
       router.refresh();
     } catch {
       setNotice({ kind: "error", text: "요청을 처리하지 못했습니다." });
@@ -73,8 +76,19 @@ export function WorldForm({ initial }: { initial: Initial }) {
         />
         <span className="text-right text-xs text-foreground/60">{[...worldContext].length.toLocaleString()}자</span>
       </label>
+      {initial && (
+        <p className="text-xs text-foreground/60">
+          설정을 바꿔도 지난 대화·감정·관계·기억은 그대로 남습니다. 배경을 통째로 다른 이야기로 바꾸면 지난 대화와 어긋날 수 있으니,
+          완전히 다른 이야기는{" "}
+          <Link href="/worlds/new" className="underline">
+            새 세계관
+          </Link>
+          으로 만드는 것을 권장합니다.
+        </p>
+      )}
+      {!editable && <SettingsLockedNotice />}
       <div className="flex items-center gap-3">
-        <button type="submit" className={button} disabled={busy}>
+        <button type="submit" className={button} disabled={busy || !editable}>
           {initial ? "저장" : "만들기"}
         </button>
         {notice && (
@@ -107,15 +121,19 @@ export function ConfirmDeleteButton({
   title,
   path,
   redirectTo,
+  lockWorldId = null,
   children,
 }: {
   label: string;
   title: string;
   path: string;
   redirectTo: string;
+  /** 설정 변경으로 취급해 실행 중에는 막을 세계관 (캐릭터 삭제) */
+  lockWorldId?: string | null;
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const editable = useSettingsEditable(lockWorldId);
   const dialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +156,7 @@ export function ConfirmDeleteButton({
 
   return (
     <>
-      <button type="button" className={`${button} text-red-600`} onClick={() => dialog.current?.showModal()}>
+      <button type="button" className={`${button} text-red-600`} onClick={() => dialog.current?.showModal()} disabled={!editable}>
         {label}
       </button>
       <dialog ref={dialog} className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-lg bg-background p-6 text-foreground backdrop:bg-black/50">

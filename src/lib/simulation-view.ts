@@ -13,6 +13,16 @@ export const INTERVAL_LABEL: Record<IntervalPresetValue, string> = { SLOW: "느�
 const runtimeStatusSchema = z.enum(["IDLE", "RUNNING", "PAUSING", "PAUSED"]);
 const statusReasonSchema = z.enum(["USER", "CLIENT_DISCONNECTED", "USAGE_LIMIT", "KEY_INVALID", "LOADED", "RESET", "SERVER_RECOVERY"]);
 
+/**
+ * 세계관·캐릭터 설정(생성·수정·삭제)을 바꿀 수 있는 실행 상태인가 (PRD FR-03·FR-04, 서버·화면 공용).
+ * IDLE은 항상, PAUSED는 진행 중 장면이 없을 때만 허용한다. RUNNING·PAUSING은 거부한다.
+ */
+export function settingsEditable(state: { status: z.infer<typeof runtimeStatusSchema>; inFlight: boolean }): boolean {
+  return state.status === "IDLE" || (state.status === "PAUSED" && !state.inFlight);
+}
+
+export const SETTINGS_LOCKED_MESSAGE = "대화가 실행 중이거나 진행 중인 장면이 있어 설정을 바꿀 수 없습니다. 대화를 일시정지·중지하고 진행 중인 장면이 끝난 뒤 수정하세요.";
+
 /** GET /simulation/state·명령 응답·runtime.status payload (server/domain/simulation/control.ts readState) */
 export const simulationStateSchema = z.object({
   status: runtimeStatusSchema,

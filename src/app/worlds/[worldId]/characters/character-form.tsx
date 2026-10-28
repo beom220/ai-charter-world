@@ -18,6 +18,7 @@ import {
   type RandomField,
 } from "@/lib/schemas/character";
 import { button } from "../../ui";
+import { SettingsLockedNotice, useSettingsEditable } from "../../settings-lock";
 import { send } from "../../world-form";
 import { BackgroundPicker } from "./background-picker";
 import { PersonalitySelect } from "./personality-select";
@@ -39,6 +40,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
   const [locked, setLocked] = useState<Set<RandomField>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const editable = useSettingsEditable(worldId);
 
   useEffect(() => {
     if (characterId) return;
@@ -205,8 +207,9 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
         </span>
       </label>
 
+      {!editable && <SettingsLockedNotice />}
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" className={button} disabled={busy || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || problem !== null}>
+        <button type="submit" className={button} disabled={busy || !editable || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || problem !== null}>
           {characterId ? "저장" : "만들기"}
         </button>
         {problem && <span className="text-xs text-foreground/60">{problem}</span>}

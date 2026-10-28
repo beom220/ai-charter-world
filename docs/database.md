@@ -859,7 +859,7 @@ await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UP
 | 6.4 | 불러오기 / 자동저장 복원 | GameState | 실행 정리 → 복구 지점 규칙(§5.4) → applySnapshot → AUTO `replacedAtChangeSeq` 기록 | +1 (실행 정리 시 추가 +1 가능) | +1 |
 | 6.5 | 진행 초기화 | GameState | 상태 확인(IDLE/PAUSED만, RUNNING·PAUSING 거부) → 복구 지점 규칙(§5.4) → 선택 항목 삭제·복원 → AUTO `replacedAtChangeSeq` 기록 | +1 | +1 |
 | 6.6 | 캐릭터 생성 | World 행 `FOR UPDATE` → GameState | 활성 수 < 6 확인 → INSERT Character + EmotionState(초기값) | — | +1 |
-| 6.7 | 캐릭터 수정·삭제, 세계관·Baseline·실행 설정 수정 | World 행 → GameState | 수정 저장 / 삭제는 `deletedAt = now()` (관계·기억 행 유지, 이후 선정·컨텍스트에서 제외) | — | +1 |
+| 6.7 | 캐릭터 수정·삭제, 세계관·Baseline·실행 설정 수정 (세계관·캐릭터 설정은 `IDLE` 또는 진행 중 장면 없는 `PAUSED`에서만, World → Runtime `FOR UPDATE`로 확인) | World 행 → GameState | 수정 저장 / 삭제는 `deletedAt = now()` (관계·기억 행 유지, 이후 선정·컨텍스트에서 제외) | — | +1 |
 | 6.8 | 대화 기록 삭제 | GameState | 장면 DELETE (Message Cascade, 기억·변화 이력 SetNull) | — | +1 |
 | 6.9 | 세계관 삭제 | — | Runtime IDLE + 취소 신호 → World DELETE (전체 Cascade) | — | — |
 | 6.10 | SSE 연결 종료 | — | `SseConnection` DELETE → 활성 연결 0이면 `UPDATE SimulationRuntime SET clientHoldSince = now() WHERE status = 'RUNNING' AND clientHoldSince IS NULL` | — | — |

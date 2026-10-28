@@ -4,12 +4,12 @@ import { adulthoodBackgroundIssue, type CharacterInput, type GenderValue } from 
 import { prisma } from "@/server/db/client";
 import { BadRequestError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
-import { lockOwnedWorld } from "@/server/domain/worlds";
+import { assertSettingsEditable, lockOwnedWorld } from "@/server/domain/worlds";
 import { randomAge } from "./random";
 
 // 캐릭터 CRUD (PRD FR-04, database.md §6.6·§6.7·§7). 런타임 독립 모듈.
 // - 모든 접근은 world.ownerId 조건을 건다. 없거나 타인 소유이거나 삭제된 캐릭터는 NotFoundError(404).
-// - 변경은 World 행 잠금 → GameState changeSeq += 1 순서로 한 트랜잭션에서 한다.
+// - 변경은 World 행 잠금 → 실행 상태 확인(IDLE, 진행 중 장면 없는 PAUSED만) → GameState changeSeq += 1 순서로 한 트랜잭션에서 한다.
 // - 삭제는 소프트 삭제(deletedAt). 메시지·관계·기억·감정 행은 그대로 둔다.
 // - 배경(Phase 7-1): 유년기는 필수, 성년기는 확정 나이 19세 이상이면 필수·18세 이하면 불가. 나이를 비운 입력은
 //   나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 다시 검사해 400으로 거절한다. 기존 NULL 캐릭터는 그대로 조회된다.
@@ -140,6 +140,7 @@ export async function findDeletedCharacterName(userId: AuthenticatedUserId, worl
 export async function createCharacter(userId: AuthenticatedUserId, worldId: string, input: CharacterInput): Promise<CharacterView> {
   const id = await prisma.$transaction(async (tx) => {
     await lockOwnedWorld(tx, userId, worldId);
+    await assertSettingsEditable(tx, worldId);
     const active = await tx.character.count({ where: { worldId, deletedAt: null } });
     if (active >= MAX_ACTIVE_CHARACTERS_PER_WORLD) {
       throw new ConflictError("CHARACTER_LIMIT", `세계관당 캐릭터는 최대 ${MAX_ACTIVE_CHARACTERS_PER_WORLD}명까지 만들 수 있습니다.`);
@@ -183,6 +184,7 @@ export async function updateCharacter(
       current.childhoodBackgroundId === data.childhoodBackgroundId &&
       current.adulthoodBackgroundId === data.adulthoodBackgroundId;
     if (same) return false;
+    await assertSettingsEditable(tx, worldId);
 
     await tx.character.update({ where: { id: characterId }, data });
     await bumpChangeSeq(tx, worldId);
@@ -195,6 +197,7 @@ export async function updateCharacter(
 export async function deleteCharacter(userId: AuthenticatedUserId, worldId: string, characterId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await lockOwnedWorld(tx, userId, worldId);
+    await assertSettingsEditable(tx, worldId);
     const { count } = await tx.character.updateMany({
       where: { id: characterId, worldId, deletedAt: null },
       data: { deletedAt: new Date() },
