@@ -70,7 +70,7 @@ describe("장면 생성 서비스", () => {
     ]);
     expect(scene).toMatchObject({ seq: 1, title: "모의 장면" });
     expect(await state(world.id)).toMatchObject({ stateVersion: 1, changeSeq: 1, nextSceneSeq: 2 });
-    expect(await prisma.saveGame.findUniqueOrThrow({ where: { autoForWorldId: world.id } })).toMatchObject({ sceneCount: 1, stateVersionAtSave: 1, snapshotId: null });
+    expect(await prisma.saveGame.findUniqueOrThrow({ where: { recoveryForWorldId: world.id } })).toMatchObject({ sceneCount: 0, snapshotId: null }); // 장면 커밋은 복구 지점을 건드리지 않는다 (Phase 6)
     expect(await prisma.sceneParticipant.count({ where: { sceneId: scene.id } })).toBe(2);
 
     // 외부 호출은 모두 UsageGuard 예약·정산을 거친다: 호출 수 = 호출 기록 수

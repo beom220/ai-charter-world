@@ -68,7 +68,7 @@ describe("세계관 CRUD", () => {
     expect((await GET_ONE(req("GET", "/api/worlds/any"), ctx("any"))).status).toBe(401);
   });
 
-  it("생성: World·GameState·SimulationRuntime(IDLE)·AUTO SaveGame(LIVE)을 함께 만들고, 본문의 ownerId는 무시한다", async () => {
+  it("생성: World·GameState·SimulationRuntime(IDLE)·복구 지점 SaveGame(RECOVERY, 스냅샷 없음)을 함께 만들고, 본문의 ownerId는 무시한다", async () => {
     const user = await createTestUser("world-create");
     const other = await createTestUser("world-create-other");
     const cookie = await loginCookie(user.id);
@@ -84,7 +84,7 @@ describe("세계관 CRUD", () => {
     expect(world.gameState).toMatchObject({ stateVersion: 0, changeSeq: 0 });
     expect(world.runtime?.status).toBe("IDLE");
     expect(world.saveGames).toHaveLength(1);
-    expect(world.saveGames[0]).toMatchObject({ kind: "AUTO", autoForWorldId: world.id, snapshotId: null, worldNameSnapshot: "무인도" });
+    expect(world.saveGames[0]).toMatchObject({ kind: "RECOVERY", recoveryForWorldId: world.id, snapshotId: null, worldNameSnapshot: "무인도" });
   });
 
   it("빈 이름은 400", async () => {

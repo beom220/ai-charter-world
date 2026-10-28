@@ -25,7 +25,7 @@ import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/se
 //   3) UsageGuard meter를 거쳐 generateContent 1회 (자동 재시도 없음)
 //   4) Zod·별칭 검증 → 실패하면 아무것도 저장하지 않는다
 //   5) GameState 행 잠금 + stateVersion 펜싱 + attemptId UNIQUE로 단일 트랜잭션 커밋 (§6.7).
-//      장면·발언과 함께 감정·관계·기억 제안을 clamp해 반영한다(Phase 5-5, scene-state.ts)
+//      장면·발언과 함께 감정·관계·기억 제안을 clamp해 반영한다(Phase 5-5, scene-state.ts). 세이브 슬롯은 바꾸지 않는다
 //   6) 같은 트랜잭션에서 outbox에 scene.committed를 기록하고, 커밋 후 SSE 구독자에게 알린다 (Phase 5-3, §10.3)
 
 export type SceneDeps = { client?: GeminiKeyClient; material?: ProviderKeyMaterial; now?: () => Date; random?: () => number };
@@ -318,27 +318,12 @@ export async function runSceneAttempt(
     });
     // 감정·관계·기억 제안 반영 (Phase 5-5). 같은 트랜잭션이므로 실패하면 장면과 함께 아무것도 저장되지 않는다
     await applySceneProposals(tx, worldId, scene.id, characters, output.proposals);
-    const next = await tx.gameState.update({
+    await tx.gameState.update({
       where: { worldId },
       data: { stateVersion: { increment: 1 }, changeSeq: { increment: 1 }, nextSceneSeq: { increment: 1 }, lastCommittedAt: now() },
     });
 
-    // 자동저장은 LIVE로 두고 메타데이터만 갱신한다 (§9.3). 실체화된 복구 지점이 있으면 정리한다
-    const auto = await tx.saveGame.findUnique({ where: { autoForWorldId: worldId }, select: { id: true, snapshotId: true } });
-    if (auto) {
-      await tx.saveGame.update({
-        where: { id: auto.id },
-        data: {
-          snapshotId: null,
-          replacedAtChangeSeq: null,
-          sceneCount: await tx.conversationScene.count({ where: { worldId } }),
-          characterCount: await tx.character.count({ where: { worldId, deletedAt: null } }),
-          worldNameSnapshot: world.name,
-          stateVersionAtSave: next.stateVersion,
-        },
-      });
-      if (auto.snapshotId) await tx.gameSnapshot.delete({ where: { id: auto.snapshotId } });
-    }
+    // 복구 지점(RECOVERY)·자동 저장 슬롯은 건드리지 않는다 (Phase 6: 복구 지점은 다음 불러오기 때만 교체, §9.3)
 
     // 검증·저장된 내용만 이벤트로 보낸다 (프롬프트·키·응답 원문 없음)
     const view = toView(await tx.conversationScene.findUniqueOrThrow({ where: { id: scene.id }, select: sceneSelect }));

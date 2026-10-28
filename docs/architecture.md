@@ -842,6 +842,21 @@ export interface RunnerHost {
 
 - 수동 슬롯을 덮어쓰지 않는다. 세계관당 AUTO 행은 1개만 둔다(DB 제약).
 
+### 9.3.1 Phase 6 구현 (세이브 슬롯 정책 변경, PRD v1.4)
+
+§9.2·§9.3의 "AUTO 1개(LIVE/MATERIALIZED)"와 20슬롯은 아래로 바뀌었다. 복구 지점 규칙(changeSeq, A13)은 그대로다.
+- **종류**: `MANUAL`(최대 5) · `AUTO`(슬롯 1~5, 1시간 순환) · `RECOVERY`(세계관당 1, 사용자 목록 10개에 미포함). 기존 AUTO 행은 마이그레이션에서 값 이름만 바뀌어 RECOVERY가 됐다(`autoForWorldId` → `recoveryForWorldId`). 스키마 추가: `SaveGame.autoSlot`, `SimulationRuntime.nextAutoSaveAt`.
+- **LIVE 모드 폐지**: 장면 커밋은 세이브 행을 건드리지 않는다. 활성 진행 상태는 여전히 장면마다 커밋되므로 재시작 후에도 그대로 이어진다. 복구 지점은 다음 불러오기 때만 교체된다(이전에는 다음 장면 커밋 때 지워졌다 — 데이터 손실 방지를 위해 바꿈).
+- **잠금·일관성**(`domain/saves/saves.ts`): 저장·덮어쓰기·불러오기·자동 저장 모두 World → GameState(→ Runtime) `FOR UPDATE` 한 트랜잭션(제한 30초). 장면 커밋도 GameState를 잠그므로 캡처는 항상 장면 경계의 한 시점이며 진행 중 Gemini 결과는 들어가지 않는다. World 잠금으로 동시 저장도 수동 5개를 넘지 못한다.
+- **목록**: 수동·자동을 하나로, 마지막 저장 시각(스냅샷 생성 시각, 이름 변경으로는 바뀌지 않음) 내림차순. 복구 지점은 따로 준다. 수동만 덮어쓰기·이름 변경·삭제 가능(자동·복구 지점은 404).
+- **자동 저장**: RunnerHost 스위퍼(15초)가 `status = RUNNING AND nextAutoSaveAt <= now`인 세계관마다 `runAutoSave`를 부른다. 트랜잭션 안에서 조건을 다시 확인하고 `nextAutoSaveAt = now + 1h`로 갱신하므로 여러 호스트가 동시에 불러도 1번만 저장한다. 슬롯은 빈 번호 중 가장 작은 것, 다 차면 가장 오래전에 저장된 번호(결과적으로 1→…→5→1). 이름 `{세계관 제목} - Auto Save {n}`(60자에 맞게 제목을 자름). 실패하면 롤백되어 기존 스냅샷이 남고 `nextAutoSaveAt = now + 10분`. start·resume은 남은 예정이 있으면 유지, 없거나 지났으면 지금 + 1시간(즉시 저장 안 함). Gemini를 호출하지 않는다.
+- **스냅샷 v1**(`lib/snapshot/v1.ts`, `domain/saves/snapshot.ts`): 세계관 설정, 캐릭터(삭제 포함), 초기 관계, 관계·감정 상태와 변화 이력, 기억, 장면(참가자·발언), 세계 사건, GameState 진행 값(nextSceneSeq·실행 설정·lastCommittedAt). 원래 ID 유지. checksum은 키 정렬 JSON의 SHA-256. 읽을 때 버전(현재보다 높으면 거부) → checksum → Zod → 참조(캐릭터·장면·관계 참조, ID·seq 중복, 활성 6명) 순으로 검사한다(422 `SAVE_INVALID`).
+- **불러오기**: `IDLE`이고 `inFlightAttemptId`가 없을 때만(아니면 409 `LOAD_REQUIRES_IDLE`, "시뮬레이션을 종료한 뒤…"). 트랜잭션: 잠금 → 대상 스냅샷이 그대로인지 확인 → 복구 지점(없거나 `changeSeq > replacedAtChangeSeq`이면 현재 상태를 캡처해 교체, 아니면 유지) → 진행 상태 삭제 → 스냅샷에 없는 캐릭터 삭제·설정 upsert(다른 세계관 ID와 겹치면 거부) → 진행 상태 재생성(장면의 runId는 남아 있는 Run만) → GameState `stateVersion += 1`·`changeSeq += 1` → 복구 지점 `replacedAtChangeSeq` 기록 → Runtime `IDLE(LOADED)`, Run·lease·inFlight·예약 비움 → outbox `state.replaced`·`saves.updated`·`runtime.status`. 어느 단계든 실패하면 복구 지점 교체까지 모두 롤백된다.
+  - **복구 지점 불러오기**: 현재 상태와 맞바꾼다(현재 상태를 새 복구 지점으로 캡처한 뒤 이전 복구 지점을 적용). §9.3의 "다시 캡처하지 않음"과 달리, 변경 사항을 잃지 않도록 되돌리기를 다시 되돌릴 수 있게 했다.
+- **화면**: 세계관 상세의 '저장' 패널(수동 저장 이름 입력, 목록·배지, 덮어쓰기·이름 변경·삭제, 모든 저장 불러오기 + 확인 대화상자, 실행 중 불러오기 불가 안내, 별도 '복구' 영역). SSE `saves.updated`면 목록만 다시 읽고, `state.replaced`면 `router.refresh()`로 서버 컴포넌트를 다시 그린다. 대화 패널·저장 패널의 key가 불러오기 표식(복구 지점 `replacedAtChangeSeq`)이라 새로 마운트되어 재생 큐·커서·중복 제거가 초기화된다.
+- **캐릭터 상세 실시간 갱신**: 상세 화면이 SSE를 구독해 `scene.committed`면 `GET /characters/[id]/state`(감정·관계·기억)를 다시 읽는다. 요청 번호로 가장 최근 요청의 응답만 반영한다. `state.replaced`면 페이지를 다시 그린다.
+- API: `GET·POST /saves`, `PATCH·DELETE /saves/[saveId]`, `POST /saves/[saveId]/overwrite`, `POST /saves/[saveId]/load`(수동·자동·복구 지점 공통), `GET /characters/[characterId]/state`.
+
 ### 9.4 진행 초기화 (PRD FR-09, FR-12)
 
 - **허용 상태**: `IDLE`, `PAUSED`. `RUNNING`·`PAUSING`에서는 거부한다(진행 중 장면이 완전히 종료된 뒤에만 수행). 확인 대화상자를 거친다.
@@ -900,7 +915,8 @@ export interface RunnerHost {
 | `api.log` | ApiRequestLog 요약(키·헤더·컨텍스트 원문 없음) |
 | `usage.updated` | Run 통계, 연결 당일 사용량·한도 |
 | `breaker.updated` | blockedUntil, 사유 |
-| `state.replaced` | reason(load / reset / autosave_restore), stateVersion → 클라이언트 재조회 |
+| `state.replaced` | worldId, reason(load / recovery), stateVersion → 클라이언트 재조회 (Phase 6) |
+| `saves.updated` | worldId → 저장 목록만 다시 읽음 (Phase 6, 대화 피드는 그대로) |
 | `sync.required` | 재전송 불가, 전체 재조회 필요 |
 
 ### 10.3 EventBus와 outbox

@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import { OUTBOX_CLEANUP_INTERVAL_MS, RUNNER_POLL_INTERVAL_MS, RUNNER_SWEEP_INTERVAL_MS } from "../../../../config/limits";
 import { prisma } from "@/server/db/client";
 import type { SceneDeps } from "@/server/domain/scenes/generate-scene";
+import { runAutoSave } from "@/server/domain/saves/saves";
 import { cleanupExpiredEvents } from "@/server/events/outbox-cleanup";
 import { logServerError } from "@/server/logging/log";
 import { registerRunnerHost, type RunnerSignalTarget } from "./signal";
@@ -18,6 +19,8 @@ import { runWorldTick, type RunnerContext, type TickResult } from "./world-tick"
 //   프로세스가 비정상 종료되면 lease 만료(30초) 후 다른 호스트·재시작한 호스트의 스위퍼가 이어받는다.
 //   타이머는 unref라 프로세스 종료를 막지 않는다. HTTP 요청 수명과 무관하게 돈다(서버리스 배포에는 맞지 않음, §15).
 // - 정리: 스위퍼가 OUTBOX_CLEANUP_INTERVAL_MS(10분)마다 24시간 지난 outbox와 남은 SSE 연결 행을 지운다(기다리지 않음, Runner와 무관).
+// - 자동 저장(Phase 6): 스위퍼가 RUNNING이고 nextAutoSaveAt이 지난 세계관을 찾아 runAutoSave를 부른다(기다리지 않음, 한 번에 하나씩).
+//   예정 시각은 DB에 있으므로 재시작해도 이어지고, 저장 트랜잭션이 조건을 다시 확인하므로 여러 호스트가 불러도 한 번만 저장된다.
 
 export type RunnerHostOptions = {
   owner?: string;
@@ -81,6 +84,7 @@ export class InProcessRunnerHost implements RunnerSignalTarget {
   private stopping = false;
   private lastCleanupAt = 0;
   private cleaning: Promise<void> | null = null;
+  private autosaving: Promise<void> | null = null;
 
   constructor(private readonly options: RunnerHostOptions = {}) {
     this.owner = options.owner ?? `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
@@ -116,6 +120,24 @@ export class InProcessRunnerHost implements RunnerSignalTarget {
       logServerError("runner.sweep", error);
     }
     this.cleanupIfDue();
+    this.autoSaveDue();
+  }
+
+  /** 자동 저장 대상 세계관을 순서대로 저장한다. 이전 회차가 끝나지 않았으면 건너뛴다 */
+  private autoSaveDue(): void {
+    if (this.autosaving || this.stopping) return;
+    this.autosaving = (async () => {
+      const now = new Date();
+      const due = await prisma.simulationRuntime.findMany({ where: { status: "RUNNING", nextAutoSaveAt: { lte: now } }, select: { worldId: true } });
+      for (const { worldId } of due) {
+        if (this.stopping) return;
+        await runAutoSave(worldId);
+      }
+    })()
+      .catch((e: unknown) => logServerError("runner.autosave", e))
+      .finally(() => {
+        this.autosaving = null;
+      });
   }
 
   /** 정리는 기다리지 않는다. 한 번에 하나만 돈다 */
@@ -136,7 +158,7 @@ export class InProcessRunnerHost implements RunnerSignalTarget {
     this.sweeper = null;
     const runners = [...this.runners.values()];
     for (const runner of runners) runner.stop();
-    await Promise.all([...runners.map((r) => r.done), this.cleaning]);
+    await Promise.all([...runners.map((r) => r.done), this.cleaning, this.autosaving]);
     // 진행 중 시도가 없는 lease만 놓는다. 진행 중이면 다른 호스트가 결과 불확실 기간을 지킬 수 있게 그대로 둔다
     await prisma.simulationRuntime
       .updateMany({ where: { leaseOwner: this.owner, inFlightAttemptId: null }, data: { leaseOwner: null, leaseExpiresAt: null } })

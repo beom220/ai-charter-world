@@ -152,7 +152,7 @@ describe("nullable·SetNull 참조 — 동일 세계관 트리거", () => {
       }),
     ).rejects.toThrow(/save_snapshot_same_world/);
     await expect(
-      prisma.saveGame.update({ where: { autoForWorldId: a.world.id }, data: { snapshotId: b.snapshot.id } }),
+      prisma.saveGame.update({ where: { recoveryForWorldId: a.world.id }, data: { snapshotId: b.snapshot.id } }),
     ).rejects.toThrow(/save_snapshot_same_world/);
   });
 });

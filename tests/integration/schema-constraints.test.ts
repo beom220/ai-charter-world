@@ -139,15 +139,15 @@ describe("UNIQUE 제약", () => {
     ]);
   });
 
-  it("세계관당 GameState·AUTO 세이브는 1개다", async () => {
+  it("세계관당 GameState·복구 지점(RECOVERY)은 1개다", async () => {
     const { world } = await createWorldWithCharacters(0);
     await expect(prisma.gameState.create({ data: { worldId: world.id } })).rejects.toThrow(/GameState_pkey/);
     await expect(
       prisma.saveGame.create({
         data: {
           worldId: world.id,
-          kind: "AUTO",
-          autoForWorldId: world.id,
+          kind: "RECOVERY",
+          recoveryForWorldId: world.id,
           name: "자동저장",
           sceneCount: 0,
           characterCount: 0,
@@ -155,7 +155,7 @@ describe("UNIQUE 제약", () => {
           stateVersionAtSave: 0,
         },
       }),
-    ).rejects.toThrow(/SaveGame_autoForWorldId_key/);
+    ).rejects.toThrow(/SaveGame_recoveryForWorldId_key/);
   });
 
   it("장면 attemptId는 전역 유일하다 (멱등 커밋)", async () => {
@@ -293,14 +293,14 @@ describe("CHECK 제약 (database.md §4.1)", () => {
     );
   });
 
-  it("세이브 종류 일관성: MANUAL은 스냅샷 필수, AUTO는 autoForWorldId = worldId", async () => {
+  it("세이브 종류 일관성: MANUAL은 스냅샷 필수, RECOVERY는 recoveryForWorldId = worldId", async () => {
     const meta = { name: "s", sceneCount: 0, characterCount: 0, worldNameSnapshot: "w", stateVersionAtSave: 0 };
     await expect(prisma.saveGame.create({ data: { worldId, kind: "MANUAL", ...meta } })).rejects.toThrow(
       /save_kind_consistency/,
     );
     const other = await createWorldWithCharacters(0);
     await expect(
-      prisma.saveGame.create({ data: { worldId, kind: "AUTO", autoForWorldId: other.world.id, ...meta } }),
+      prisma.saveGame.create({ data: { worldId, kind: "RECOVERY", recoveryForWorldId: other.world.id, ...meta } }),
     ).rejects.toThrow(/save_kind_consistency/);
   });
 });
@@ -456,12 +456,12 @@ describe("삭제 정책 (database.md §7)", () => {
     expect((await prisma.apiRequestLog.findUniqueOrThrow({ where: { id: log.id } })).connectionId).toBeNull();
   });
 
-  it("스냅샷 삭제 시 AUTO는 LIVE(snapshotId NULL)가 되고, MANUAL이 참조하면 CHECK로 막힌다", async () => {
+  it("스냅샷 삭제 시 RECOVERY는 snapshotId NULL(복구 지점 없음)이 되고, MANUAL이 참조하면 CHECK로 막힌다", async () => {
     const { world } = await createWorldWithCharacters(0);
     const autoSnapshot = await prisma.gameSnapshot.create({ data: snapshotData(world.id) });
-    await prisma.saveGame.update({ where: { autoForWorldId: world.id }, data: { snapshotId: autoSnapshot.id } });
+    await prisma.saveGame.update({ where: { recoveryForWorldId: world.id }, data: { snapshotId: autoSnapshot.id } });
     await prisma.gameSnapshot.delete({ where: { id: autoSnapshot.id } });
-    expect((await prisma.saveGame.findUniqueOrThrow({ where: { autoForWorldId: world.id } })).snapshotId).toBeNull();
+    expect((await prisma.saveGame.findUniqueOrThrow({ where: { recoveryForWorldId: world.id } })).snapshotId).toBeNull();
 
     const manualSnapshot = await prisma.gameSnapshot.create({ data: snapshotData(world.id) });
     await prisma.saveGame.create({

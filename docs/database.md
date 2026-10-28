@@ -593,28 +593,32 @@ model SimulationEvent {                               // SSE outbox (A6)
 ### 3.6 세이브
 
 ```prisma
-enum SaveKind { MANUAL AUTO }
+enum SaveKind { MANUAL RECOVERY AUTO }               // Phase 6: 기존 AUTO(복구 지점)는 RECOVERY로 이름이 바뀌고, AUTO는 1시간 자동 저장 슬롯
 
 model SaveGame {
   id                 String   @id @default(cuid())
   worldId            String
   kind               SaveKind
-  autoForWorldId     String?  @unique                // AUTO일 때만 = worldId → 세계관당 AUTO 1개 보장
-  name               String   @db.VarChar(60)        // AUTO는 "자동저장"
-  snapshotId         String?  @unique                // AUTO + null = LIVE 모드 (§5)
+  recoveryForWorldId String?  @unique                // RECOVERY일 때만 = worldId → 세계관당 복구 지점 1개 보장
+  autoSlot           Int?                             // AUTO일 때만 1..5 (고정 슬롯 번호, @@unique([worldId, autoSlot]))
+  name               String   @db.VarChar(60)        // AUTO는 "{세계관} - Auto Save {n}", RECOVERY는 "복구 지점"
+  snapshotId         String?  @unique                // RECOVERY + null = 아직 복구 지점 없음
   sceneCount         Int                              // 표시용 메타데이터
   characterCount     Int
   worldNameSnapshot  String   @db.VarChar(100)
   stateVersionAtSave Int
-  replacedAtChangeSeq Int?                           // AUTO 전용: 직전 불러오기·초기화 적용 직후의 GameState.changeSeq (A13)
+  replacedAtChangeSeq Int?                           // RECOVERY 전용: 직전 불러오기·초기화 적용 직후의 GameState.changeSeq (A13)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   world    World         @relation(fields: [worldId], references: [id], onDelete: Cascade)
   snapshot GameSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
 
+  @@unique([worldId, autoSlot])
   @@index([worldId, kind, updatedAt(sort: Desc)])
 }
+
+// SimulationRuntime.nextAutoSaveAt (Phase 6): 다음 자동 저장 예정 시각 = 마지막 성공 + 1시간 (재시작 후에도 DB 기준)
 
 model GameSnapshot {
   id            String   @id @default(cuid())
@@ -661,9 +665,10 @@ ALTER TABLE "EmotionState"     ADD CONSTRAINT emotion_range CHECK (intensity BET
 ALTER TABLE "CharacterMemory"  ADD CONSTRAINT memory_importance CHECK (importance BETWEEN 1 AND 5);
 ALTER TABLE "GameState"        ADD CONSTRAINT gs_turns CHECK ("maxTurnsPerScene" BETWEEN 3 AND 6
                                  AND "participantsMin" >= 2 AND "participantsMax" BETWEEN "participantsMin" AND 6);
-ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (
-  (kind = 'MANUAL' AND "autoForWorldId" IS NULL AND "snapshotId" IS NOT NULL) OR
-  (kind = 'AUTO'   AND "autoForWorldId" = "worldId"));
+ALTER TABLE "SaveGame"         ADD CONSTRAINT save_kind_consistency CHECK (   -- Phase 6 (20261028100100)
+  (kind = 'MANUAL'   AND "recoveryForWorldId" IS NULL AND "autoSlot" IS NULL AND "snapshotId" IS NOT NULL) OR
+  (kind = 'AUTO'     AND "recoveryForWorldId" IS NULL AND "autoSlot" BETWEEN 1 AND 5 AND "snapshotId" IS NOT NULL) OR
+  (kind = 'RECOVERY' AND "recoveryForWorldId" = "worldId" AND "autoSlot" IS NULL));
 ```
 
 - 앱 검증이 1차 방어다. clamp는 앱에서 먼저 적용하므로, CHECK 위반은 곧 버그다. 트랜잭션이 롤백되어 장면 실패로 처리된다.
@@ -906,7 +911,7 @@ await tx.$queryRaw`SELECT 1 FROM "GameState" WHERE "worldId" = ${worldId} FOR UP
 | 캐릭터 수 | 활성 최대 6 | 앱 + 잠금 |
 | 캐릭터 컨텍스트 | 300 코드 포인트 | VARCHAR(300) + Zod |
 | 장면 턴 | 3..6 | Zod + CHECK |
-| 수동 세이브 슬롯 (확정) | 세계관당 20 | 앱 (A7) |
+| 세이브 슬롯 (확정, PRD v1.4) | 세계관당 수동 5 + 자동 5(1시간, 슬롯 1~5 순환) + 복구 지점 1 | 앱(World 잠금) + CHECK·UNIQUE |
 
 ---
 

@@ -191,7 +191,7 @@ function cases(): Case[] {
             stateVersionAtSave: 0,
           },
         }),
-      update: () => prisma.saveGame.update({ where: { autoForWorldId: w }, data: { snapshotId: b.snapshot.id } }),
+      update: () => prisma.saveGame.update({ where: { recoveryForWorldId: w }, data: { snapshotId: b.snapshot.id } }),
     },
     // ── 같은 사용자 트리거
     {
@@ -266,7 +266,7 @@ describe("범위 제약 매트릭스 — INSERT·UPDATE", () => {
   it("UPDATE 거부 후 세계관 A의 원래 행은 바뀌지 않았다", async () => {
     expect((await prisma.message.findUniqueOrThrow({ where: { id: a.message.id } })).speakerCharacterId).toBe(a.c1.id);
     expect((await prisma.relationshipState.findUniqueOrThrow({ where: { id: a.relationship.id } })).toCharacterId).toBe(a.c2.id);
-    expect((await prisma.saveGame.findUniqueOrThrow({ where: { autoForWorldId: a.world.id } })).snapshotId).toBeNull();
+    expect((await prisma.saveGame.findUniqueOrThrow({ where: { recoveryForWorldId: a.world.id } })).snapshotId).toBeNull();
     expect((await prisma.characterMemory.findUniqueOrThrow({ where: { id: rowsA.memory.id } })).aboutCharacterId).toBe(a.c2.id);
   });
 

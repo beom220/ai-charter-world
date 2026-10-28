@@ -10,7 +10,7 @@ export async function createTestUser(label = "user") {
   return prisma.user.create({ data: { id, name: label, email: `${id}@example.test` } });
 }
 
-/** 세계관 생성 트랜잭션 (database.md §3.6, §6: World + GameState + SimulationRuntime + AUTO SaveGame) */
+/** 세계관 생성 트랜잭션 (database.md §3.6, §6: World + GameState + SimulationRuntime + RECOVERY SaveGame) */
 export async function createTestWorld(ownerId: string, name = "테스트 세계관") {
   return prisma.$transaction(async (tx) => {
     const world = await tx.world.create({ data: { ownerId, name } });
@@ -19,8 +19,8 @@ export async function createTestWorld(ownerId: string, name = "테스트 세계�
     await tx.saveGame.create({
       data: {
         worldId: world.id,
-        kind: "AUTO",
-        autoForWorldId: world.id,
+        kind: "RECOVERY",
+        recoveryForWorldId: world.id,
         name: "자동저장",
         sceneCount: 0,
         characterCount: 0,

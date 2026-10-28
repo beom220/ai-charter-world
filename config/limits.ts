@@ -196,3 +196,22 @@ export const MEMORY_CONTENT_MAX_LENGTH = 300;
 /** 다음 장면 프롬프트에 넣는 캐릭터별 기억: 중요도·최신순 최대 8개, 캐릭터당 1,500자 (§6.4 "중요도 낮은 것부터 제외") */
 export const SCENE_MEMORY_PER_CHARACTER = 8;
 export const SCENE_MEMORY_BUDGET_CHARS_PER_CHARACTER = 1_500;
+
+// ── 세이브 (Phase 6, architecture.md §9) ──
+
+/** 세계관당 사용자 표시 슬롯 = 수동 5 + 자동 5 (확정, 2026-10-28). 복구 지점(RECOVERY)은 별도 1개 */
+export const MANUAL_SAVE_SLOTS = 5;
+export const AUTO_SAVE_SLOTS = 5;
+
+/** 자동 저장 간격(마지막 성공 기준)과 실패 후 재시도 간격 */
+export const AUTO_SAVE_INTERVAL_MS = 60 * 60 * 1000;
+export const AUTO_SAVE_RETRY_MS = 10 * 60 * 1000;
+
+/** 저장 이름 최대 길이(코드 포인트). SaveGame.name VarChar(60) */
+export const SAVE_NAME_MAX_LENGTH = 60;
+
+/** 현재 스냅샷 payload 버전 (lib/snapshot) */
+export const SNAPSHOT_SCHEMA_VERSION = 1;
+
+/** 저장·불러오기 트랜잭션 제한 시간 (대화 기록 전체를 캡처·복원하므로 기본 5초보다 길게) */
+export const SAVE_TRANSACTION_TIMEOUT_MS = 30_000;

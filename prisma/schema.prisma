@@ -603,6 +603,7 @@ model SimulationRuntime {
   inFlightStartedAt DateTime?     @db.Timestamptz(3)
   clientHoldSince   DateTime?     @db.Timestamptz(3) // 활성 SSE 연결 0 → 신규 호출 보류 시작 시각 (D4)
   nextSceneAt       DateTime?     @db.Timestamptz(3) // 다음 장면 예정 시각 (UI 표시)
+  nextAutoSaveAt    DateTime?     @db.Timestamptz(3) // 다음 자동 저장 예정 시각 (마지막 성공 + 1시간, Phase 6)
   updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
 
   world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
@@ -713,27 +714,30 @@ model SimulationEvent {
 
 enum SaveKind {
   MANUAL
-  AUTO
+  RECOVERY // 불러오기 직전 상태 (세계관당 1개, 사용자 슬롯 10개에 포함하지 않음)
+  AUTO // 1시간마다 자동 저장 (슬롯 1..5 순환)
 }
 
 model SaveGame {
   id                  String   @id @default(cuid())
   worldId             String
   kind                SaveKind
-  autoForWorldId      String?  @unique // AUTO일 때만 = worldId → 세계관당 AUTO 1개 보장
-  name                String   @db.VarChar(60) // AUTO는 "자동저장"
-  snapshotId          String?  @unique // AUTO + null = LIVE 모드
+  recoveryForWorldId  String?  @unique // RECOVERY일 때만 = worldId → 세계관당 복구 지점 1개 보장
+  autoSlot            Int? // AUTO일 때만 1..5 (고정 슬롯 번호)
+  name                String   @db.VarChar(60) // AUTO는 "{세계관} - Auto Save {n}", RECOVERY는 "복구 지점"
+  snapshotId          String?  @unique // RECOVERY + null = 아직 복구 지점 없음
   sceneCount          Int // 표시용 메타데이터
   characterCount      Int
   worldNameSnapshot   String   @db.VarChar(100)
   stateVersionAtSave  Int
-  replacedAtChangeSeq Int? // AUTO 전용: 직전 불러오기·초기화 적용 직후의 GameState.changeSeq (A13)
+  replacedAtChangeSeq Int? // RECOVERY 전용: 직전 불러오기·초기화 적용 직후의 GameState.changeSeq (A13)
   createdAt           DateTime @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime @updatedAt @db.Timestamptz(3)
 
   world    World         @relation(fields: [worldId], references: [id], onDelete: Cascade)
   snapshot GameSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
 
+  @@unique([worldId, autoSlot])
   @@index([worldId, kind, updatedAt(sort: Desc)])
 }
 

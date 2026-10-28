@@ -10,6 +10,8 @@ import { CharacterList } from "./characters/character-list";
 import { ScenePanel, type SceneItem } from "./scene-panel";
 import { listScenes } from "@/server/domain/scenes/generate-scene";
 import { getSimulationState } from "@/server/domain/simulation/control";
+import { listSaves } from "@/server/domain/saves/saves";
+import { SavePanel } from "./save-panel";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
 import { LoginRequired, STATUS_LABEL } from "../ui";
 import { DeleteWorldButton, WorldForm } from "../world-form";
@@ -35,15 +37,16 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
   const { worldId } = await params;
 
   const userId = asAuthenticatedUserId(session.user.id);
-  let world, characters, scenes, eventCursor, simulation;
+  let world, characters, scenes, eventCursor, simulation, saves;
   try {
     // 커서를 먼저 읽는다: 이후에 커밋된 장면·상태 변경은 SSE로 다시 온다(장면은 id로 중복을 거르고, 상태는 마지막 것이 이긴다)
     eventCursor = await currentWorldEventCursor(userId, worldId);
-    [world, characters, scenes, simulation] = await Promise.all([
+    [world, characters, scenes, simulation, saves] = await Promise.all([
       getWorld(userId, worldId),
       listCharacters(userId, worldId),
       listScenes(userId, worldId),
       getSimulationState(userId, worldId),
+      listSaves(userId, worldId),
     ]);
   } catch (error) {
     if (error instanceof NotFoundError) notFound();
@@ -60,6 +63,7 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
       </div>
       <CharacterList worldId={world.id} characters={characters} />
       <ScenePanel
+        key={`scene-${saves.replaceMarker}`} // 불러오기 뒤에는 새로 마운트해 이전 장면·재생 상태를 버린다
         worldId={world.id}
         activeCount={characters.length}
         initialScenes={JSON.parse(JSON.stringify(scenes.scenes)) as SceneItem[]}
@@ -67,6 +71,7 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
         eventCursor={eventCursor}
         initialState={simulation}
       />
+      <SavePanel key={`saves-${saves.replaceMarker}`} worldId={world.id} initial={saves} />
       <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
         <h2 className="text-lg font-semibold">세계관 설정</h2>
         <WorldForm initial={{ id: world.id, name: world.name, worldContext: world.worldContext }} />

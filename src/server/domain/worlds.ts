@@ -19,7 +19,7 @@ export type WorldSummaryView = {
 
 export type WorldDetailView = WorldSummaryView & { worldContext: string };
 
-const AUTO_SAVE_NAME = "자동저장";
+export const RECOVERY_SAVE_NAME = "복구 지점";
 
 const summarySelect = {
   id: true,
@@ -56,7 +56,7 @@ export async function getWorld(userId: AuthenticatedUserId, worldId: string): Pr
   return { ...toSummary(summary), worldContext };
 }
 
-/** World + GameState + SimulationRuntime(IDLE) + AUTO SaveGame(LIVE)을 한 트랜잭션에서 만든다 (database.md §5, §6) */
+/** World + GameState + SimulationRuntime(IDLE) + 복구 지점 행(RECOVERY, 스냅샷 없음)을 한 트랜잭션에서 만든다 (database.md §5, §6) */
 export async function createWorld(userId: AuthenticatedUserId, input: WorldInput): Promise<WorldDetailView> {
   const worldId = await prisma.$transaction(async (tx) => {
     const world = await tx.world.create({ data: { ownerId: userId, name: input.name, worldContext: input.worldContext } });
@@ -65,9 +65,9 @@ export async function createWorld(userId: AuthenticatedUserId, input: WorldInput
     await tx.saveGame.create({
       data: {
         worldId: world.id,
-        kind: "AUTO",
-        autoForWorldId: world.id,
-        name: AUTO_SAVE_NAME,
+        kind: "RECOVERY",
+        recoveryForWorldId: world.id,
+        name: RECOVERY_SAVE_NAME,
         snapshotId: null,
         sceneCount: 0,
         characterCount: 0,

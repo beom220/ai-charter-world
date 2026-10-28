@@ -1,4 +1,4 @@
-import { CLIENT_HOLD_TIMEOUT_MS, SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
+import { AUTO_SAVE_INTERVAL_MS, CLIENT_HOLD_TIMEOUT_MS, SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
 import type { IntervalPreset, Prisma } from "@/generated/prisma/client";
 import type { SimulationStateView } from "@/lib/simulation-view";
 import { prisma } from "@/server/db/client";
@@ -92,11 +92,21 @@ export async function runSimulationCommand(
       const run = await tx.simulationRun.create({ data: { worldId, startedAt: at }, select: { id: true } });
       await tx.simulationRuntime.update({
         where: { worldId },
-        data: { status: "RUNNING", statusReason: "USER", currentRunId: run.id, nextSceneAt: at, clientHoldSince: null },
+        data: {
+          status: "RUNNING",
+          statusReason: "USER",
+          currentRunId: run.id,
+          nextSceneAt: at,
+          clientHoldSince: null,
+          nextAutoSaveAt: nextAutoSaveOnRun(runtime.nextAutoSaveAt, at),
+        },
       });
     } else if (command === "resume") {
       await assertCanRun(userId, worldId, tx);
-      await tx.simulationRuntime.update({ where: { worldId }, data: { status: "RUNNING", statusReason: "USER", nextSceneAt: at, clientHoldSince: null } });
+      await tx.simulationRuntime.update({
+        where: { worldId },
+        data: { status: "RUNNING", statusReason: "USER", nextSceneAt: at, clientHoldSince: null, nextAutoSaveAt: nextAutoSaveOnRun(runtime.nextAutoSaveAt, at) },
+      });
     } else if (command === "pause") {
       await tx.simulationRuntime.update({
         where: { worldId },
@@ -121,6 +131,14 @@ export async function runSimulationCommand(
     signalRunner(worldId); // 루프를 직접 조작하지 않고 RunnerHost에 알리기만 한다 (§7.2)
   }
   return result;
+}
+
+/**
+ * 시작·재개 때 다음 자동 저장 시각 (Phase 6). 아직 남은 예정이 있으면 유지하고(마지막 성공 + 1시간),
+ * 없거나 이미 지났으면 지금부터 1시간 뒤로 둔다. 시작·재개만으로 바로 저장하지 않는다.
+ */
+export function nextAutoSaveOnRun(current: Date | null, now: Date): Date {
+  return current && current > now ? current : new Date(now.getTime() + AUTO_SAVE_INTERVAL_MS);
 }
 
 /** 실행 속도(장면 간격 SLOW 15s / NORMAL 5s / FAST 1s) 저장. 실행 중에도 허용, 바뀐 경우에만 changeSeq += 1 (스냅샷 runSettings) */

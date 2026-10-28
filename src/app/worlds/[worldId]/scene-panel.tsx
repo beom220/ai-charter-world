@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SCENE_PARTICIPANTS_MIN, SCENE_PLAYBACK_TIMING } from "../../../../config/limits";
 import { anchoredScrollTop, isNearBottom, mergeScenes, ScenePlayback, type PlaybackState } from "@/lib/scene-feed";
@@ -20,12 +21,16 @@ import {
 } from "@/lib/simulation-view";
 import { button, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
+import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
 // - 실행 상태의 기준은 서버 SimulationRuntime이다. 버튼은 start/pause/resume/stop API만 부르고, 화면 상태는 응답과
 //   SSE runtime.status로만 바꾼다(lib/simulation-view.ts). 연결이 끊겼다 돌아와도 start·resume을 자동으로 부르지 않는다.
 // - scene.started로 "생성 중 · 경과 시간"을 켜고 scene.committed·scene.failed로 끈다. 실패는 피드 밖 시스템 안내로만 보인다.
 // - 수동 장면 생성 API(POST /scenes)는 남아 있지만 화면에서는 쓰지 않는다.
+// - 세이브(Phase 6): saves.updated·runtime.status는 저장 패널에 브라우저 이벤트로 넘긴다(피드는 그대로).
+//   state.replaced(불러오기)면 서버 컴포넌트를 다시 읽는다. 페이지가 이 패널의 key를 불러오기 표식으로 주므로 패널이 새로 마운트되어
+//   재생 큐·입력 중 표시·이전 기록 커서·중복 제거 상태·SSE 커서가 모두 초기화되고, 불러오기 전 장면은 남지 않는다.
 // - 하나의 연속 대화 피드: 오래된 장면이 위, 최신이 아래(seq·turnIndex 오름차순). 장면 제목은 얇은 구분선으로만 표시한다.
 // - 모든 발언은 왼쪽 정렬. 사용자 입력창·감정/관계/기억 변화 알림은 두지 않는다. 연결 상태·시스템 오류는 피드 밖에 둔다.
 // - SSE(scene.committed) 또는 POST 응답으로 새 장면이 오면 장면 id로 한 번만 넣고, ScenePlayback 큐로
@@ -70,6 +75,7 @@ export function ScenePanel({
   const [view, setView] = useState<SimulationView>(() => initialView(initialState, Date.now()));
   const [pending, setPending] = useState(false); // 명령·속도 변경 전송 중 (중복 클릭 방지)
   const [now, setNow] = useState(() => Date.now());
+  const router = useRouter();
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -118,12 +124,22 @@ export function ScenePanel({
           return; // 형식이 다른 이벤트는 무시한다
         }
         setView((v) => applySimEvent(v, type, payload, Date.now()));
+        if (type === "runtime.status") {
+          const parsed = simulationStateSchema.safeParse(payload);
+          if (parsed.success) emitWorldEvent(RUNTIME_EVENT, { status: parsed.data.status, inFlight: parsed.data.inFlight });
+        }
         if (type === "scene.committed") {
           const scene = (payload as { scene?: SceneItem }).scene;
           if (scene) addScenes([scene], true);
         }
       });
     }
+    es.addEventListener("saves.updated", () => emitWorldEvent(SAVES_EVENT));
+    // 불러오기: 화면 전체(세계관·캐릭터·기록·상태)를 서버에서 다시 그린다. 이 패널은 새 key로 다시 마운트된다
+    es.addEventListener("state.replaced", () => {
+      playbackRef.current?.flush();
+      router.refresh();
+    });
     // 재전송할 수 없으면 상태와 기록을 다시 받는다 (기록은 연출 없이)
     es.addEventListener("sync.required", async () => {
       void refreshState();
@@ -131,7 +147,7 @@ export function ScenePanel({
       if (ok) addScenes(json.scenes as SceneItem[], false);
     });
     return () => es.close();
-  }, [worldId, eventCursor, addScenes, refreshState]);
+  }, [worldId, eventCursor, addScenes, refreshState, router]);
 
   // 피드 내용이 바뀐 직후(그리기 전) 스크롤 위치를 맞춘다: 이전 기록 추가 → 위치 유지, 하단 근처 → 맨 아래
   useLayoutEffect(() => {
