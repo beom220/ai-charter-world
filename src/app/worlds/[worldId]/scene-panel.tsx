@@ -42,7 +42,7 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
 // - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행 아이콘(시작·일시정지·재개·종료)과
-//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기], 생성 중 표시.
+//   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기], 생성 중 표시. 시작 안내·시스템 안내·오류는 바 바로 위에 함께 고정한다.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
 // - 세계 정보(Phase 7-2-2, world-status.tsx): 월드 시각, 장면별 사건 발생(그 장면에 한 번)·신체 상태 변화는 캐릭터 말풍선과 구분된
@@ -136,6 +136,8 @@ export function ScenePanel({
   const stickRef = useRef(true); // 하단 근처인가 (사용자 스크롤로 갱신)
   const speedDialog = useRef<HTMLDialogElement>(null);
   const eventsRef = useRef<WorldEventsHandle>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [dockHeight, setDockHeight] = useState(112);
   const anchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null); // 이전 기록 추가 직전 위치
 
   useEffect(() => {
@@ -238,6 +240,15 @@ export function ScenePanel({
     };
   }, [worldId, eventCursor, addScenes, refreshState, refreshCharacters, router]);
 
+  // 하단 고정 영역 높이(안내 문구 유무·줄바꿈에 따라 바뀜)만큼 피드 아래를 비워 마지막 발언이 가리지 않게 한다
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setDockHeight(el.offsetHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // 피드는 자체 스크롤 없이 페이지 스크롤을 쓴다(실행 컨트롤이 하단 고정 바이므로). 사용자 스크롤로 하단 근처 여부를 갱신한다
   useEffect(() => {
     const onScroll = () => (stickRef.current = isNearBottom(pageScroller()));
@@ -326,9 +337,10 @@ export function ScenePanel({
 
   const notice = statusNotice(view.state);
   const lacksCharacters = aliveCount < SCENE_PARTICIPANTS_MIN && view.state.status === "IDLE";
+  const hasDockText = lacksCharacters || view.state.status === "IDLE" || !!notice || (!!view.failure && view.state.status === "RUNNING") || !!error;
 
   return (
-    <section className="flex flex-col gap-3 pt-2 pb-28">
+    <section className="flex flex-col gap-3 pt-2" style={{ paddingBottom: dockHeight + 16 }}>
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">
           대화 장면 <span className="text-sm font-normal text-foreground/60">· {STATUS_LABEL[view.state.status]}</span>
@@ -403,70 +415,103 @@ export function ScenePanel({
         })}
       </div>
 
-      {lacksCharacters ? (
-        <p className="text-sm text-foreground/70">
-          대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
-          <Link href={`/worlds/${worldId}/characters`} className="underline">
-            캐릭터 탭
-          </Link>
-          에서 추가하세요.
-        </p>
-      ) : (
-        view.state.status === "IDLE" && (
-          <p className="text-xs text-foreground/60">
-            시작하면 참여 캐릭터를 자동으로 정해 장면을 계속 만듭니다. 장면마다 Gemini API를 1회 호출합니다(본인 키 사용, 비용은 Google에서 청구).
-          </p>
-        )
-      )}
-      {/* 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행·속도 아이콘, 오른쪽 [저장]·[불러오기] */}
-      <div
-        role="region"
-        aria-label="실행 컨트롤"
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-foreground/10 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
-      >
-        {/* 모바일: 위 줄 가운데 실행 아이콘, 아래 줄 좌우 버튼. sm 이상: 왼쪽 | 가운데 | 오른쪽 한 줄 */}
-        <div className="grid w-full grid-cols-2 items-center gap-2 px-4 py-3 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
-          <span className="justify-self-start">
-            <button type="button" className={eventButton} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
-              사건 일으키기
-            </button>
-          </span>
-          <span className="order-first col-span-2 flex items-center justify-center gap-2 sm:order-none sm:col-span-1">
-            {!lacksCharacters && (
-              <>
-                {controlsFor(view.state.status).map((c) => (
-                  <button
-                    key={c.label}
-                    type="button"
-                    aria-label={controlText(c.label)}
-                    title={controlText(c.label)}
-                    className={c.command === "start" || c.command === "resume" ? playButton : iconButton}
-                    disabled={c.command === null || pending}
-                    onClick={() => c.command && void runCommand(c.command)}
-                  >
-                    <ControlIcon command={c.command} />
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  aria-label={`실행 속도: ${INTERVAL_LABEL[view.state.intervalPreset]}`}
-                  title={`실행 속도: ${INTERVAL_LABEL[view.state.intervalPreset]}`}
-                  className={iconButton}
-                  disabled={pending}
-                  onClick={() => speedDialog.current?.showModal()}
-                  aria-haspopup="dialog"
-                >
-                  <SpeedIcon />
-                </button>
-              </>
+      {/* 하단 고정 영역: 안내·시스템 문구(있을 때) + 실행 바. 높이를 재서 피드 아래 여백으로 쓴다 */}
+      <div ref={dockRef} className="fixed inset-x-0 bottom-0 z-30">
+        {hasDockText && (
+          <div className="flex flex-col gap-1 bg-background/95 px-4 pt-2 pb-2 backdrop-blur sm:px-6">
+            {lacksCharacters ? (
+              <p className="text-sm text-foreground/70">
+                대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
+                <Link href={`/worlds/${worldId}/characters`} className="underline">
+                  캐릭터 탭
+                </Link>
+                에서 추가하세요.
+              </p>
+            ) : (
+              view.state.status === "IDLE" && (
+                <p className="text-xs text-foreground/60">
+                  시작하면 참여 캐릭터를 자동으로 정해 장면을 계속 만듭니다. 장면마다 Gemini API를 1회 호출합니다(본인 키 사용, 비용은 Google에서 청구).
+                </p>
+              )
             )}
-          </span>
-          <span className="flex justify-self-end gap-2">{saveControls}</span>
-          {generating && (
-            <p role="status" className="col-span-2 truncate text-center text-xs text-foreground/70 sm:col-span-3">
-              {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
-            </p>
-          )}
+            {notice && (
+              <p role="status" className={`rounded-md px-3 py-2 text-sm ${notice.tone === "warn" ? "border border-amber-600/40 bg-amber-600/5" : "bg-foreground/5"}`}>
+                <span className="font-semibold">시스템 · </span>
+                {notice.text}
+                {notice.settingsLink && (
+                  <>
+                    {" "}
+                    <a href="/settings/providers" className="underline">
+                      Gemini 설정
+                    </a>
+                  </>
+                )}
+              </p>
+            )}
+            {view.failure && view.state.status === "RUNNING" && (
+              <p role="status" className="rounded-md bg-foreground/5 px-3 py-2 text-sm text-foreground/80">
+                <span className="font-semibold">시스템 · </span>
+                {view.failure}
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="rounded-md border border-red-600/40 bg-red-600/5 px-3 py-2 text-sm text-red-600">
+                <span className="font-semibold">시스템 · </span>
+                {error}
+              </p>
+            )}
+          </div>
+        )}
+        {/* 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행·속도 아이콘, 오른쪽 [저장]·[불러오기] */}
+        <div
+          role="region"
+          aria-label="실행 컨트롤"
+          className="border-t border-foreground/10 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+        >
+          {/* 모바일: 위 줄 가운데 실행 아이콘, 아래 줄 좌우 버튼. sm 이상: 왼쪽 | 가운데 | 오른쪽 한 줄 */}
+          <div className="grid w-full grid-cols-2 items-center gap-2 px-4 py-3 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
+            <span className="justify-self-start">
+              <button type="button" className={eventButton} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
+                사건 일으키기
+              </button>
+            </span>
+            <span className="order-first col-span-2 flex items-center justify-center gap-2 sm:order-none sm:col-span-1">
+              {!lacksCharacters && (
+                <>
+                  {controlsFor(view.state.status).map((c) => (
+                    <button
+                      key={c.label}
+                      type="button"
+                      aria-label={controlText(c.label)}
+                      title={controlText(c.label)}
+                      className={c.command === "start" || c.command === "resume" ? playButton : iconButton}
+                      disabled={c.command === null || pending}
+                      onClick={() => c.command && void runCommand(c.command)}
+                    >
+                      <ControlIcon command={c.command} />
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    aria-label={`실행 속도: ${INTERVAL_LABEL[view.state.intervalPreset]}`}
+                    title={`실행 속도: ${INTERVAL_LABEL[view.state.intervalPreset]}`}
+                    className={iconButton}
+                    disabled={pending}
+                    onClick={() => speedDialog.current?.showModal()}
+                    aria-haspopup="dialog"
+                  >
+                    <SpeedIcon />
+                  </button>
+                </>
+              )}
+            </span>
+            <span className="flex justify-self-end gap-2">{saveControls}</span>
+            {generating && (
+              <p role="status" className="col-span-2 truncate text-center text-xs text-foreground/70 sm:col-span-3">
+                {generating.participants.length ? `${generating.participants.join(", ")}의 ` : ""}장면을 만들고 있습니다… {Math.max(0, Math.floor((now - generating.startedAt) / 1000))}초 경과
+              </p>
+            )}
+          </div>
         </div>
       </div>
       <dialog
@@ -503,32 +548,6 @@ export function ScenePanel({
           ))}
         </div>
       </dialog>
-      {notice && (
-        <p role="status" className={`rounded-md px-3 py-2 text-sm ${notice.tone === "warn" ? "border border-amber-600/40 bg-amber-600/5" : "bg-foreground/5"}`}>
-          <span className="font-semibold">시스템 · </span>
-          {notice.text}
-          {notice.settingsLink && (
-            <>
-              {" "}
-              <a href="/settings/providers" className="underline">
-                Gemini 설정
-              </a>
-            </>
-          )}
-        </p>
-      )}
-      {view.failure && view.state.status === "RUNNING" && (
-        <p role="status" className="rounded-md bg-foreground/5 px-3 py-2 text-sm text-foreground/80">
-          <span className="font-semibold">시스템 · </span>
-          {view.failure}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="rounded-md border border-red-600/40 bg-red-600/5 px-3 py-2 text-sm text-red-600">
-          <span className="font-semibold">시스템 · </span>
-          {error}
-        </p>
-      )}
     </section>
   );
 }
