@@ -553,7 +553,7 @@ function SpeakerName({ worldId, message, activeIds }: { worldId: string; message
 // ── 하단 고정 바 아이콘 (패키지 없이 인라인 SVG)
 const iconButton =
   "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 text-foreground hover:bg-foreground/5 disabled:opacity-50";
-const playButton = "flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 disabled:opacity-50";
+const playButton = "flex h-10 w-10 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 disabled:opacity-50";
 
 /** 버튼 라벨("▶ 재개")에서 기호를 뺀 접근성 이름 */
 const controlText = (label: string) => label.replace(/^[^\p{L}]+/u, "");
