@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { selectSceneParticipants } from "@/server/engine/director/select-participants";
 import { buildStoryPrompt, fitWorldContext, type PromptCharacter } from "@/server/engine/context/story-prompt";
 import { parseSceneOutput, SceneValidationError } from "@/server/engine/validation/scene-output";
 import { createGeminiSdkClient, type GeminiJsonRequest, type GeminiRequestMeter } from "@/server/llm/gemini/client";
@@ -9,6 +10,24 @@ const FAKE_KEY = ["AIza", "SySceneUnitTest000000000000000000000"].join("").slice
 
 const turn = (speaker: string, dialogue = "대사") => ({ speaker, dialogue, actionIntent: null, emotionCue: null });
 const output = (turns: unknown[]) => JSON.stringify({ scene: { title: "제목", summary: "요약", endReason: "RESOLVED" }, turns });
+
+describe("selectSceneParticipants", () => {
+  it("0~1명은 null, 2명은 모두, 3~6명은 서로 다른 2~3명을 고른다", () => {
+    expect(selectSceneParticipants([])).toBeNull();
+    expect(selectSceneParticipants(["a"])).toBeNull();
+    expect(selectSceneParticipants(["a", "b"])?.sort()).toEqual(["a", "b"]);
+    for (let n = 3; n <= 6; n++) {
+      const pool = Array.from({ length: n }, (_, i) => `c${i}`);
+      for (const r of [0, 0.5, 0.99]) {
+        const picked = selectSceneParticipants(pool, () => r)!;
+        expect(picked.length).toBeGreaterThanOrEqual(2);
+        expect(picked.length).toBeLessThanOrEqual(3);
+        expect(new Set(picked).size).toBe(picked.length);
+        expect(picked.every((p) => pool.includes(p))).toBe(true);
+      }
+    }
+  });
+});
 
 describe("parseSceneOutput", () => {
   it("올바른 3턴 장면을 통과시킨다", () => {

@@ -7,7 +7,7 @@ import { AUTH_ENV_KEYS, readAuthEnv } from "@/server/auth/env";
 import { authOptions } from "@/server/auth/options";
 import { readProviderKeyMaterial } from "@/server/crypto/provider-key-crypto";
 import { prisma } from "@/server/db/client";
-import { BadRequestError, NotFoundError } from "@/server/domain/errors";
+import { ConflictError, NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { saveGeminiApiKey } from "@/server/domain/providers/gemini-connection";
 import { ConnectionNotReadyError, GeminiRequestError } from "@/server/domain/providers/gemini-verification";
@@ -15,7 +15,7 @@ import { generateScene, SceneValidationFailedError } from "@/server/domain/scene
 import { createMockGeminiClient, type MockGeminiScript } from "@/server/llm/mock/gemini-mock";
 import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey } from "./helpers";
 
-// 대화 장면 생성 (Phase 5-1). 실제 DB + Mock Gemini 클라이언트. 실제 Gemini는 호출하지 않는다.
+// 대화 장면 생성 (Phase 5-1, 참가자 서버 자동 선정). 실제 DB + Mock Gemini 클라이언트. 실제 Gemini는 호출하지 않는다.
 
 const material = readProviderKeyMaterial({
   PROVIDER_KEY_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
@@ -56,10 +56,10 @@ afterAll(async () => {
 });
 
 describe("장면 생성 서비스", () => {
-  it("2명: Gemini 1회 호출(UsageGuard 기록 1건)로 3턴 장면을 저장하고 상태 버전·자동저장 메타를 갱신한다", async () => {
-    const { uid, world, characters, mock, deps } = await setup("scene-ok");
+  it("활성 2명: 2명 모두 참여하고, Gemini 1회 호출(UsageGuard 기록 1건)로 장면을 저장해 상태 버전·자동저장 메타를 갱신한다", async () => {
+    const { uid, world, characters, mock, deps } = await setup("scene-ok", {}, { characters: 2 });
     const [a, b] = characters;
-    const scene = await generateScene(uid, world.id, [a!.id, b!.id], deps);
+    const scene = await generateScene(uid, world.id, deps);
 
     expect(scene.messages.map((m) => [m.speakerCharacterId, m.speakerName])).toEqual([
       [a!.id, a!.name],
@@ -81,30 +81,41 @@ describe("장면 생성 서비스", () => {
     expect((await prisma.simulationRuntime.findUniqueOrThrow({ where: { worldId: world.id } })).inFlightAttemptId).toBeNull();
   });
 
-  it("3명 장면도 생성하고, 이어지는 장면은 seq가 증가한다", async () => {
-    const { uid, world, characters, deps } = await setup("scene-three");
-    await generateScene(uid, world.id, characters.map((c) => c.id), deps);
-    const second = await generateScene(uid, world.id, characters.map((c) => c.id), deps);
-    expect(second.seq).toBe(2);
-    expect(await prisma.sceneParticipant.count({ where: { sceneId: second.id } })).toBe(3);
+  it("활성 6명: 2~3명을 자동 선택하고, 이어지는 장면은 seq가 증가한다", async () => {
+    const { uid, world, characters, deps } = await setup("scene-six", {}, { characters: 6 });
+    const ids = new Set(characters.map((c) => c.id));
+    const three = await generateScene(uid, world.id, { ...deps, random: () => 0.99 });
+    const two = await generateScene(uid, world.id, { ...deps, random: () => 0 });
+    expect(two.seq).toBe(2);
+    for (const [scene, n] of [[three, 3], [two, 2]] as const) {
+      const participants = await prisma.sceneParticipant.findMany({ where: { sceneId: scene.id } });
+      expect(participants).toHaveLength(n);
+      expect(participants.every((p) => ids.has(p.characterId))).toBe(true);
+    }
   });
 
-  it("삭제된 캐릭터·다른 세계관 캐릭터는 거부하고 Gemini를 호출하지 않는다", async () => {
+  it("삭제된 캐릭터는 제외하고, 활성 0~1명이면 Gemini를 호출하지 않고 409, 타인 세계관은 404", async () => {
     const { uid, world, characters, mock, deps } = await setup("scene-deleted");
     const other = await setup("scene-deleted-other");
     await prisma.character.update({ where: { id: characters[1]!.id }, data: { deletedAt: new Date() } });
 
-    await expect(generateScene(uid, world.id, [characters[0]!.id, characters[1]!.id], deps)).rejects.toBeInstanceOf(BadRequestError);
-    await expect(generateScene(uid, world.id, [characters[0]!.id, other.characters[0]!.id], deps)).rejects.toBeInstanceOf(BadRequestError);
-    // 타인 세계관은 404
-    await expect(generateScene(uid, other.world.id, other.characters.slice(0, 2).map((c) => c.id), deps)).rejects.toBeInstanceOf(NotFoundError);
-    expect(mock.calls).toHaveLength(0);
-    await expectNothingSaved(world.id);
+    // 활성 2명(0, 2번)만 참여
+    const scene = await generateScene(uid, world.id, { ...deps, random: () => 0.99 });
+    expect(new Set(scene.messages.map((m) => m.speakerCharacterId))).toEqual(new Set([characters[0]!.id, characters[2]!.id]));
+    expect(mock.calls).toHaveLength(1);
+
+    await prisma.character.update({ where: { id: characters[2]!.id }, data: { deletedAt: new Date() } });
+    await expect(generateScene(uid, world.id, deps)).rejects.toMatchObject({ status: 409, code: "NOT_ENOUGH_CHARACTERS" });
+    const empty = await setup("scene-empty", {}, { characters: 0 });
+    await expect(generateScene(empty.uid, empty.world.id, empty.deps)).rejects.toBeInstanceOf(ConflictError);
+    await expect(generateScene(uid, other.world.id, deps)).rejects.toBeInstanceOf(NotFoundError);
+    expect(mock.calls).toHaveLength(1);
+    expect(empty.mock.calls).toHaveLength(0);
   });
 
   it("연결이 ACTIVE가 아니면 호출하지 않는다", async () => {
-    const { uid, world, characters, mock, deps } = await setup("scene-inactive", {}, { active: false });
-    await expect(generateScene(uid, world.id, [characters[0]!.id, characters[1]!.id], deps)).rejects.toBeInstanceOf(ConnectionNotReadyError);
+    const { uid, world, mock, deps } = await setup("scene-inactive", {}, { active: false });
+    await expect(generateScene(uid, world.id, deps)).rejects.toBeInstanceOf(ConnectionNotReadyError);
     expect(mock.calls).toHaveLength(0);
   });
 
@@ -119,8 +130,8 @@ describe("장면 생성 서비스", () => {
       }),
     ],
   ])("잘못된 응답(%s)은 저장하지 않고 호출 기록을 VALIDATION_ERROR로 남긴다", async (_label, generateText) => {
-    const { uid, world, characters, deps } = await setup("scene-invalid", { generateText });
-    await expect(generateScene(uid, world.id, [characters[0]!.id, characters[1]!.id], deps)).rejects.toBeInstanceOf(SceneValidationFailedError);
+    const { uid, world, deps } = await setup("scene-invalid", { generateText }, { characters: 2 });
+    await expect(generateScene(uid, world.id, deps)).rejects.toBeInstanceOf(SceneValidationFailedError);
     await expectNothingSaved(world.id);
     const recorded = await logs(world.id);
     expect(recorded).toHaveLength(1);
@@ -128,8 +139,8 @@ describe("장면 생성 서비스", () => {
   });
 
   it("Gemini 오류는 안전한 오류로 바꾸고 저장하지 않으며 재시도하지 않는다", async () => {
-    const { uid, world, characters, mock, deps } = await setup("scene-upstream", { failGenerate: "UPSTREAM_ERROR" });
-    const error = await generateScene(uid, world.id, [characters[0]!.id, characters[1]!.id], deps).catch((e: unknown) => e);
+    const { uid, world, mock, deps } = await setup("scene-upstream", { failGenerate: "UPSTREAM_ERROR" });
+    const error = await generateScene(uid, world.id, deps).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(GeminiRequestError);
     expect(error).toMatchObject({ status: 502, code: "GEMINI_UPSTREAM_ERROR" });
     expect(mock.calls).toHaveLength(1);
@@ -138,9 +149,8 @@ describe("장면 생성 서비스", () => {
   });
 
   it("같은 세계관에서 동시에 두 번 누르면 하나만 Gemini를 호출한다", async () => {
-    const { uid, world, characters, mock, deps } = await setup("scene-double", { delayMs: 200 });
-    const ids = [characters[0]!.id, characters[1]!.id];
-    const results = await Promise.allSettled([generateScene(uid, world.id, ids, deps), generateScene(uid, world.id, ids, deps)]);
+    const { uid, world, mock, deps } = await setup("scene-double", { delayMs: 200 });
+    const results = await Promise.allSettled([generateScene(uid, world.id, deps), generateScene(uid, world.id, deps)]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.find((r): r is PromiseRejectedResult => r.status === "rejected")!.reason).toMatchObject({ status: 409, code: "SCENE_IN_PROGRESS" });
     expect(mock.calls).toHaveLength(1);
@@ -180,19 +190,16 @@ describe("POST /api/worlds/[worldId]/scenes", () => {
     return { status: res.status, body: await res.json() };
   };
 
-  it("비로그인 401, 타인 세계관 404, 참가자 수 오류·삭제된 캐릭터 400 (모두 외부 호출 전)", async () => {
-    const owner = await setup("scene-route-owner");
+  it("비로그인 401, 타인 세계관 404, 활성 캐릭터 1명 409 (모두 외부 호출 전, 본문의 캐릭터 ID는 무시)", async () => {
+    const owner = await setup("scene-route-owner", {}, { characters: 1 });
     const intruder = await createTestUser("scene-route-intruder");
-    const ids = owner.characters.slice(0, 2).map((c) => c.id);
+    const body = { characterIds: [owner.characters[0]!.id, "forged"] };
 
-    expect((await call(owner.world.id, { characterIds: ids })).status).toBe(401);
-    expect((await call(owner.world.id, { characterIds: ids }, intruder.id)).status).toBe(404);
-    expect((await call(owner.world.id, { characterIds: [ids[0]] }, owner.user.id)).status).toBe(400);
-    expect((await call(owner.world.id, { characterIds: [...owner.characters.map((c) => c.id), "x"] }, owner.user.id)).status).toBe(400);
-
-    await prisma.character.update({ where: { id: ids[1]! }, data: { deletedAt: new Date() } });
-    const deleted = await call(owner.world.id, { characterIds: ids }, owner.user.id);
-    expect(deleted.status).toBe(400);
+    expect((await call(owner.world.id, body)).status).toBe(401);
+    expect((await call(owner.world.id, body, intruder.id)).status).toBe(404);
+    const short = await call(owner.world.id, body, owner.user.id);
+    expect(short.status).toBe(409);
+    expect(short.body.error.code).toBe("NOT_ENOUGH_CHARACTERS");
     expect(await logs(owner.world.id)).toHaveLength(0);
   });
 });

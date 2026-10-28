@@ -52,7 +52,7 @@ async function WorldDetail({ params }: { params: Promise<{ worldId: string }> })
       <CharacterList worldId={world.id} characters={characters} />
       <ScenePanel
         worldId={world.id}
-        characters={characters.map((c) => ({ id: c.id, name: c.name }))}
+        activeCount={characters.length}
         initialScenes={JSON.parse(JSON.stringify(scenes)) as SceneItem[]}
       />
       <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">

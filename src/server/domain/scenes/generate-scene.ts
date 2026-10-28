@@ -1,26 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { SCENE_GENERATION_TIMEOUT_MS, SCENE_IN_FLIGHT_STALE_MS, SCENE_MAX_OUTPUT_TOKENS, SCENE_TEMPERATURE } from "../../../../config/limits";
+import { SCENE_GENERATION_TIMEOUT_MS, SCENE_IN_FLIGHT_STALE_MS, SCENE_MAX_OUTPUT_TOKENS, SCENE_PARTICIPANTS_MIN, SCENE_TEMPERATURE } from "../../../../config/limits";
 import { getProviderKeyMaterial, type ProviderKeyMaterial } from "@/server/crypto/provider-key-crypto";
 import { prisma } from "@/server/db/client";
 import { buildStoryPrompt, type PromptCharacter } from "@/server/engine/context/story-prompt";
+import { selectSceneParticipants } from "@/server/engine/director/select-participants";
 import { createUsageMeter } from "@/server/engine/usage/usage-guard";
 import { parseSceneOutput, SCENE_ALIASES, sceneResponseJsonSchema, SceneValidationError } from "@/server/engine/validation/scene-output";
 import { getGeminiKeyClient } from "@/server/llm";
 import { GeminiCallError, type GeminiKeyClient } from "@/server/llm/gemini/client";
 import { logServerError } from "@/server/logging/log";
-import { AppError, BadRequestError, ConflictError, NotFoundError } from "@/server/domain/errors";
+import { AppError, ConflictError, NotFoundError } from "@/server/domain/errors";
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { GeminiRequestError, loadKey, requireUsableGeminiConnection } from "@/server/domain/providers/gemini-verification";
 
 // 수동 대화 장면 1개 생성 (Phase 5-1 Vertical Slice, architecture.md §6.3~§6.7의 축소판). 런타임 독립.
 // 사용자가 버튼을 누를 때만 Gemini를 1회 호출한다. Runner·자동 반복·SSE·감정/관계/기억 반영은 없다.
-//   1) 소유권·참가자(활성, 같은 세계관, 2~3명)·연결(ACTIVE + 모델) 확인 — 외부 호출 없음
+//   1) 소유권 확인, 활성 캐릭터 중 참가자 2~3명 자동 선정(selectSceneParticipants), 연결(ACTIVE + 모델) 확인 — 외부 호출 없음
 //   2) SimulationRuntime.inFlightAttemptId로 세계관당 동시 생성 1건만 허용 (중복 클릭으로 인한 이중 과금 방지)
 //   3) UsageGuard meter를 거쳐 generateContent 1회 (자동 재시도 없음)
 //   4) Zod·별칭 검증 → 실패하면 아무것도 저장하지 않는다
 //   5) GameState 행 잠금 + stateVersion 펜싱 + attemptId UNIQUE로 단일 트랜잭션 커밋 (§6.7)
 
-type Deps = { client?: GeminiKeyClient; material?: ProviderKeyMaterial; now?: () => Date };
+type Deps = { client?: GeminiKeyClient; material?: ProviderKeyMaterial; now?: () => Date; random?: () => number };
 
 export type SceneMessageView = {
   turnIndex: number;
@@ -76,7 +77,7 @@ export async function listRecentScenes(userId: AuthenticatedUserId, worldId: str
   return rows.map(toView);
 }
 
-export async function generateScene(userId: AuthenticatedUserId, worldId: string, characterIds: string[], deps: Deps = {}): Promise<SceneView> {
+export async function generateScene(userId: AuthenticatedUserId, worldId: string, deps: Deps = {}): Promise<SceneView> {
   const now = deps.now ?? (() => new Date());
 
   // 1) 소유권·참가자·연결 확인 (외부 호출 전)
@@ -85,16 +86,18 @@ export async function generateScene(userId: AuthenticatedUserId, worldId: string
     select: { name: true, worldRules: true, currentSituation: true, worldContext: true, gameState: { select: { maxTurnsPerScene: true } } },
   });
   if (!world?.gameState) throw new NotFoundError();
-  const rows = await prisma.character.findMany({
-    where: { id: { in: characterIds }, worldId, deletedAt: null, world: { ownerId: userId } },
+  // 참가자는 서버가 정한다. 삭제된 캐릭터는 후보에서 제외한다
+  const active = await prisma.character.findMany({
+    where: { worldId, deletedAt: null, world: { ownerId: userId } },
+    orderBy: { createdAt: "asc" },
     include: { emotionState: { select: { mood: true, intensity: true } } },
   });
-  if (rows.length !== characterIds.length) throw new BadRequestError("선택한 캐릭터를 찾을 수 없거나 삭제되었습니다. 목록을 새로고침하세요.");
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  const characters: (PromptCharacter & { id: string })[] = characterIds.map((id, i) => {
-    const r = byId.get(id)!;
+  const rows = selectSceneParticipants(active, deps.random);
+  if (!rows) throw new ConflictError("NOT_ENOUGH_CHARACTERS", `대화하려면 활성 캐릭터가 ${SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.`);
+  const characterIds = rows.map((r) => r.id);
+  const characters: (PromptCharacter & { id: string })[] = rows.map((r, i) => {
     return {
-      id,
+      id: r.id,
       alias: SCENE_ALIASES[i]!,
       name: r.name,
       gender: r.gender,

@@ -414,7 +414,7 @@ COMMIT
 ### 6.8.1 수동 장면 생성 (Phase 5-1 Vertical Slice)
 
 Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /api/worlds/[worldId]/scenes`, `server/domain/scenes/generate-scene.ts`).
-- 참가자: 사용자가 고른 활성 캐릭터 2~3명(SceneDirector 미사용). 연결 `ACTIVE` + `defaultModel` 필수.
+- 참가자: 서버가 활성(미삭제) 캐릭터 중 2~3명을 무작위로 고른다(`engine/director/select-participants.ts`, 활성 2명이면 2명 모두, 2명 미만이면 409 `NOT_ENOUGH_CHARACTERS`). 요청 본문의 캐릭터 ID는 받지 않는다. 감정·관계·기억 기반 SceneDirector는 이 함수를 교체한다. 연결 `ACTIVE` + `defaultModel` 필수.
 - 동시 실행 방지: `SimulationRuntime.status ∈ {IDLE, PAUSED}`이고 `inFlightAttemptId`가 비어 있을 때만 조건부 UPDATE로 점유한다(5분 지나면 만료). 같은 세계관의 중복 클릭은 409 `SCENE_IN_PROGRESS`이며 외부 호출을 하지 않는다.
 - 호출: `GeminiKeyClient.generateJson` 1회, UsageGuard `SIMULATION` meter(`attemptId`, `callIndex = 0`) 경유. 자동 재시도 없음.
 - 출력: §6.5 스키마 v1 중 `scene`·`turns`만 요청·검증한다. `proposals`(감정·관계·기억)는 엔진 단계에서 추가한다. 검증 실패 시 저장하지 않고 호출 기록을 `VALIDATION_ERROR`로 바꾼다.

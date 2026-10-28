@@ -1,29 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { SCENE_PARTICIPANTS_MAX, SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
+import { SCENE_PARTICIPANTS_MIN } from "../../../../config/limits";
 import { button } from "../ui";
 import { send } from "../world-form";
 
-// 대화 장면 생성 (Phase 5-1). 캐릭터 2~3명을 고르고 버튼을 누르면 Gemini가 장면 1개를 만든다.
+// 대화 장면 생성 (Phase 5-1). 버튼을 누르면 서버가 활성 캐릭터 중 2~3명을 골라 Gemini가 장면 1개를 만든다.
 // 모든 발언은 왼쪽 정렬로 표시하고, 사용자 입력창·감정/관계/기억 변화 알림은 두지 않는다.
 
 type Message = { turnIndex: number; speakerName: string; dialogue: string; actionIntent: string | null; emotionCue: string | null };
 export type SceneItem = { id: string; seq: number; title: string; summary: string; contextTruncated: boolean; messages: Message[] };
 
-export function ScenePanel({ worldId, characters, initialScenes }: { worldId: string; characters: { id: string; name: string }[]; initialScenes: SceneItem[] }) {
-  const [selected, setSelected] = useState<string[]>([]);
+export function ScenePanel({ worldId, activeCount, initialScenes }: { worldId: string; activeCount: number; initialScenes: SceneItem[] }) {
   const [scenes, setScenes] = useState<SceneItem[]>(initialScenes);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const toggle = (id: string) => setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   async function generate() {
     setBusy(true);
     setError(null);
     try {
-      const { ok, json } = await send(`/api/worlds/${worldId}/scenes`, "POST", { characterIds: selected });
+      const { ok, json } = await send(`/api/worlds/${worldId}/scenes`, "POST");
       if (!ok) return setError(json?.error?.message ?? "장면을 만들지 못했습니다.");
       setScenes((prev) => [json.scene, ...prev]);
     } catch {
@@ -33,40 +30,18 @@ export function ScenePanel({ worldId, characters, initialScenes }: { worldId: st
     }
   }
 
-  const canGenerate = selected.length >= SCENE_PARTICIPANTS_MIN && selected.length <= SCENE_PARTICIPANTS_MAX;
-
   return (
     <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
       <h2 className="text-lg font-semibold">대화 장면</h2>
-      {characters.length < SCENE_PARTICIPANTS_MIN ? (
+      {activeCount < SCENE_PARTICIPANTS_MIN ? (
         <p className="text-sm text-foreground/70">대화하려면 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.</p>
       ) : (
         <>
-          <fieldset className="flex flex-wrap gap-2" disabled={busy}>
-            <legend className="mb-1 text-sm text-foreground/70">
-              대화할 캐릭터 {SCENE_PARTICIPANTS_MIN}~{SCENE_PARTICIPANTS_MAX}명을 고르세요 ({selected.length}명 선택)
-            </legend>
-            {characters.map((c) => {
-              const on = selected.includes(c.id);
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  aria-pressed={on}
-                  disabled={!on && selected.length >= SCENE_PARTICIPANTS_MAX}
-                  onClick={() => toggle(c.id)}
-                  className={`rounded-full border px-3 py-1 text-sm disabled:opacity-40 ${on ? "border-foreground bg-foreground text-background" : "border-foreground/20 hover:bg-foreground/5"}`}
-                >
-                  {c.name}
-                </button>
-              );
-            })}
-          </fieldset>
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" className={button} onClick={generate} disabled={busy || !canGenerate}>
+            <button type="button" className={button} onClick={generate} disabled={busy}>
               {busy ? "생성 중…" : "대화 장면 생성"}
             </button>
-            <span className="text-xs text-foreground/60">버튼을 누를 때마다 Gemini API를 1회 호출합니다(본인 키 사용).</span>
+            <span className="text-xs text-foreground/60">참여 캐릭터는 자동으로 정해집니다. 누를 때마다 Gemini API를 1회 호출합니다(본인 키 사용).</span>
           </div>
           {busy && (
             <p role="status" className="text-sm text-foreground/70">
