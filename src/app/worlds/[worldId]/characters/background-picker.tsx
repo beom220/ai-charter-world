@@ -79,7 +79,7 @@ export function BackgroundPicker({
                         type="button"
                         onClick={() => choose(p.id)}
                         className={`flex w-full flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left ${
-                          active ? "border-primary bg-blush/60" : "border-transparent hover:bg-foreground/5"
+                          active ? "border-primary bg-primary/10" : "border-transparent hover:bg-foreground/5"
                         }`}
                       >
                         <span className="text-sm font-medium">

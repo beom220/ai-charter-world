@@ -61,7 +61,7 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">세계관 이름</span>
         <input
-          className="rounded-md border border-foreground/20 bg-card px-3 py-2 disabled:opacity-60"
+          className="rounded-md border border-foreground/20 bg-transparent px-3 py-2 disabled:opacity-60"
           value={name}
           disabled={locked}
           onChange={(e) => setName(e.target.value)}
@@ -73,7 +73,7 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
         <span className="font-medium">세계관 컨텍스트</span>
         <span className="text-foreground/60">배경·규칙·현재 상황 등 자유롭게 적으세요. 글자 수 제한은 없습니다(전송 최대 10MB).</span>
         <textarea
-          className="min-h-64 rounded-md border border-foreground/20 bg-card px-3 py-2 disabled:opacity-60"
+          className="min-h-64 rounded-md border border-foreground/20 bg-transparent px-3 py-2 disabled:opacity-60"
           disabled={locked}
           value={worldContext}
           onChange={(e) => setWorldContext(e.target.value)}
@@ -83,7 +83,7 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
       {locked ? (
         <p role="status" className="rounded-md border border-amber-600/40 bg-amber-600/5 px-3 py-2 text-sm">
           {WORLD_SETTINGS_LOCKED_MESSAGE}{" "}
-          <Link href="/worlds/new" className="underline">
+          <Link href="/worlds/new" className="text-primary-text underline">
             새 세계관 만들기
           </Link>
         </p>

@@ -155,7 +155,7 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
           순서대로 하나씩 일어나며, 대기 중 사건은 최대 {USER_EVENT_PENDING_MAX}개입니다.
         </p>
         <textarea
-          className="mt-3 h-28 w-full resize-none rounded-md border border-foreground/20 bg-card p-2 text-sm"
+          className="mt-3 h-28 w-full resize-none rounded-md border border-foreground/20 bg-transparent p-2 text-sm"
           placeholder="예: 마을 입구에 정체를 알 수 없는 우주선이 내려앉았다."
           value={text}
           onChange={(e) => setText(e.target.value)}

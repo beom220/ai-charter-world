@@ -5,7 +5,7 @@ import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 const buttonClass =
-  "rounded-md border border-foreground/20 bg-card px-4 py-2 text-sm font-medium hover:bg-blush/50 disabled:opacity-50";
+  "rounded-md border border-foreground/20 px-4 py-2 text-sm font-medium hover:bg-foreground/5 disabled:opacity-50";
 
 export function SignInButton() {
   const [pending, setPending] = useState(false);

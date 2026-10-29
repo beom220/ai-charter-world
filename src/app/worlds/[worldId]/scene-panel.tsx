@@ -86,7 +86,7 @@ const STREAM_LABEL: Record<StreamStatus, string> = {
 };
 const SIM_EVENTS: SimEventName[] = ["runtime.status", "scene.started", "scene.committed", "scene.failed"];
 
-const bubble = "max-w-[90%] rounded-lg border border-blush bg-card px-3 py-2 text-sm shadow-sm";
+const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
 
 export function ScenePanel({
   worldId,
@@ -380,7 +380,7 @@ export function ScenePanel({
       <WorldClock clock={view.state.worldClock} startDate={worldStartDate} />
       <WorldEvents ref={eventsRef} worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
 
-      <div className="flex min-h-40 flex-col gap-3 rounded-md border border-foreground/10 bg-ivory/70 p-3">
+      <div className="flex min-h-40 flex-col gap-3 rounded-md bg-foreground/[0.02] p-3">
         {hasMore && (
           <div className="flex justify-center">
             <button type="button" className="text-xs text-foreground/70 underline disabled:opacity-50" onClick={loadMore} disabled={loadingMore}>
@@ -460,7 +460,7 @@ export function ScenePanel({
                 {notice.settingsLink && (
                   <>
                     {" "}
-                    <a href="/settings/providers" className="underline">
+                    <a href="/settings/providers" className="text-primary-text underline">
                       Gemini 설정
                     </a>
                   </>
@@ -480,7 +480,7 @@ export function ScenePanel({
             {lacksCharacters ? (
               <Toast tone="info">
                 대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
-                <Link href={`/worlds/${worldId}/characters`} className="underline">
+                <Link href={`/worlds/${worldId}/characters`} className="text-primary-text underline">
                   캐릭터 탭
                 </Link>
                 에서 추가하세요.
@@ -566,7 +566,7 @@ export function ScenePanel({
                 void changeSpeed(p);
               }}
               className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm disabled:opacity-50 ${
-                view.state.intervalPreset === p ? "border-primary bg-blush/60 font-semibold" : "border-foreground/15 hover:bg-foreground/5"
+                view.state.intervalPreset === p ? "border-primary bg-primary/10 font-semibold" : "border-foreground/15 hover:bg-foreground/5"
               }`}
             >
               {INTERVAL_LABEL[p]}
@@ -598,7 +598,7 @@ function SpeakerName({ worldId, message, activeIds }: { worldId: string; message
 
 // ── 하단 고정 바 아이콘 (패키지 없이 인라인 SVG)
 const iconButton =
-  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 bg-card text-foreground hover:bg-blush/50 disabled:opacity-50";
+  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 text-foreground hover:bg-foreground/5 disabled:opacity-50";
 const playButton = "flex h-10 w-10 items-center justify-center rounded-full bg-primary-strong text-white hover:bg-primary disabled:opacity-50";
 
 /** 버튼 라벨("▶ 재개")에서 기호를 뺀 접근성 이름 */
@@ -623,7 +623,7 @@ function SpeedIcon() {
 // ── 하단 알림 카드 (노티피케이션 형태). 색 점 + 본문, 글자 크기는 모두 text-sm
 type ToastTone = "progress" | "info" | "warn" | "error";
 const TOAST_DOT: Record<ToastTone, string> = {
-  progress: "animate-pulse bg-[#3B82F6]",
+  progress: "animate-pulse bg-primary",
   info: "bg-foreground/40",
   warn: "bg-amber-500",
   error: "bg-red-600",

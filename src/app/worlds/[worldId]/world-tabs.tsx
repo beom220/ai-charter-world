@@ -21,7 +21,7 @@ export function WorldTabs({ worldId }: { worldId: string }) {
           key={t.href}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
-          className={`-mb-px border-b-2 px-4 py-2 text-sm ${t.active ? "border-primary font-semibold text-primary-strong" : "border-transparent text-foreground/60 hover:text-foreground"}`}
+          className={`-mb-px border-b-2 px-4 py-2 text-sm ${t.active ? "border-primary font-semibold text-primary-text" : "border-transparent text-foreground/60 hover:text-foreground"}`}
         >
           {t.label}
         </Link>

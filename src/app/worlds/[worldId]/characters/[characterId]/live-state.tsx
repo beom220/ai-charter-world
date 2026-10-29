@@ -35,7 +35,7 @@ type LiveState = {
   memories: LiveMemory[];
 };
 
-const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 bg-card p-4";
+const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
 const MEMORY_KIND_LABEL: Record<string, string> = {
   EVENT: "사건",
   PROMISE: "약속",

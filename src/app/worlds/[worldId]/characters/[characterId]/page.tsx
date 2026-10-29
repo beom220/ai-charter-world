@@ -29,7 +29,7 @@ export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/c
   );
 }
 
-const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 bg-card p-4";
+const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
 
 
 async function CharacterDetail({ params }: { params: Promise<{ worldId: string; characterId: string }> }) {
@@ -53,10 +53,10 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           <strong>{deletedName}</strong>은(는) 삭제된 캐릭터입니다. 지난 대화의 발언은 남아 있지만 상세 정보는 볼 수 없습니다.
         </p>
         <div className="flex gap-3 text-sm">
-          <Link href={`/worlds/${worldId}`} className="underline">
+          <Link href={`/worlds/${worldId}`} className="text-primary-text underline">
             ← 대화로
           </Link>
-          <Link href={`/worlds/${worldId}/characters`} className="underline">
+          <Link href={`/worlds/${worldId}/characters`} className="text-primary-text underline">
             캐릭터 목록
           </Link>
         </div>

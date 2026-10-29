@@ -27,7 +27,7 @@ async function ProviderSection() {
   if (!session) {
     return (
       <p className="text-sm">
-        <Link href="/login" className="underline">
+        <Link href="/login" className="text-primary-text underline">
           로그인
         </Link>
         이 필요합니다.

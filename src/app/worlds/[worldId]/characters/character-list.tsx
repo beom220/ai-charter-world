@@ -37,7 +37,7 @@ export function CharacterList({ worldId, characters }: { worldId: string; charac
         <ul className="grid gap-2 sm:grid-cols-2">
           {characters.map((c) => (
             <li key={c.id}>
-              <Link href={`/worlds/${worldId}/characters/${c.id}`} className="flex flex-col gap-1 rounded-md border border-foreground/15 bg-card p-3 hover:bg-blush/40">
+              <Link href={`/worlds/${worldId}/characters/${c.id}`} className="flex flex-col gap-1 rounded-md border border-foreground/15 p-3 hover:bg-foreground/5">
                 <span className="font-medium break-all">
                   {c.name}
                   {conditionBadges(c.condition).map((b) => (
