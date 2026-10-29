@@ -14,7 +14,7 @@
   --pastel: color-mix(in srgb, var(--ivory) 70%, var(--blush));
   --pastel-from: color-mix(in srgb, var(--ivory) 60%, #ffffff);
   --pastel-to: color-mix(in srgb, var(--blush) 45%, #ffffff);
-  --hover: var(--ivory);     /* 보조 버튼·목록 행 hover 배경 */
+  --hover: #FFF9F8;         /* 웜 화이트: 보조 버튼·목록 행 hover 배경 */
 }
 
 @theme inline {

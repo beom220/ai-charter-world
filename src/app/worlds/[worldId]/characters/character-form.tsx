@@ -143,7 +143,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       : adulthoodBackgroundIssue(effectiveAge(draft.age) ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId);
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-primary-soft/40 bg-pastel-gradient p-4">
+    <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-foreground/15 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={randomButton} onClick={() => randomize()} disabled={busy}>
           🎲 전체 랜덤
