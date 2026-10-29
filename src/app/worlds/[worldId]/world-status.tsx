@@ -5,7 +5,7 @@ import { USER_EVENT_PENDING_MAX, USER_EVENT_TEXT_MAX_LENGTH } from "../../../../
 import { userEventTextLength } from "@/lib/schemas/world-event";
 import { noteText, noteTone, type NoteTone, type SceneNote } from "@/lib/scene-notes";
 import { liveWorldSeconds, worldCalendar } from "@/lib/world-clock";
-import { button } from "../ui";
+import { button, primaryButton } from "../ui";
 import { send } from "../world-form";
 
 // 대화 화면의 세계 정보 (Phase 7-2-2). 캐릭터 말풍선과 분리된 시스템 영역.
@@ -155,7 +155,7 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
           순서대로 하나씩 일어나며, 대기 중 사건은 최대 {USER_EVENT_PENDING_MAX}개입니다.
         </p>
         <textarea
-          className="mt-3 h-28 w-full resize-none rounded-md border border-foreground/20 bg-transparent p-2 text-sm"
+          className="mt-3 h-28 w-full resize-none rounded-md border border-foreground/20 bg-card p-2 text-sm"
           placeholder="예: 마을 입구에 정체를 알 수 없는 우주선이 내려앉았다."
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -180,7 +180,7 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
           <button type="button" className={button} onClick={() => dialog.current?.close()} disabled={busy}>
             닫기
           </button>
-          <button type="button" className={button} onClick={() => void submit()} disabled={!canSubmit}>
+          <button type="button" className={primaryButton} onClick={() => void submit()} disabled={!canSubmit}>
             {busy ? "처리 중…" : "등록"}
           </button>
         </div>

@@ -124,7 +124,7 @@ export function SaveControls({ worldId, initial, saveClass, loadClass }: { world
             onChange={(e) => setRenaming({ id: s.id, name: e.target.value })}
             maxLength={SAVE_NAME_MAX_LENGTH}
             aria-label="새 이름"
-            className="min-w-0 flex-1 rounded border border-foreground/20 bg-transparent px-2 py-1 text-sm"
+            className="min-w-0 flex-1 rounded border border-foreground/20 bg-card px-2 py-1 text-sm"
             autoFocus
           />
           <button type="submit" className={small} disabled={pending || renaming.name.trim().length === 0}>
@@ -205,7 +205,7 @@ export function SaveControls({ worldId, initial, saveClass, loadClass }: { world
                   maxLength={SAVE_NAME_MAX_LENGTH}
                   placeholder="저장 이름"
                   aria-label="저장 이름"
-                  className="min-w-0 flex-1 rounded-md border border-foreground/20 bg-transparent px-3 py-2 text-sm"
+                  className="min-w-0 flex-1 rounded-md border border-foreground/20 bg-card px-3 py-2 text-sm"
                 />
                 <button type="submit" className={small} disabled={pending || full || name.trim().length === 0}>
                   새로 저장

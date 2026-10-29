@@ -29,7 +29,7 @@ export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/c
   );
 }
 
-const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
+const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 bg-card p-4";
 
 
 async function CharacterDetail({ params }: { params: Promise<{ worldId: string; characterId: string }> }) {

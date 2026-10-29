@@ -86,7 +86,7 @@ const STREAM_LABEL: Record<StreamStatus, string> = {
 };
 const SIM_EVENTS: SimEventName[] = ["runtime.status", "scene.started", "scene.committed", "scene.failed"];
 
-const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
+const bubble = "max-w-[90%] rounded-lg border border-blush bg-card px-3 py-2 text-sm shadow-sm";
 
 export function ScenePanel({
   worldId,
@@ -380,7 +380,7 @@ export function ScenePanel({
       <WorldClock clock={view.state.worldClock} startDate={worldStartDate} />
       <WorldEvents ref={eventsRef} worldId={worldId} refreshKey={`${scenes.at(-1)?.id ?? ""}:${stream}:${eventsTick}`} />
 
-      <div className="flex min-h-40 flex-col gap-3 rounded-md bg-foreground/[0.02] p-3">
+      <div className="flex min-h-40 flex-col gap-3 rounded-md border border-foreground/10 bg-ivory/70 p-3">
         {hasMore && (
           <div className="flex justify-center">
             <button type="button" className="text-xs text-foreground/70 underline disabled:opacity-50" onClick={loadMore} disabled={loadingMore}>
@@ -566,7 +566,7 @@ export function ScenePanel({
                 void changeSpeed(p);
               }}
               className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm disabled:opacity-50 ${
-                view.state.intervalPreset === p ? "border-foreground/40 bg-foreground/10 font-semibold" : "border-foreground/15 hover:bg-foreground/5"
+                view.state.intervalPreset === p ? "border-primary bg-blush/60 font-semibold" : "border-foreground/15 hover:bg-foreground/5"
               }`}
             >
               {INTERVAL_LABEL[p]}
@@ -598,8 +598,8 @@ function SpeakerName({ worldId, message, activeIds }: { worldId: string; message
 
 // ── 하단 고정 바 아이콘 (패키지 없이 인라인 SVG)
 const iconButton =
-  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 text-foreground hover:bg-foreground/5 disabled:opacity-50";
-const playButton = "flex h-10 w-10 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 disabled:opacity-50";
+  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 bg-card text-foreground hover:bg-blush/50 disabled:opacity-50";
+const playButton = "flex h-10 w-10 items-center justify-center rounded-full bg-primary-strong text-white hover:bg-primary disabled:opacity-50";
 
 /** 버튼 라벨("▶ 재개")에서 기호를 뺀 접근성 이름 */
 const controlText = (label: string) => label.replace(/^[^\p{L}]+/u, "");

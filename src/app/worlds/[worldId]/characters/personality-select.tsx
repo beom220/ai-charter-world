@@ -64,7 +64,7 @@ export function PersonalitySelect({ value, onChange, controls }: { value: string
                     disabled={disabled}
                     onClick={() => onChange(togglePersonalityTag(value, t.code))}
                     className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left disabled:opacity-40 ${
-                      selected ? "border-foreground bg-foreground/10 font-medium" : "border-transparent hover:bg-foreground/5"
+                      selected ? "border-primary bg-blush/60 font-medium" : "border-transparent hover:bg-foreground/5"
                     }`}
                   >
                     <span aria-hidden className="w-4">

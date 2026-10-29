@@ -1,26 +1,45 @@
 @import "tailwindcss";
 
+/* 앱 공통 테마 토큰. 화면 코드는 아래 Tailwind 색 이름(bg-card, text-primary-strong 등)으로만 참조한다. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ivory: #F4F2E9;
+  --blush: #F2D8DB;       /* 베이비 핑크 */
+  --primary-soft: #E8A9B6; /* 소프트 핑크 */
+  --primary: #E57694;      /* 로즈 핑크 */
+  --primary-strong: #BD526F; /* 딥 로즈: 흰 글자를 올리는 채움 버튼 */
+  --card: #FFF9F8;
+  --foreground: #33313A;
+  /* 모달·입력창·고정 바는 bg-background를 쓰므로 카드와 같은 따뜻한 흰색으로 둔다. */
+  --background: var(--card);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-ivory: var(--ivory);
+  --color-blush: var(--blush);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
+  --color-card: var(--card);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 아이보리 → 베이비 핑크 → 로즈 핑크로 이어지는 은은한 배경. 본문 가독성을 위해 위쪽 대부분은 아이보리로 둔다. */
+html {
+  background-color: var(--ivory);
 }
-
 body {
-  background: var(--background);
+  background: linear-gradient(
+    172deg,
+    var(--ivory) 0%,
+    var(--ivory) 30%,
+    color-mix(in srgb, var(--blush) 70%, var(--ivory)) 65%,
+    color-mix(in srgb, var(--primary-soft) 55%, var(--blush)) 92%,
+    color-mix(in srgb, var(--primary) 35%, var(--primary-soft)) 100%
+  );
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }

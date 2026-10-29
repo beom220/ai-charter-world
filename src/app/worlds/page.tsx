@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { getCurrentSession } from "@/server/auth/session";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { listWorlds } from "@/server/domain/worlds";
-import { button, LoginRequired, STATUS_LABEL } from "./ui";
+import { LoginRequired, primaryButton, STATUS_LABEL } from "./ui";
 
 // 세계관 목록 (PRD §6 /worlds). 본인 소유 세계관만 보인다.
 
@@ -12,7 +12,7 @@ export default function WorldsPage() {
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 p-4 sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">내 세계관</h1>
-        <Link href="/worlds/new" className={button}>
+        <Link href="/worlds/new" className={primaryButton}>
           새 세계관
         </Link>
       </div>
@@ -30,10 +30,10 @@ async function WorldList() {
   if (worlds.length === 0) return <p className="text-sm text-foreground/70">아직 세계관이 없습니다. 새 세계관을 만들어 보세요.</p>;
 
   return (
-    <ul className="flex flex-col divide-y divide-foreground/10 rounded-md border border-foreground/15">
+    <ul className="flex flex-col divide-y divide-foreground/10 rounded-md border border-foreground/15 bg-card">
       {worlds.map((w) => (
         <li key={w.id}>
-          <Link href={`/worlds/${w.id}`} className="flex flex-wrap items-center justify-between gap-2 p-4 hover:bg-foreground/5">
+          <Link href={`/worlds/${w.id}`} className="flex flex-wrap items-center justify-between gap-2 p-4 hover:bg-blush/40">
             <span className="font-medium break-all">{w.name}</span>
             <span className="text-xs text-foreground/60">
               {STATUS_LABEL[w.runtimeStatus]} · 수정 {w.updatedAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}

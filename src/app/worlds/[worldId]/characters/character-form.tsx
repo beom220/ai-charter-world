@@ -17,7 +17,7 @@ import {
   type GenderInput,
   type RandomField,
 } from "@/lib/schemas/character";
-import { button } from "../../ui";
+import { button, primaryButton } from "../../ui";
 import { SettingsLockedNotice, useSettingsEditable } from "../../settings-lock";
 import { send } from "../../world-form";
 import { BackgroundPicker } from "./background-picker";
@@ -209,7 +209,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
 
       {!editable && <SettingsLockedNotice />}
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" className={button} disabled={busy || !editable || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || problem !== null}>
+        <button type="submit" className={primaryButton} disabled={busy || !editable || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || problem !== null}>
           {characterId ? "저장" : "만들기"}
         </button>
         {problem && <span className="text-xs text-foreground/60">{problem}</span>}
