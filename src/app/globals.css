@@ -14,7 +14,7 @@
   --pastel: color-mix(in srgb, var(--ivory) 70%, var(--blush));
   --pastel-from: color-mix(in srgb, var(--ivory) 60%, #ffffff);
   --pastel-to: color-mix(in srgb, var(--blush) 45%, #ffffff);
-  --hover: var(--blush);     /* 보조 버튼·목록 행 hover 배경 */
+  --hover: var(--ivory);     /* 보조 버튼·목록 행 hover 배경 */
 }
 
 @theme inline {
@@ -40,7 +40,7 @@
     --pastel: color-mix(in srgb, var(--primary) 12%, var(--background));
     --pastel-from: color-mix(in srgb, var(--ivory) 5%, var(--background));
     --pastel-to: color-mix(in srgb, var(--primary) 10%, var(--background));
-    --hover: color-mix(in srgb, var(--primary) 18%, var(--background));
+    --hover: color-mix(in srgb, var(--ivory) 12%, var(--background));
   }
 }
 
