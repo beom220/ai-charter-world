@@ -33,7 +33,7 @@ async function WorldList() {
     <ul className="flex flex-col divide-y divide-foreground/10 rounded-md border border-foreground/15">
       {worlds.map((w) => (
         <li key={w.id}>
-          <Link href={`/worlds/${w.id}`} className="flex flex-wrap items-center justify-between gap-2 p-4 hover:bg-foreground/5">
+          <Link href={`/worlds/${w.id}`} className="flex flex-wrap items-center justify-between gap-2 p-4 hover:bg-hover">
             <span className="font-medium break-all">{w.name}</span>
             <span className="text-xs text-foreground/60">
               {STATUS_LABEL[w.runtimeStatus]} · 수정 {w.updatedAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}

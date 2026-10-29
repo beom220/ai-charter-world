@@ -48,7 +48,7 @@ export function PersonalitySelect({ value, onChange, controls }: { value: string
             <h2 className="text-base font-semibold">
               성격 선택 <span className="text-xs font-normal text-foreground/60">({count})</span>
             </h2>
-            <button type="button" className="rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-foreground/5" onClick={() => dialog.current?.close()}>
+            <button type="button" className="rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-hover" onClick={() => dialog.current?.close()}>
               닫기
             </button>
           </div>
@@ -77,7 +77,7 @@ export function PersonalitySelect({ value, onChange, controls }: { value: string
             })}
           </ul>
           <div className="flex justify-end border-t border-foreground/10 px-4 py-3">
-            <button type="button" className="rounded-md border border-foreground/20 px-4 py-1.5 text-sm font-medium hover:bg-foreground/5" onClick={() => dialog.current?.close()}>
+            <button type="button" className="rounded-md border border-foreground/20 px-4 py-1.5 text-sm font-medium hover:bg-hover" onClick={() => dialog.current?.close()}>
               완료
             </button>
           </div>

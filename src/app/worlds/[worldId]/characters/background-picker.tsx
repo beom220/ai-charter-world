@@ -66,7 +66,7 @@ export function BackgroundPicker({
             <div className="flex max-h-[80vh] flex-col">
               <div className="flex items-center justify-between gap-2 border-b border-primary-soft/40 bg-pastel-gradient px-4 py-3">
                 <h2 className="text-base font-semibold">{label} 배경 선택</h2>
-                <button type="button" className="rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-foreground/5" onClick={() => dialog.current?.close()}>
+                <button type="button" className="rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-hover" onClick={() => dialog.current?.close()}>
                   닫기
                 </button>
               </div>

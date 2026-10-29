@@ -566,7 +566,7 @@ export function ScenePanel({
                 void changeSpeed(p);
               }}
               className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm disabled:opacity-50 ${
-                view.state.intervalPreset === p ? "border-primary bg-primary/10 font-semibold" : "border-foreground/15 hover:bg-foreground/5"
+                view.state.intervalPreset === p ? "border-primary bg-primary/10 font-semibold" : "border-foreground/15 hover:bg-hover"
               }`}
             >
               {INTERVAL_LABEL[p]}
@@ -598,7 +598,7 @@ function SpeakerName({ worldId, message, activeIds }: { worldId: string; message
 
 // ── 하단 고정 바 아이콘 (패키지 없이 인라인 SVG)
 const iconButton =
-  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 text-foreground hover:bg-foreground/5 disabled:opacity-50";
+  "flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 text-foreground hover:bg-hover disabled:opacity-50";
 const playButton = "flex h-10 w-10 items-center justify-center rounded-full bg-primary-strong text-white hover:bg-primary disabled:opacity-50";
 
 /** 버튼 라벨("▶ 재개")에서 기호를 뺀 접근성 이름 */

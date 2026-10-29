@@ -31,7 +31,7 @@ function statusLabel(c: Connection): string {
   return c.defaultModel ? "사용 가능" : "키 확인됨 — 모델 선택 필요";
 }
 
-const button = "rounded-md border border-foreground/20 px-3 py-1.5 text-sm font-medium hover:bg-foreground/5 disabled:opacity-50";
+const button = "rounded-md border border-foreground/20 px-3 py-1.5 text-sm font-medium hover:bg-hover disabled:opacity-50";
 
 async function call(path: string, method: string, body?: unknown) {
   const res = await fetch(path, {

@@ -17,7 +17,7 @@ export type SaveSlot = { id: string; kind: "MANUAL" | "AUTO" | "RECOVERY"; name:
 export type SaveList = { saves: SaveSlot[]; recovery: SaveSlot | null; manualLimit: number; canLoad: boolean };
 
 const when = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" });
-const small = "rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-foreground/5 disabled:opacity-50";
+const small = "rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-hover disabled:opacity-50";
 const LOAD_BLOCKED = "시뮬레이션 종료 후 불러올 수 있습니다.";
 
 export function SaveControls({ worldId, initial, saveClass, loadClass }: { worldId: string; initial: SaveList; saveClass: string; loadClass: string }) {
