@@ -35,7 +35,9 @@ type LiveState = {
   memories: LiveMemory[];
 };
 
-const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
+// 테두리 색은 panelBorder로 따로 붙인다(사망 시 빨강으로 바꾸기 위해)
+const panel = "flex flex-col gap-2 rounded-md border bg-pastel-gradient p-4";
+const panelBorder = "border-primary-soft/40";
 const MEMORY_KIND_LABEL: Record<string, string> = {
   EVENT: "사건",
   PROMISE: "약속",
@@ -94,8 +96,8 @@ export function CharacterLiveState({
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <section className={`${panel} sm:col-span-2 ${state.condition.vital === "DEAD" ? "border-red-600/40" : ""}`}>
-        <h2 className="text-sm font-semibold">신체 상태</h2>
+      <section className={`${panel} sm:col-span-2 ${state.condition.vital === "DEAD" ? "border-red-600/40" : panelBorder}`}>
+        <h2 className="text-sm font-semibold text-primary-text">신체 상태</h2>
         {state.condition.vital === "DEAD" ? (
           <p className="text-sm">
             <span className="font-semibold text-red-600">사망</span> — {state.condition.deathCause ?? "원인 미상"}
@@ -121,13 +123,13 @@ export function CharacterLiveState({
           </dl>
         )}
       </section>
-      <section className={panel}>
-        <h2 className="text-sm font-semibold">현재 감정</h2>
+      <section className={`${panel} ${panelBorder}`}>
+        <h2 className="text-sm font-semibold text-primary-text">현재 감정</h2>
         <p className="text-sm">{state.emotion ? `${MOOD_LABEL[state.emotion.mood]} (강도 ${state.emotion.intensity}/100)` : "기록 없음"}</p>
       </section>
       {children}
-      <section className={`${panel} sm:col-span-2`}>
-        <h2 className="text-sm font-semibold">관계</h2>
+      <section className={`${panel} ${panelBorder} sm:col-span-2`}>
+        <h2 className="text-sm font-semibold text-primary-text">관계</h2>
         {state.relations.length === 0 ? (
           <p className="text-sm text-foreground/60">다른 캐릭터가 없습니다.</p>
         ) : (
@@ -149,8 +151,8 @@ export function CharacterLiveState({
         )}
         <p className="text-[11px] text-foreground/50">호감·신뢰·존중 -100~100, 친밀 0~100. 대화 장면마다 축별 최대 ±5씩 변합니다.</p>
       </section>
-      <section className={`${panel} sm:col-span-2`}>
-        <h2 className="text-sm font-semibold">기억</h2>
+      <section className={`${panel} ${panelBorder} sm:col-span-2`}>
+        <h2 className="text-sm font-semibold text-primary-text">기억</h2>
         {state.memories.length === 0 ? (
           <p className="text-sm text-foreground/60">대화가 진행되면 이 캐릭터가 중요하게 여긴 일이 여기에 기록됩니다.</p>
         ) : (

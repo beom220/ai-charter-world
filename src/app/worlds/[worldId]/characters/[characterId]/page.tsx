@@ -29,7 +29,7 @@ export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/c
   );
 }
 
-const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
+const panel = "flex flex-col gap-2 rounded-md border border-primary-soft/40 bg-pastel-gradient p-4";
 
 
 async function CharacterDetail({ params }: { params: Promise<{ worldId: string; characterId: string }> }) {
@@ -69,15 +69,15 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
       <Link href={`/worlds/${worldId}/characters`} className="text-sm text-foreground/70 underline">
         ← 캐릭터 목록
       </Link>
-      <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-semibold break-all">{c.name}</h2>
+      <div className="flex flex-col gap-1 rounded-lg border border-primary-soft/40 bg-pastel-gradient px-4 py-3">
+        <h2 className="text-xl font-semibold break-all text-primary-text">{c.name}</h2>
         <p className="text-sm text-foreground/70">
           {genderText(c)} · {c.age ?? "?"}세 · {c.personalityTags.map(tagLabel).join(", ")}
         </p>
       </div>
 
       <section className={panel}>
-        <h2 className="text-sm font-semibold">배경 (과거 경험)</h2>
+        <h2 className="text-sm font-semibold text-primary-text">배경 (과거 경험)</h2>
         <dl className="flex flex-col gap-1.5 text-sm">
           {(
             [
@@ -120,7 +120,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         }}
       >
         <section className={panel}>
-          <h2 className="text-sm font-semibold">성격 수치</h2>
+          <h2 className="text-sm font-semibold text-primary-text">성격 수치</h2>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 text-sm">
             {(Object.keys(BIG_FIVE_LABEL) as BigFiveAxis[]).map((axis) => (
               <div key={axis} className="contents">

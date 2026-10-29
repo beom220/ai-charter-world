@@ -17,7 +17,7 @@ import {
   type GenderInput,
   type RandomField,
 } from "@/lib/schemas/character";
-import { button, primaryButton } from "../../ui";
+import { primaryButton } from "../../ui";
 import { SettingsLockedNotice, useSettingsEditable } from "../../settings-lock";
 import { send } from "../../world-form";
 import { BackgroundPicker } from "./background-picker";
@@ -32,7 +32,9 @@ import { PersonalitySelect } from "./personality-select";
 //   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비워, 다시 들어오면 항상 빈 폼으로 시작한다. 수정 폼은 그대로 둔다.
 
 const input = "rounded-md border border-foreground/20 bg-background px-3 py-2";
-const small = "rounded border border-foreground/20 px-2 py-0.5 text-xs hover:bg-foreground/5 disabled:opacity-50";
+const randomButton =
+  "rounded-md border border-primary-soft bg-primary/10 px-4 py-2 text-sm font-medium text-primary-text hover:bg-primary/15 disabled:opacity-50";
+const small = "rounded border border-primary-soft/60 bg-background px-2 py-0.5 text-xs hover:bg-primary/10 disabled:opacity-50";
 
 export function CharacterForm({ worldId, characterId, initial }: { worldId: string; characterId?: string; initial?: CharacterDraft }) {
   const router = useRouter();
@@ -141,9 +143,9 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       : adulthoodBackgroundIssue(effectiveAge(draft.age) ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId);
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-primary-soft/40 bg-pastel-gradient p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={button} onClick={() => randomize()} disabled={busy}>
+        <button type="button" className={randomButton} onClick={() => randomize()} disabled={busy}>
           🎲 전체 랜덤
         </button>
         <span className="text-xs text-foreground/60">잠근 항목은 유지됩니다.</span>

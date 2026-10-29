@@ -47,10 +47,10 @@ export function BackgroundPicker({
             type="button"
             aria-haspopup="dialog"
             onClick={() => dialog.current?.showModal()}
-            className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-left hover:bg-foreground/5"
+            className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-left hover:border-primary-soft hover:bg-primary/5"
           >
             <span className={selected ? "" : "text-foreground/50"}>{selected ? selected.name : `${label} 배경을 선택하세요`}</span>
-            <span aria-hidden className="text-xs text-foreground/60">
+            <span aria-hidden className="text-primary-text text-xs text-foreground/60">
               변경
             </span>
           </button>
@@ -64,7 +64,7 @@ export function BackgroundPicker({
             className="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-foreground/20 bg-background p-0 text-foreground backdrop:bg-black/40"
           >
             <div className="flex max-h-[80vh] flex-col">
-              <div className="flex items-center justify-between gap-2 border-b border-foreground/10 px-4 py-3">
+              <div className="flex items-center justify-between gap-2 border-b border-primary-soft/40 bg-pastel-gradient px-4 py-3">
                 <h2 className="text-base font-semibold">{label} 배경 선택</h2>
                 <button type="button" className="rounded border border-foreground/20 px-2 py-1 text-xs hover:bg-foreground/5" onClick={() => dialog.current?.close()}>
                   닫기
@@ -79,7 +79,7 @@ export function BackgroundPicker({
                         type="button"
                         onClick={() => choose(p.id)}
                         className={`flex w-full flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left ${
-                          active ? "border-primary bg-primary/10" : "border-transparent hover:bg-foreground/5"
+                          active ? "border-primary bg-primary/10" : "border-transparent hover:bg-primary/5"
                         }`}
                       >
                         <span className="text-sm font-medium">

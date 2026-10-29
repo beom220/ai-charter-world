@@ -27,10 +27,10 @@ export function PersonalitySelect({ value, onChange, controls }: { value: string
         type="button"
         aria-haspopup="dialog"
         onClick={() => dialog.current?.showModal()}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-left hover:bg-foreground/5"
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-left hover:border-primary-soft hover:bg-primary/5"
       >
         <span className={value.length ? "" : "text-foreground/50"}>{value.length ? value.map(labelOf).join(", ") : "성격을 선택하세요"}</span>
-        <span aria-hidden className="shrink-0 text-xs text-foreground/60">
+        <span aria-hidden className="shrink-0 text-xs text-primary-text">
           변경
         </span>
       </button>
@@ -44,7 +44,7 @@ export function PersonalitySelect({ value, onChange, controls }: { value: string
         className="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-foreground/20 bg-background p-0 text-foreground backdrop:bg-black/40"
       >
         <div className="flex max-h-[80vh] flex-col">
-          <div className="flex items-center justify-between gap-2 border-b border-foreground/10 px-4 py-3">
+          <div className="flex items-center justify-between gap-2 border-b border-primary-soft/40 bg-pastel-gradient px-4 py-3">
             <h2 className="text-base font-semibold">
               성격 선택 <span className="text-xs font-normal text-foreground/60">({count})</span>
             </h2>
@@ -64,7 +64,7 @@ export function PersonalitySelect({ value, onChange, controls }: { value: string
                     disabled={disabled}
                     onClick={() => onChange(togglePersonalityTag(value, t.code))}
                     className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left disabled:opacity-40 ${
-                      selected ? "border-primary bg-primary/10 font-medium" : "border-transparent hover:bg-foreground/5"
+                      selected ? "border-primary bg-primary/10 font-medium" : "border-transparent hover:bg-primary/5"
                     }`}
                   >
                     <span aria-hidden className="w-4">

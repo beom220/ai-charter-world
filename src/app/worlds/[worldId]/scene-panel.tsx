@@ -86,7 +86,7 @@ const STREAM_LABEL: Record<StreamStatus, string> = {
 };
 const SIM_EVENTS: SimEventName[] = ["runtime.status", "scene.started", "scene.committed", "scene.failed"];
 
-const bubble = "max-w-[90%] rounded-lg bg-foreground/5 px-3 py-2 text-sm";
+const bubble = "max-w-[90%] rounded-lg border border-primary-soft/30 bg-pastel px-3 py-2 text-sm";
 
 export function ScenePanel({
   worldId,
@@ -400,21 +400,21 @@ export function ScenePanel({
             <div key={s.id} className="flex flex-col gap-2">
               {newDay && (
                 <div className="flex justify-center pt-1">
-                  <span className="rounded-full bg-foreground/10 px-3 py-0.5 text-[11px] font-semibold text-foreground/70">Day {at.day}</span>
+                  <span className="rounded-full bg-primary/10 px-3 py-0.5 text-[11px] font-semibold text-primary-text">Day {at.day}</span>
                 </div>
               )}
               <div className="flex items-center gap-2 py-1 text-[11px] text-foreground/50">
-                <span className="h-px flex-1 bg-foreground/10" />
+                <span className="h-px flex-1 bg-primary-soft/40" />
                 <span className="max-w-[70%] truncate">
                   #{s.seq} {s.title} · 허구의 캐릭터 발화 · AI 생성
                 </span>
-                <span className="h-px flex-1 bg-foreground/10" />
+                <span className="h-px flex-1 bg-primary-soft/40" />
               </div>
               <SceneNotes notes={(s.notes ?? []).filter(isStartNote)} />
               {visible.map((m) =>
                 play.typing === m.id ? (
                   <div key={m.id} className="flex flex-col items-start" aria-label={`${m.speakerName} 입력 중`}>
-                    <span className="text-sm font-semibold">
+                    <span className="text-sm font-semibold text-primary-text">
                       {m.speakerName} <span className="font-normal text-foreground/60">· 입력 중…</span>
                     </span>
                     <p className={`${bubble} flex gap-1`} aria-hidden>
@@ -425,7 +425,7 @@ export function ScenePanel({
                   </div>
                 ) : (
                   <div key={m.id} className="flex flex-col items-start">
-                    <span className="text-sm font-semibold">
+                    <span className="text-sm font-semibold text-primary-text">
                       <SpeakerName worldId={worldId} message={m} activeIds={activeIds} />
                       {emotionCueText(m.emotionCue) && <span className="font-normal text-foreground/60"> · {emotionCueText(m.emotionCue)}</span>}
                     </span>
