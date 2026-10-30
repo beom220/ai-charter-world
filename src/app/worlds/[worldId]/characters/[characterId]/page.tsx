@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { BACKGROUND_RARITY_LABEL, BACKGROUND_STAGE_LABEL, findBackground, requiresAdulthood, type BackgroundStage } from "../../../../../../config/character-backgrounds";
 import { BIG_FIVE_LABEL, type BigFiveAxis } from "../../../../../../config/personality-map";
 import { getCurrentSession } from "@/server/auth/session";
-import { findDeletedCharacterName, getCharacter } from "@/server/domain/characters/characters";
+import { findDeletedCharacterName, getCharacter, listCharacters } from "@/server/domain/characters/characters";
 import { getCharacterInsights } from "@/server/domain/characters/insights";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
 import { CharacterLiveState, type LiveMemory } from "./live-state";
@@ -13,11 +13,12 @@ import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { LoginRequired } from "../../../ui";
 import { ConfirmDeleteButton } from "../../../world-form";
 import { CharacterForm } from "../character-form";
-import { genderText, tagLabel } from "../character-list";
+import { CharacterList, genderText, tagLabel } from "../character-list";
 
 // 캐릭터 상세 패널과 편집 (PRD §6 /worlds/[worldId]/characters/[characterId]).
 // 감정·관계·기억은 여기서만 보여 준다(메인 대화창에는 변화 알림을 띄우지 않는다). 변화 이력 없이 현재 값만 보여 준다(Phase 5-5).
 // 장면이 커밋되면 SSE로 알고 최신 값을 다시 읽는다(live-state.tsx, Phase 6).
+// 맨 아래에 같은 세계관의 캐릭터 목록을 보여 다른 캐릭터로 바로 옮겨 갈 수 있게 한다(현재 캐릭터 강조).
 
 export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/[characterId]">) {
   return (
@@ -37,11 +38,11 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
   if (!session) return <LoginRequired />;
   const { worldId, characterId } = await params;
 
-  let c, insights, eventCursor;
+  let c, insights, eventCursor, characters;
   try {
     const userId = asAuthenticatedUserId(session.user.id);
     eventCursor = await currentWorldEventCursor(userId, worldId); // 이후 장면 커밋은 SSE로 받아 다시 읽는다
-    [c, insights] = await Promise.all([getCharacter(userId, worldId, characterId), getCharacterInsights(userId, worldId, characterId)]);
+    [c, insights, characters] = await Promise.all([getCharacter(userId, worldId, characterId), getCharacterInsights(userId, worldId, characterId), listCharacters(userId, worldId)]);
   } catch (error) {
     if (!(error instanceof NotFoundError)) throw error;
     // 대화 속 이름에서 들어왔는데 삭제된 캐릭터면 안내한다. 없거나 타인 소유면 404
@@ -66,9 +67,6 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
 
   return (
     <>
-      <Link href={`/worlds/${worldId}/characters`} className="text-sm text-foreground/70 underline">
-        ← 캐릭터 목록
-      </Link>
       <div className="flex flex-col gap-1">
         <h2 className="text-xl font-semibold break-all">{c.name}</h2>
         <p className="text-sm text-foreground/70">
@@ -168,6 +166,10 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           표시됩니다.
         </ConfirmDeleteButton>
       </section>
+
+      <div className="border-t border-foreground/10 pt-6">
+        <CharacterList worldId={worldId} characters={characters} currentId={c.id} />
+      </div>
     </>
   );
 }

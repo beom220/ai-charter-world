@@ -15,7 +15,18 @@ export function genderText(c: Pick<CharacterView, "gender" | "genderCustom">) {
   return c.gender === "CUSTOM" ? (c.genderCustom ?? "") : GENDER_LABEL[c.gender];
 }
 
-export function CharacterList({ worldId, characters, showAdd = true }: { worldId: string; characters: CharacterView[]; showAdd?: boolean }) {
+export function CharacterList({
+  worldId,
+  characters,
+  showAdd = true,
+  currentId,
+}: {
+  worldId: string;
+  characters: CharacterView[];
+  showAdd?: boolean;
+  /** 상세 화면에서 보고 있는 캐릭터 (강조) */
+  currentId?: string;
+}) {
   const full = characters.length >= MAX_ACTIVE_CHARACTERS_PER_WORLD;
   return (
     <section className="flex flex-col gap-3">
@@ -39,7 +50,11 @@ export function CharacterList({ worldId, characters, showAdd = true }: { worldId
         <ul className="grid gap-2 sm:grid-cols-2">
           {characters.map((c) => (
             <li key={c.id}>
-              <Link href={`/worlds/${worldId}/characters/${c.id}`} className="flex flex-col gap-1 rounded-md border border-foreground/15 p-3 hover:bg-hover">
+              <Link
+                href={`/worlds/${worldId}/characters/${c.id}`}
+                aria-current={c.id === currentId ? "page" : undefined}
+                className={`flex flex-col gap-1 rounded-md border p-3 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
+              >
                 <span className="font-medium break-all">
                   {c.name}
                   {conditionBadges(c.condition).map((b) => (
