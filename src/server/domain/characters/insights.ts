@@ -16,9 +16,12 @@ export type CharacterMemoryView = {
   content: string;
   aboutName: string | null;
   createdAt: Date;
+  /** 출처 장면 번호·월드 시각 (장면 기록이 삭제됐거나 7-2-2 이전 장면이면 null) */
+  sceneSeq: number | null;
+  worldSeconds: number | null;
 };
 
-/** 상세 화면에 보여 줄 기억 수 (중요도·최신순) */
+/** 상세 화면에 보여 줄 기억 수 (최신순) */
 const MEMORY_VIEW_LIMIT = 30;
 const ZERO: RelationValues = { affinity: 0, trust: 0, respect: 0, familiarity: 0 };
 
@@ -41,9 +44,18 @@ export async function getCharacterInsights(
     prisma.relationshipBaseline.findMany({ where: pairWhere }),
     prisma.characterMemory.findMany({
       where: { worldId, ownerCharacterId: characterId },
-      orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: MEMORY_VIEW_LIMIT,
-      select: { id: true, kind: true, acquisition: true, importance: true, content: true, createdAt: true, about: { select: { name: true } } },
+      select: {
+        id: true,
+        kind: true,
+        acquisition: true,
+        importance: true,
+        content: true,
+        createdAt: true,
+        about: { select: { name: true } },
+        sourceScene: { select: { seq: true, worldSeconds: true } },
+      },
     }),
   ]);
   const value = (from: string, to: string): RelationValues => {
@@ -52,6 +64,11 @@ export async function getCharacterInsights(
   };
   return {
     relations: others.map((o) => ({ otherId: o.id, otherName: o.name, outgoing: value(characterId, o.id), incoming: value(o.id, characterId) })),
-    memories: memories.map(({ about, ...m }) => ({ ...m, aboutName: about?.name ?? null })),
+    memories: memories.map(({ about, sourceScene, ...m }) => ({
+      ...m,
+      aboutName: about?.name ?? null,
+      sceneSeq: sourceScene?.seq ?? null,
+      worldSeconds: sourceScene?.worldSeconds ?? null,
+    })),
   };
 }

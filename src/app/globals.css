@@ -16,7 +16,11 @@
   --pastel-to: color-mix(in srgb, var(--blush) 45%, #ffffff);
   --hover: #FFF9F8;         /* 웜 화이트: 보조 버튼·목록 행 hover 배경 */
   --header: var(--ivory);    /* 상단 헤더 배경 (아래 흰 탭 바와 구분) */
-  --bar-track: #E7E7E7;      /* 상태 막대 빈 바탕 (채움은 primary-soft, 중앙 기준선은 primary-strong) */
+  /* 캐릭터 상세 상태창 글자 톤: 긍정·부정·중립과 이름·설명 기본 글자 */
+  --tone-positive: #C85D7D;  /* 로즈 핑크 */
+  --tone-negative: #71849B;  /* 블루그레이 */
+  --tone-neutral: #8B858B;   /* 그레이 */
+  --status-text: #33313A;
 }
 
 @theme inline {
@@ -31,7 +35,10 @@
   --color-pastel: var(--pastel);
   --color-hover: var(--hover);
   --color-header: var(--header);
-  --color-bar-track: var(--bar-track);
+  --color-tone-positive: var(--tone-positive);
+  --color-tone-negative: var(--tone-negative);
+  --color-tone-neutral: var(--tone-neutral);
+  --color-status-text: var(--status-text);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -46,7 +53,10 @@
     --pastel-to: color-mix(in srgb, var(--primary) 10%, var(--background));
     --hover: color-mix(in srgb, var(--ivory) 12%, var(--background));
     --header: color-mix(in srgb, var(--ivory) 8%, var(--background));
-    --bar-track: #2a2a2a;
+    --tone-positive: #E8A9B6;
+    --tone-negative: #A3B3C6;
+    --tone-neutral: #ABA5AB;
+    --status-text: var(--foreground);
   }
 }
 
