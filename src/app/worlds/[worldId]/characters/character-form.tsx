@@ -39,7 +39,7 @@ import { PersonalitySelect } from "./personality-select";
 //   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비우고, 다시 들어오면 전체 랜덤 한 번으로 미리 채운다. 수정 폼은 그대로 둔다.
 
 const input = "rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-sm";
-const small = "flex h-6 items-center gap-1 rounded border border-primary-soft/60 bg-background px-1.5 text-xs hover:bg-primary/10 disabled:opacity-50";
+const small = "flex h-7 items-center gap-1 rounded border border-primary-soft/60 bg-background px-1.5 text-xs hover:bg-primary/10 disabled:opacity-50";
 
 export function CharacterForm({
   worldId,
@@ -168,7 +168,7 @@ export function CharacterForm({
   const controls = (f: RandomField) => (
     <span className="flex gap-1">
       <button type="button" className={`group ${small} text-primary-text`} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤" title="이 항목 랜덤">
-        <DiceIcon size={14} rolling={busy} />
+        <DiceIcon size={18} rolling={busy} />
       </button>
       <button
         type="button"
@@ -185,7 +185,7 @@ export function CharacterForm({
   );
 
   const header = (label: string, f: RandomField) => (
-    <span className="flex items-center justify-between gap-2">
+    <span className="flex items-center gap-2">
       <span className="font-medium">{label}</span>
       {controls(f)}
     </span>
@@ -205,7 +205,7 @@ export function CharacterForm({
     <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-foreground/15 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={`group ${primaryButton} flex items-center gap-1.5`} onClick={() => randomize()} disabled={busy}>
-          <DiceIcon size={16} rolling={busy} />
+          <DiceIcon size={20} rolling={busy} />
           전체 랜덤
         </button>
         <span className="text-xs text-foreground/60">잠근 항목은 유지됩니다.</span>

@@ -35,7 +35,7 @@ export function AvatarPicker({
 
   return (
     <div className="flex flex-col gap-1.5 text-sm">
-      <span className="flex items-center justify-between gap-2">
+      <span className="flex items-center gap-2">
         <span className="font-medium">
           프로필 일러스트 <span className="text-xs font-normal text-foreground/60">(필수)</span>
         </span>

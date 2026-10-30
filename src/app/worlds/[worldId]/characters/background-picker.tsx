@@ -33,7 +33,7 @@ export function BackgroundPicker({
 
   return (
     <div className="flex flex-col gap-1 text-sm">
-      <span className="flex items-center justify-between gap-2">
+      <span className="flex items-center gap-2">
         <span className="font-medium">
           {label} 배경 {!disabledReason && <span className="text-xs font-normal text-foreground/60">(필수)</span>}
         </span>
