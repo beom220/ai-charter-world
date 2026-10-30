@@ -5,7 +5,8 @@ import { snapshotReferenceError, snapshotV1Schema } from "@/lib/snapshot/v1";
 import { migrateV1ToV2, snapshotBackgroundError, snapshotV2Schema } from "@/lib/snapshot/v2";
 import { migrateV2ToV3, snapshotV3Schema } from "@/lib/snapshot/v3";
 import { migrateV3ToV4, snapshotV4Schema } from "@/lib/snapshot/v4";
-import { migrateV4ToV5, snapshotV5Error, snapshotV5Schema, type SnapshotV5 } from "@/lib/snapshot/v5";
+import { migrateV4ToV5, snapshotV5Schema } from "@/lib/snapshot/v5";
+import { migrateV5ToV6, snapshotV6Error, snapshotV6Schema, type SnapshotV6 } from "@/lib/snapshot/v6";
 import { AppError } from "@/server/domain/errors";
 
 // 스냅샷 캡처·검증·복원 (architecture.md §9.1·§9.2·§9.6, Phase 6). 런타임 독립.
@@ -39,7 +40,7 @@ export const snapshotChecksum = (payload: unknown) => {
 };
 
 /** 현재 버전 payload */
-export type CurrentSnapshot = SnapshotV5;
+export type CurrentSnapshot = SnapshotV6;
 
 /**
  * 저장된 행 → 검증된 현재 버전 payload. 버전 → checksum(저장된 원본 기준) → 버전별 Zod → 마이그레이션 → 참조 순으로 확인한다.
@@ -52,25 +53,29 @@ export function parseSnapshot(row: { schemaVersion: number; payload: unknown; ch
   if (row.schemaVersion === 1) {
     const v1 = snapshotV1Schema.safeParse(row.payload);
     if (!v1.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1.data))));
+    snapshot = migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1.data)))));
   } else if (row.schemaVersion === 2) {
     const v2 = snapshotV2Schema.safeParse(row.payload);
     if (!v2.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(v2.data)));
+    snapshot = migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(v2.data))));
   } else if (row.schemaVersion === 3) {
     const v3 = snapshotV3Schema.safeParse(row.payload);
     if (!v3.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV4ToV5(migrateV3ToV4(v3.data));
+    snapshot = migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(v3.data)));
   } else if (row.schemaVersion === 4) {
     const v4 = snapshotV4Schema.safeParse(row.payload);
     if (!v4.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = migrateV4ToV5(v4.data);
-  } else {
+    snapshot = migrateV5ToV6(migrateV4ToV5(v4.data));
+  } else if (row.schemaVersion === 5) {
     const v5 = snapshotV5Schema.safeParse(row.payload);
     if (!v5.success) throw new SnapshotInvalidError("SCHEMA");
-    snapshot = v5.data;
+    snapshot = migrateV5ToV6(v5.data);
+  } else {
+    const v6 = snapshotV6Schema.safeParse(row.payload);
+    if (!v6.success) throw new SnapshotInvalidError("SCHEMA");
+    snapshot = v6.data;
   }
-  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot) ?? snapshotV5Error(snapshot);
+  const refError = snapshotReferenceError(snapshot) ?? snapshotBackgroundError(snapshot) ?? snapshotV6Error(snapshot);
   if (refError) throw new SnapshotInvalidError(refError);
   return snapshot;
 }
@@ -99,7 +104,7 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
   ]);
   const rel = (r: { affinity: number; trust: number; respect: number; familiarity: number }) => ({ affinity: r.affinity, trust: r.trust, respect: r.respect, familiarity: r.familiarity });
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     capturedAt: iso(now),
     world: {
       name: world.name,
@@ -132,7 +137,6 @@ export async function captureSnapshot(tx: Tx, worldId: string, now: Date): Promi
       conscientiousness: c.conscientiousness,
       emotionalStability: c.emotionalStability,
       openness: c.openness,
-      goal: c.goal,
       characterContext: c.characterContext,
       initialMood: c.initialMood,
       initialMoodIntensity: c.initialMoodIntensity,

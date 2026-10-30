@@ -7,7 +7,7 @@ import { migrateV2ToV3, type SnapshotV3 } from "@/lib/snapshot/v3";
 import { parseSnapshot, snapshotChecksum } from "@/server/domain/saves/snapshot";
 import { autoEventPeriodOf, pickAutoEventPreset, rollAutoEventPeriod } from "@/server/engine/director/auto-events";
 
-// Phase 7-2-1: 자동 사건 프리셋 24종, 20장면 구간 추첨, 프리셋 반복 방지, 스냅샷 v1·v2·v3 → 최신(v5) 호환과 v3 불변식.
+// Phase 7-2-1: 자동 사건 프리셋 24종, 20장면 구간 추첨, 프리셋 반복 방지, 스냅샷 v1·v2·v3 → 최신(v6) 호환과 v3 불변식.
 // (부상 회복 규칙은 7-2-2에서 월드 시간 기준으로 바뀌어 world-time-conditions.test.ts에서 본다)
 
 const seq = (...values: number[]) => {
@@ -85,7 +85,7 @@ describe("20장면 구간 추첨", () => {
   });
 });
 
-describe("스냅샷 v3 호환 (최신 v5로 읽기)", () => {
+describe("스냅샷 v3 호환 (최신 v6으로 읽기)", () => {
   const t = "2026-10-28T00:00:00.000Z";
   const character = {
     id: "a",
@@ -145,7 +145,7 @@ describe("스냅샷 v3 호환 (최신 v5로 읽기)", () => {
     const v2 = { ...v1, schemaVersion: 2, characters: v1.characters.map((c) => ({ ...c, childhoodBackgroundId: null, adulthoodBackgroundId: null })) };
     for (const [version, payload] of [[1, v1], [2, v2]] as const) {
       const p = parse(version, payload);
-      expect(p.schemaVersion).toBe(5);
+      expect(p.schemaVersion).toBe(6);
       expect(p.gameState.worldSeconds).toBe(0);
       expect(p.characterConditions.map((c) => [c.characterId, c.vital, c.injury, c.thermalCause, c.painLevel])).toEqual([
         ["a", "ALIVE", "NONE", "NONE", "NONE"],

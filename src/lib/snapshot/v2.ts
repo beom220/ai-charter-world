@@ -25,7 +25,7 @@ export function migrateV1ToV2(p: SnapshotV1): SnapshotV2 {
 }
 
 /** 배경 ID가 알려진 프리셋인지, 성년기 배경이 19세 이상에게만 있는지. 문제가 있으면 고정 코드 */
-export function snapshotBackgroundError(p: Pick<SnapshotV2, "characters">): string | null {
+export function snapshotBackgroundError(p: { characters: Pick<SnapshotV2["characters"][number], "childhoodBackgroundId" | "adulthoodBackgroundId" | "age">[] }): string | null {
   for (const c of p.characters) {
     if (c.childhoodBackgroundId !== null && !findBackground(c.childhoodBackgroundId, "CHILDHOOD")) return "BAD_BACKGROUND";
     if (c.adulthoodBackgroundId !== null && (!findBackground(c.adulthoodBackgroundId, "ADULTHOOD") || c.age === null || !requiresAdulthood(c.age))) return "BAD_BACKGROUND";

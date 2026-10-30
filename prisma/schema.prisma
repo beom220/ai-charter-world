@@ -259,7 +259,6 @@ model Character {
   conscientiousness     Int
   emotionalStability    Int
   openness              Int
-  goal                  String?   @db.Text
   characterContext      String    @default("") @db.VarChar(300) // 코드 포인트 300자
   childhoodBackgroundId String?   @db.VarChar(64) // 유년기 배경 프리셋 ID (config/character-backgrounds, 신규·수정 시 필수, Phase 7-1)
   adulthoodBackgroundId String?   @db.VarChar(64) // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL)

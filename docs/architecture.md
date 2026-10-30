@@ -829,7 +829,7 @@ export interface RunnerHost {
 |---|---|---|
 | 설정 | World, Character, RelationshipBaseline, 실행 설정 | 사용자가 편집 |
 | 활성 진행 상태 | GameState, ConversationScene·Message, RelationshipState·Change, EmotionState·Change, CharacterMemory, WorldEvent | 장면마다 커밋 |
-| 스냅샷 | GameSnapshot(JSONB, `schemaVersion`, 현재 v5) | 수동·자동 슬롯과 복구 지점이 참조 |
+| 스냅샷 | GameSnapshot(JSONB, `schemaVersion`, 현재 v6) | 수동·자동 슬롯과 복구 지점이 참조 |
 
 **스냅샷에 포함**: 설정 계층 전체(삭제된 캐릭터 포함) + 활성 진행 상태 전체(Phase 7부터 캐릭터 배경, 사건·자동 사건 구간, 신체 상태와 변화 이력, 월드 시간 포함 — 스냅샷 v4, 캐릭터 일러스트 `avatarId` — v5, `claimedAttemptId`·시계 기준 시각 제외).
 **스냅샷에서 제외**: 인증 정보, API 키·연결, 사용량·한도, ApiRequestLog, SimulationRun, SystemNotice, SimulationEvent.

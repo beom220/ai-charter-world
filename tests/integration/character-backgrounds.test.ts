@@ -148,7 +148,8 @@ describe("세이브 호환", () => {
     const v1 = {
       ...v2,
       schemaVersion: 1,
-      characters: v2.characters.map((c) => Object.fromEntries(Object.entries(c).filter(([k]) => k !== "childhoodBackgroundId" && k !== "adulthoodBackgroundId"))),
+      // v1 형식: 배경 없음, 목표 있음(v6에서 제거된 필드)
+      characters: v2.characters.map((c) => ({ ...Object.fromEntries(Object.entries(c).filter(([k]) => k !== "childhoodBackgroundId" && k !== "adulthoodBackgroundId")), goal: null })),
     };
     const snapshot = await prisma.gameSnapshot.create({ data: { worldId: world.id, schemaVersion: 1, payload: v1, ...snapshotChecksum(v1) } });
     const old = await prisma.saveGame.create({

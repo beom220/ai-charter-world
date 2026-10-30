@@ -3,7 +3,6 @@ import { AVATAR_EXPRESSIONS } from "../../config/avatars";
 import { avatarIdsFor, avatarSrc, isAvatarForGender, moodExpression, pickAvailableAvatar } from "@/lib/avatars";
 import { characterInputSchema } from "@/lib/schemas/character";
 import type { SnapshotV1 } from "@/lib/snapshot/v1";
-import type { SnapshotV5 } from "@/lib/snapshot/v5";
 import { randomizeCharacter } from "@/server/domain/characters/random";
 import { parseSnapshot, snapshotChecksum } from "@/server/domain/saves/snapshot";
 
@@ -83,7 +82,7 @@ describe("랜덤·잠금", () => {
   });
 });
 
-describe("스냅샷 v5", () => {
+describe("스냅샷 v5·v6", () => {
   const t = "2026-10-28T00:00:00.000Z";
   const character = (id: string, gender: "FEMALE" | "MALE") => ({
     id,
@@ -124,21 +123,30 @@ describe("스냅샷 v5", () => {
 
   it("이전 버전(v1·v4)은 checksum 그대로 읽혀 avatarId NULL(임의 배정 없음)", () => {
     const latest = parse(1, v1);
-    expect(latest.schemaVersion).toBe(5);
+    expect(latest.schemaVersion).toBe(6);
     expect(latest.characters.map((c) => c.avatarId)).toEqual([null, null, null]);
-    const v4 = { ...latest, schemaVersion: 4, characters: latest.characters.map(({ avatarId, ...c }) => (void avatarId, c)) };
+    // v4 원본(목표 포함, 일러스트 없음)
+    const v4 = { ...latest, schemaVersion: 4, characters: latest.characters.map(({ avatarId, ...c }) => (void avatarId, { ...c, goal: null })) };
     expect(parse(4, v4).characters.map((c) => c.avatarId)).toEqual([null, null, null]);
   });
 
-  it("활성 캐릭터끼리 중복·성별 불일치는 거절, 삭제된 캐릭터와의 중복은 허용", () => {
+  it("v5 원본(목표 포함)은 목표를 버리고 v6으로 읽는다. 활성 캐릭터끼리 중복·성별 불일치는 거절, 삭제된 캐릭터와의 중복은 허용", () => {
     const latest = parse(1, v1);
-    const withAvatars = (ids: (string | null)[], deleted: number[] = []): SnapshotV5 => ({
+    const v5 = (ids: (string | null)[], deleted: number[] = []) => ({
       ...latest,
-      characters: latest.characters.map((c, i) => ({ ...c, avatarId: ids[i] ?? null, deletedAt: deleted.includes(i) ? t : null })),
+      schemaVersion: 5,
+      characters: latest.characters.map((c, i) => ({ ...c, goal: "옛 목표", avatarId: ids[i] ?? null, deletedAt: deleted.includes(i) ? t : null })),
     });
-    expect(parse(5, withAvatars(["female-01", "female-02", "male-01"])).characters.map((c) => c.avatarId)).toEqual(["female-01", "female-02", "male-01"]);
-    expect(() => parse(5, withAvatars(["female-01", "female-01", null]))).toThrow(expect.objectContaining({ reason: "DUPLICATE_AVATAR" }));
-    expect(() => parse(5, withAvatars(["female-01", null, "female-02"]))).toThrow(expect.objectContaining({ reason: "BAD_AVATAR" }));
-    expect(parse(5, withAvatars(["female-01", "female-01", null], [1])).characters[1]!.avatarId).toBe("female-01");
+    const read = parse(5, v5(["female-01", "female-02", "male-01"]));
+    expect(read.schemaVersion).toBe(6);
+    expect(read.characters.map((c) => c.avatarId)).toEqual(["female-01", "female-02", "male-01"]);
+    expect(read.characters.every((c) => !("goal" in c))).toBe(true);
+    expect(() => parse(5, v5(["female-01", "female-01", null]))).toThrow(expect.objectContaining({ reason: "DUPLICATE_AVATAR" }));
+    expect(() => parse(5, v5(["female-01", null, "female-02"]))).toThrow(expect.objectContaining({ reason: "BAD_AVATAR" }));
+    expect(parse(5, v5(["female-01", "female-01", null], [1])).characters[1]!.avatarId).toBe("female-01");
+    // v6 원본(목표 없음)도 같은 규칙
+    const v6 = { ...read, characters: read.characters.map((c, i) => ({ ...c, avatarId: i < 2 ? "female-01" : c.avatarId })) };
+    expect(() => parse(6, v6)).toThrow(expect.objectContaining({ reason: "DUPLICATE_AVATAR" }));
+    expect(() => parse(6, { ...read, characters: read.characters.map((c) => ({ ...c, goal: null })) })).not.toThrow(); // 모르는 키는 버린다
   });
 });

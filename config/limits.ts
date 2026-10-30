@@ -216,8 +216,8 @@ export const AUTO_SAVE_RETRY_MS = 10 * 60 * 1000;
 export const SAVE_NAME_MAX_LENGTH = 60;
 
 /** 현재 스냅샷 payload 버전 (lib/snapshot). v2 = 캐릭터 배경 추가 (Phase 7-1), v3 = 사건·자동 사건 구간·캐릭터 신체 상태 (Phase 7-2),
- *  v4 = 월드 시간·온도 불편(원인·단계)·고통 분리 (Phase 7-2-2), v5 = 캐릭터 프로필 일러스트 avatarId */
-export const SNAPSHOT_SCHEMA_VERSION = 5;
+ *  v4 = 월드 시간·온도 불편(원인·단계)·고통 분리 (Phase 7-2-2), v5 = 캐릭터 프로필 일러스트 avatarId, v6 = 캐릭터 목표(goal) 제거 */
+export const SNAPSHOT_SCHEMA_VERSION = 6;
 
 /** 저장·불러오기 트랜잭션 제한 시간 (대화 기록 전체를 캡처·복원하므로 기본 5초보다 길게) */
 export const SAVE_TRANSACTION_TIMEOUT_MS = 30_000;

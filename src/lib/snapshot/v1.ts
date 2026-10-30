@@ -156,7 +156,11 @@ export type SnapshotV1 = z.infer<typeof snapshotV1Schema>;
  * 활성 캐릭터가 6명 이하여야 한다. 문제가 있으면 고정 코드, 없으면 null
  */
 export function snapshotReferenceError(
-  p: Omit<SnapshotV1, "schemaVersion" | "worldEvents"> & { worldEvents: Pick<SnapshotV1["worldEvents"][number], "sourceSceneId">[] }, // 이후 버전 사건 형식도 받는다
+  // 이후 버전의 사건·캐릭터 형식도 받는다(캐릭터는 id·deletedAt만 본다. v6은 goal이 없다)
+  p: Omit<SnapshotV1, "schemaVersion" | "worldEvents" | "characters"> & {
+    worldEvents: Pick<SnapshotV1["worldEvents"][number], "sourceSceneId">[];
+    characters: Pick<SnapshotV1["characters"][number], "id" | "deletedAt">[];
+  },
 ): string | null {
   const characters = new Set(p.characters.map((c) => c.id));
   const scenes = new Set(p.scenes.map((s) => s.id));
