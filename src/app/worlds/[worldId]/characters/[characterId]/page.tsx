@@ -14,6 +14,7 @@ import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { LoginRequired } from "../../../ui";
 import { CharacterForm } from "../character-form";
 import { CharacterList, genderText, tagLabel } from "../character-list";
+import { cardClass, cardTitle, sectionTitle, subPageTitle, textLink } from "../../../../ui-styles";
 
 // 캐릭터 상세 패널과 편집 (PRD §6 /worlds/[worldId]/characters/[characterId]).
 // 감정·관계·기억은 여기서만 보여 준다(메인 대화창에는 변화 알림을 띄우지 않는다). 변화 이력 없이 현재 값만 보여 준다(Phase 5-5).
@@ -30,7 +31,7 @@ export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/c
   );
 }
 
-const panel = "flex flex-col gap-2 rounded-md border border-foreground/15 p-4";
+const panel = `flex flex-col gap-2 ${cardClass}`;
 
 
 async function CharacterDetail({ params }: { params: Promise<{ worldId: string; characterId: string }> }) {
@@ -54,10 +55,10 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           <strong>{deletedName}</strong>은(는) 삭제된 캐릭터입니다. 지난 대화의 발언은 남아 있지만 상세 정보는 볼 수 없습니다.
         </p>
         <div className="flex gap-3 text-sm">
-          <Link href={`/worlds/${worldId}`} className="text-primary-text underline">
+          <Link href={`/worlds/${worldId}`} className={textLink}>
             ← 대화로
           </Link>
-          <Link href={`/worlds/${worldId}/characters`} className="text-primary-text underline">
+          <Link href={`/worlds/${worldId}/characters`} className={textLink}>
             캐릭터 목록
           </Link>
         </div>
@@ -70,7 +71,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
       <div className="flex items-center gap-4">
         <HeaderAvatar characterId={c.id} avatarId={c.avatarId} name={c.name} initialMood={c.emotion?.mood ?? null} dead={c.condition.vital === "DEAD"} />
         <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="text-xl font-semibold break-all">{c.name}</h2>
+          <h2 className={`${subPageTitle} break-all`}>{c.name}</h2>
           <p className="text-sm text-foreground/70">
             {genderText(c)} · {c.age ?? "?"}세 · {c.personalityTags.map(tagLabel).join(", ")}
           </p>
@@ -78,7 +79,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
       </div>
 
       <section className={panel}>
-        <h2 className="text-sm font-semibold">배경 (과거 경험)</h2>
+        <h2 className={cardTitle}>배경 (과거 경험)</h2>
         <dl className="flex flex-col gap-1.5 text-sm">
           {(
             [
@@ -128,7 +129,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         </p>
       ) : (
       <section className="flex flex-col gap-3 border-t border-foreground/10 pt-6">
-        <h2 className="text-lg font-semibold">설정 수정</h2>
+        <h2 className={sectionTitle}>설정 수정</h2>
         <CharacterForm
           worldId={worldId}
           characterId={c.id}

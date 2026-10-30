@@ -6,6 +6,7 @@ import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { getWorld } from "@/server/domain/worlds";
 import { ProfileBar } from "./profile-bar";
 import { WorldTabs } from "./world-tabs";
+import { pageTitle } from "../../ui-styles";
 
 // 세계관 공통 틀 (UI 개선): 제목 + 상단 탭(대화·캐릭터·세계관 설정·내 세계관). 소유권·404는 각 페이지가 확인한다
 // (이 제목 영역은 소유자가 아니면 아무것도 그리지 않는다).
@@ -38,7 +39,7 @@ async function WorldHeader({ params }: { params: Promise<{ worldId: string }> })
   return (
     <>
       <div className="mx-auto w-full max-w-3xl px-4 pt-4 pb-4 sm:px-8 sm:pt-8">
-        <h1 className="text-2xl font-semibold break-all">{world.name}</h1>
+        <h1 className={`${pageTitle} break-all`}>{world.name}</h1>
       </div>
       <div className="sticky top-12 z-20 bg-background/95 backdrop-blur">
         <WorldTabs worldId={world.id} />

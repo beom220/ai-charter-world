@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Toast, useToast } from "../../toast";
+import { button, cardClass, cardTitle, dangerButton, errorText, helpText, inputClass, primaryButton, smallButton } from "../../ui-styles";
 
 type Connection = {
   status: "UNVERIFIED" | "ACTIVE" | "INVALID";
@@ -12,7 +14,7 @@ type Connection = {
 
 type Model = { id: string; displayName: string; inputTokenLimit: number | null; outputTokenLimit: number | null; thinking: boolean; preview: boolean };
 
-type Notice = { kind: "ok" | "error"; text: string } | null;
+type Notice = { kind: "error"; text: string } | null;
 
 /** 이번 화면에서 선택에 실패한 모델 표시 (저장하지 않는 화면 상태) */
 const FAILED_LABEL: Record<string, string> = {
@@ -31,7 +33,6 @@ function statusLabel(c: Connection): string {
   return c.defaultModel ? "사용 가능" : "키 확인됨 — 모델 선택 필요";
 }
 
-const button = "rounded-md border border-foreground/20 px-3 py-1.5 text-sm font-medium hover:bg-hover disabled:opacity-50";
 
 async function call(path: string, method: string, body?: unknown) {
   const res = await fetch(path, {
@@ -50,6 +51,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const { toast, show, dismiss } = useToast(); // 완료 문구는 공용 토스트, 오류는 위에 남긴다
 
   async function run(task: () => Promise<void>) {
     setBusy(true);
@@ -71,7 +73,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
       setModels([]);
       setFailedModels({});
       setConnection(json.connection);
-      setNotice({ kind: "ok", text: json.created ? "키를 저장했습니다. 검증을 진행하세요." : "키를 교체했습니다. 다시 검증하세요." });
+      show(json.created ? "키를 저장했습니다. 검증을 진행하세요." : "키를 교체했습니다. 다시 검증하세요.");
     });
 
   const verify = () =>
@@ -82,10 +84,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
       setModels(json.models);
       setFailedModels({});
       if (!json.verification.ok) return setNotice({ kind: "error", text: json.verification.message });
-      setNotice({
-        kind: "ok",
-        text: json.modelReselectRequired ? "검증되었습니다. 이전 모델을 이 키로 쓸 수 없어 모델을 다시 선택해야 합니다." : "검증되었습니다.",
-      });
+      show(json.modelReselectRequired ? "검증되었습니다. 이전 모델을 이 키로 쓸 수 없어 모델을 다시 선택해야 합니다." : "검증되었습니다.");
     });
 
   const refreshModels = () =>
@@ -109,7 +108,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
         return next;
       });
       setConnection(json.connection);
-      setNotice({ kind: "ok", text: `기본 모델을 ${id}(으)로 설정했습니다.` });
+      show(`기본 모델을 ${id}(으)로 설정했습니다.`);
     });
 
   const remove = () =>
@@ -119,13 +118,13 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
       if (!ok) return setNotice({ kind: "error", text: json.error.message });
       setConnection(null);
       setModels([]);
-      setNotice({ kind: "ok", text: "키를 삭제했습니다. Google AI Studio에서도 키를 폐기하는 것을 권장합니다." });
+      show("키를 삭제했습니다. Google AI Studio에서도 키를 폐기하는 것을 권장합니다.");
     });
 
   return (
     <div className="flex flex-col gap-6">
       {notice && (
-        <p role={notice.kind === "error" ? "alert" : "status"} className={`text-sm ${notice.kind === "error" ? "text-red-600" : "text-green-700"}`}>
+        <p role="alert" className={errorText}>
           {notice.text}
         </p>
       )}
@@ -138,8 +137,8 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
         </p>
       )}
 
-      <section className="flex flex-col gap-2">
-        <h2 className="font-medium">연결 상태</h2>
+      <section className={`flex flex-col gap-2 ${cardClass}`}>
+        <h2 className={cardTitle}>연결 상태</h2>
         {connection ? (
           <dl className="grid grid-cols-[8rem_1fr] gap-1 text-sm">
             <dt>상태</dt>
@@ -162,8 +161,8 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
         )}
       </section>
 
-      <section className="flex flex-col gap-2">
-        <h2 className="font-medium">{connection ? "키 교체" : "키 등록"}</h2>
+      <section className={`flex flex-col gap-2 ${cardClass}`}>
+        <h2 className={cardTitle}>{connection ? "키 교체" : "키 등록"}</h2>
         <div className="flex gap-2">
           <input
             type="password"
@@ -172,9 +171,9 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             aria-label="Gemini API 키"
-            className="flex-1 rounded-md border border-foreground/20 px-3 py-1.5 text-sm"
+            className={`${inputClass} min-w-0 flex-1`}
           />
-          <button type="button" className={button} onClick={saveKey} disabled={busy || apiKey.trim() === ""}>
+          <button type="button" className={primaryButton} onClick={saveKey} disabled={busy || apiKey.trim() === ""}>
             저장
           </button>
         </div>
@@ -182,22 +181,22 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
 
       {connection && (
         <section className="flex flex-wrap gap-2">
-          <button type="button" className={button} onClick={verify} disabled={busy}>
+          <button type="button" className={primaryButton} onClick={verify} disabled={busy}>
             키 검증
           </button>
           <button type="button" className={button} onClick={refreshModels} disabled={busy || connection.status !== "ACTIVE"}>
             모델 목록 새로고침
           </button>
-          <button type="button" className={button} onClick={remove} disabled={busy}>
+          <button type="button" className={dangerButton} onClick={remove} disabled={busy}>
             키 삭제
           </button>
         </section>
       )}
 
       {models.length > 0 && (
-        <section className="flex flex-col gap-2">
-          <h2 className="font-medium">모델 선택</h2>
-          <p className="text-xs text-foreground/70">
+        <section className={`flex flex-col gap-2 ${cardClass}`}>
+          <h2 className={cardTitle}>모델 선택</h2>
+          <p className={helpText}>
             이 키로 조회된 모델 목록입니다. 목록에 있어도 생성 요청이 가능하다는 뜻은 아닙니다. 선택하면 모델 확인과 최소 생성 요청(출력 128토큰
             이하)을 1번씩 보내 실제로 쓸 수 있는지 확인하고, 성공한 경우에만 기본 모델로 저장합니다. 소량의 토큰이 사용될 수 있습니다.
           </p>
@@ -209,7 +208,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
                   {m.preview && <span className="ml-1 text-xs text-amber-700">미리보기</span>}
                   {failedModels[m.id] && <span className="ml-1 text-xs text-red-600">{FAILED_LABEL[failedModels[m.id]!]}</span>}
                 </span>
-                <button type="button" className={button} onClick={() => selectModel(m.id)} disabled={busy || connection?.defaultModel === m.id}>
+                <button type="button" className={smallButton} onClick={() => selectModel(m.id)} disabled={busy || connection?.defaultModel === m.id}>
                   {connection?.defaultModel === m.id ? "선택됨" : "선택"}
                 </button>
               </li>
@@ -217,6 +216,7 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
           </ul>
         </section>
       )}
+      <Toast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

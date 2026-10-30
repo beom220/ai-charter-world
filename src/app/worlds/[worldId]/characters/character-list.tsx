@@ -7,6 +7,7 @@ import { GENDER_LABEL } from "@/lib/schemas/character";
 import type { CharacterView } from "@/server/domain/characters/characters";
 import { MOOD_LABEL, primaryButton } from "../../ui";
 import { ConfirmDeleteButton } from "../../world-form";
+import { sectionTitle } from "../../../ui-styles";
 
 // 세계관 상세의 캐릭터 목록 (활성 캐릭터만). 6명이면 추가 버튼 대신 상한 안내를 보인다. 생성 화면 하단에서는 추가 버튼을 숨긴다(showAdd).
 // 사망자도 목록에 남아 슬롯을 차지한다(Phase 7-2-2). 신체 상태가 정상이 아니면 배지로 보인다.
@@ -34,7 +35,7 @@ export function CharacterList({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">
+        <h2 className={sectionTitle}>
           캐릭터 ({characters.length}/{MAX_ACTIVE_CHARACTERS_PER_WORLD})
         </h2>
         {full ? (
@@ -56,14 +57,14 @@ export function CharacterList({
               <Link
                 href={`/worlds/${worldId}/characters/${c.id}`}
                 aria-current={c.id === currentId ? "page" : undefined}
-                className={`flex items-start gap-3 rounded-md border p-3 pr-10 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
+                className={`flex items-start gap-3 rounded-lg border p-3 pr-10 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
               >
                 <Avatar avatarId={c.avatarId} name={c.name} size={44} />
                 <span className="flex min-w-0 flex-col gap-1">
                 <span className="font-medium break-all">
                   {c.name}
                   {conditionBadges(c.condition).map((b) => (
-                    <span key={b} className={`ml-1 rounded px-1.5 py-0.5 text-[11px] font-normal ${b === "사망" ? "bg-red-600/10 text-red-600" : "bg-amber-600/10"}`}>
+                    <span key={b} className={`ml-1 rounded px-1.5 py-0.5 text-xs font-normal ${b === "사망" ? "bg-red-600/10 text-red-600" : "bg-amber-600/10"}`}>
                       {b}
                     </span>
                   ))}

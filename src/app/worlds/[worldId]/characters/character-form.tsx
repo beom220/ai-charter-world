@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ADULTHOOD_MIN_AGE, findBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
-import { CHARACTER_AGE_MAX, CHARACTER_CONTEXT_MAX_LENGTH, TOAST_DURATION_MS } from "../../../../../config/limits";
+import { CHARACTER_AGE_MAX, CHARACTER_CONTEXT_MAX_LENGTH } from "../../../../../config/limits";
 import { AVATAR_EXHAUSTED_MESSAGE, AVATAR_IN_USE_MESSAGE, AVATAR_REQUIRED_MESSAGE, isAvatarForGender, pickAvailableAvatar } from "@/lib/avatars";
 import { EMPTY_CHARACTER_DRAFT } from "@/lib/character-form";
 import {
@@ -19,6 +19,8 @@ import {
   type RandomField,
 } from "@/lib/schemas/character";
 import { primaryButton } from "../../ui";
+import { Toast, useToast } from "../../../toast";
+import { cardClass, errorText, helpText, inputClass, smallButtonBase } from "../../../ui-styles";
 import { SettingsLockedNotice, useSettingsEditable } from "../../settings-lock";
 import { send } from "../../world-form";
 import { AvatarPicker } from "./avatar-picker";
@@ -38,8 +40,8 @@ import { PersonalitySelect } from "./personality-select";
 // 생성 화면 상태 초기화: cacheComponents에서 Next.js는 떠난 화면을 <Activity>로 숨겨 상태를 남긴다.
 //   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비우고, 다시 들어오면 전체 랜덤 한 번으로 미리 채운다. 수정 폼은 그대로 둔다.
 
-const input = "rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-sm";
-const small = "flex h-7 items-center gap-1 rounded border border-primary-soft/60 bg-background px-1.5 text-xs hover:bg-primary/10 disabled:opacity-50";
+const input = inputClass;
+const small = `${smallButtonBase} px-1.5`;
 
 export function CharacterForm({
   worldId,
@@ -62,15 +64,8 @@ export function CharacterForm({
   const [locked, setLocked] = useState<Set<RandomField>>(new Set());
   const [busy, setBusy] = useState(false);
   // 오류는 폼 안에 남기고, 완료(ok) 알림은 화면 아래에 잠깐 나타났다 사라진다(id가 바뀌면 같은 문구도 다시 보인다)
-  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string; id?: number } | null>(null);
-  const flash = (text: string) => setNotice({ kind: "ok", text, id: Date.now() });
-  const flashId = notice?.kind === "ok" ? notice.id : undefined;
-  // 완료 알림은 TOAST_DURATION_MS 뒤에 지운다(애니메이션 종료 이벤트에 기대지 않는다). 새 알림이 오면 타이머를 다시 건다
-  useEffect(() => {
-    if (flashId === undefined) return;
-    const timer = setTimeout(() => setNotice((n) => (n?.id === flashId ? null : n)), TOAST_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [flashId]);
+  const [notice, setNotice] = useState<{ kind: "error"; text: string } | null>(null);
+  const { toast, show: flash, dismiss } = useToast();
   const editable = useSettingsEditable(worldId);
   const usedAvatars = new Set(usedAvatarIds);
   const avatarUsable = (id: string | null, gender: string | null) => isAvatarForGender(id, gender) && !usedAvatarIds.includes(id!);
@@ -167,12 +162,12 @@ export function CharacterForm({
   /** 필드 제목 옆의 항목별 랜덤(주사위)과 잠금 토글(자물쇠) */
   const controls = (f: RandomField) => (
     <span className="flex gap-1">
-      <button type="button" className={`group ${small} text-primary-text`} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤" title="이 항목 랜덤">
+      <button type="button" className={`group ${small} border-foreground/20 bg-background text-primary-text hover:bg-hover`} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤" title="이 항목 랜덤">
         <DiceIcon size={18} rolling={busy} />
       </button>
       <button
         type="button"
-        className={`${small} ${locked.has(f) ? "border-primary bg-primary/10 text-primary-text" : "text-foreground/50"}`}
+        className={`${small} ${locked.has(f) ? "border-primary bg-primary/10 text-primary-text" : "border-foreground/20 bg-background text-foreground/50 hover:bg-hover"}`}
         onClick={() => toggleLock(f)}
         aria-pressed={locked.has(f)}
         aria-label="잠금"
@@ -202,13 +197,13 @@ export function CharacterForm({
         (!draft.avatarId ? AVATAR_REQUIRED_MESSAGE : !avatarUsable(draft.avatarId, draft.gender) ? AVATAR_IN_USE_MESSAGE : null));
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-foreground/15 p-4">
+    <form onSubmit={submit} className={`flex flex-col gap-4 ${cardClass}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={`group ${primaryButton} flex items-center gap-1.5`} onClick={() => randomize()} disabled={busy}>
+        <button type="button" className={`group ${primaryButton}`} onClick={() => randomize()} disabled={busy}>
           <DiceIcon size={20} rolling={busy} />
           전체 랜덤
         </button>
-        <span className="text-xs text-foreground/60">잠근 항목은 유지됩니다.</span>
+        <span className={helpText}>잠근 항목은 유지됩니다.</span>
       </div>
 
       <div className="flex flex-col gap-1 text-sm">
@@ -233,7 +228,7 @@ export function CharacterForm({
           })}
         </div>
         {!genderChosen && (
-          <span className="text-xs text-foreground/60">{draft.gender ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}</span>
+          <span className={helpText}>{draft.gender ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}</span>
         )}
       </div>
 
@@ -280,7 +275,7 @@ export function CharacterForm({
 
       <label className="flex flex-col gap-1 text-sm">
         {header("캐릭터 컨텍스트", "characterContext")}
-        <span className="text-foreground/60">배경·말투·가치관 등을 적으세요.</span>
+        <span className={helpText}>배경·말투·가치관 등을 적으세요.</span>
         <textarea className={`${input} min-h-28`} value={draft.characterContext} onChange={(e) => set("characterContext", e.target.value)} />
         <span className={`text-right text-xs ${contextLength > CHARACTER_CONTEXT_MAX_LENGTH ? "text-red-600" : "text-foreground/60"}`}>
           {contextLength}/{CHARACTER_CONTEXT_MAX_LENGTH}자
@@ -292,30 +287,14 @@ export function CharacterForm({
         <button type="submit" className={primaryButton} disabled={busy || !editable || contextLength > CHARACTER_CONTEXT_MAX_LENGTH || problem !== null}>
           {characterId ? "저장" : "만들기"}
         </button>
-        {problem && <span className="text-xs text-foreground/60">{problem}</span>}
-        {notice?.kind === "error" && (
-          <p role="alert" className="text-sm text-red-600">
+        {problem && <span className={helpText}>{problem}</span>}
+        {notice && (
+          <p role="alert" className={errorText}>
             {notice.text}
           </p>
         )}
       </div>
-      {notice?.kind === "ok" && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-          <div key={notice.id} role="status" className="toast-flash pointer-events-auto flex items-center gap-2 rounded-full border border-primary-soft bg-background py-1.5 pr-1.5 pl-4 text-sm shadow-md">
-            <span>{notice.text}</span>
-            <button
-              type="button"
-              aria-label="알림 닫기"
-              onClick={() => setNotice(null)}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-foreground/50 hover:bg-hover hover:text-foreground"
-            >
-              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" aria-hidden>
-                <path d="M6 6l12 12M18 6 6 18" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
+      <Toast toast={toast} onDismiss={dismiss} />
     </form>
   );
 }

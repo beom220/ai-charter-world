@@ -1166,6 +1166,15 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **이미지 표시**(`src/app/worlds/avatar.tsx`): `next/image`로 표시 크기에 맞춘 축소본을 받는다(원본 512×512 약 300KB → 64px 약 2.4KB). 고정 크기·`object-contain`(세로 직사각형은 `object-cover`)·지연 로딩(상단·상세·선택 목록은 즉시), 표정 파일 실패 → neutral → 이름 첫 글자 원. 184개 일괄 프리로드는 하지 않는다.
 - **스냅샷 v5**: database.md §5.3.
 
+
+### 13.10 UI 공용 규칙 (전체 페이지 일관성)
+
+- **단일 출처**: `src/app/ui-styles.ts`(클래스 문자열), `src/app/modal.tsx`(모달), `src/app/toast.tsx`(완료 알림). 화면은 클래스를 직접 쓰지 않고 이것을 가져다 쓴다(`worlds/ui.tsx`는 버튼을 다시 내보낸다).
+- **버튼**(모두 rounded-md, 기본 높이 36px): `button`(보조·취소), `primaryButton`(만들기·저장·등록·검증), `solidButton`(딥 로즈 채움, 대화 하단 바 [사건 일으키기]), `dangerButton`(삭제), `smallButton`·`smallDangerButton`(28px, 모달·목록 안), `primaryIconButton`(원형 실행). 하단 바: [사건 일으키기] `solidButton`, [저장] `primaryButton`, [불러오기] `button`. 파랑 사건 버튼은 없앴다(대화 피드 사건 말풍선의 파란 테두리는 의미 색이라 유지).
+- **모달**: 모든 `<dialog>`가 `Modal`(파스텔 머리줄 제목 + ✕ 닫기, 본문 p-4, 선택적 아래 버튼 줄, 폭 sm 20rem·md 32rem·lg 36rem, 배경 black/40)을 쓴다. 확인 모달은 [취소]·[삭제]를 아래 줄에 둔다.
+- **글자 크기**: 페이지 제목 2xl → 하위 페이지 제목(캐릭터 이름·새 캐릭터) xl → 섹션 제목 lg → 모달 제목 base → 카드 제목 sm(semibold). 본문 sm, 보조·메타 xs(`text-[11px]` 사용 안 함; 예외: 상단 고정 프로필 이름 11px, 일러스트 "사용 중" 덮개 10px).
+- **입력·카드·링크**: 입력칸·textarea `inputClass`(py-2), 모달 여는 선택 칸 `selectButton`(입력칸과 같은 모양), 카드 `cardClass`(rounded-lg p-4), 글 속 링크 `textLink`(로즈 밑줄). 같은 속성 클래스를 덧붙여 덮어쓰지 않는다(필요하면 `smallButtonBase`처럼 뼈대를 나눈다).
+- **알림**: 완료 문구는 공용 토스트(화면 아래 2초, ✕), 오류는 그 자리에 빨간 글씨로 남긴다. 모달 안에서 성공한 경우 모달이 열려 있으면 토스트를 모달 안에 그린다(저장 모달). 사건 등록은 모달을 닫고 토스트를 띄운다.
 ---
 
 ## 14. 테스트 전략

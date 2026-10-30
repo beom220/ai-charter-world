@@ -9,6 +9,7 @@ import { formatWorldTime } from "@/lib/world-clock";
 import { MOOD_LABEL } from "../../../ui";
 import { send } from "../../../world-form";
 import { CHARACTER_MOOD_EVENT, CHARACTERS_EVENT, emitWorldEvent } from "../../world-events";
+import { cardTitle, textLink } from "../../../../ui-styles";
 
 // 캐릭터 상세의 감정·관계·기억 (Phase 5-5 화면, Phase 6 실시간 갱신).
 // - 세계관 SSE를 구독해 scene.committed가 오면 /characters/[id]/state를 다시 읽는다. 상태 변화 수치는 메인 피드에 보이지 않는다.
@@ -62,8 +63,8 @@ type LiveState = {
   emotionChanges: LiveEmotionChange[];
 };
 
-const panel = "flex flex-col gap-1.5 rounded-md border p-3";
-const heading = "border-b border-foreground/10 pb-1.5 text-sm font-semibold";
+const panel = "flex flex-col gap-1.5 rounded-lg border p-4";
+const heading = `border-b border-foreground/10 pb-1.5 ${cardTitle}`;
 const TONE_TEXT: Record<StatusTone, string> = { positive: "text-tone-positive", negative: "text-tone-negative", neutral: "text-tone-neutral" };
 /** 강도 색 단계 → 막대 채움·문구 색 (Tailwind가 찾을 수 있게 클래스 이름을 그대로 쓴다). 0은 채움 없음 */
 const INTENSITY_FILL: Record<IntensityLevel, string> = { 0: "bg-bar-track", 1: "bg-intensity-1", 2: "bg-intensity-2", 3: "bg-intensity-3", 4: "bg-intensity-4", 5: "bg-intensity-5" };
@@ -139,7 +140,7 @@ export function CharacterLiveState({
   const emotion = state.emotion && emotionView(state.emotion.mood, state.emotion.intensity);
   const memories = showAllMemories ? state.memories : state.memories.slice(0, MEMORY_PREVIEW_COUNT);
   return (
-    <div className="flex flex-col gap-3 text-status-text">
+    <div className="flex flex-col gap-6 text-status-text">
       <section className={`${panel} ${state.condition.vital === "DEAD" ? "border-red-600/40" : "border-foreground/15"}`}>
         <h2 className={heading}>현재 상태</h2>
         <div className="grid gap-3 sm:grid-cols-2 sm:gap-5">
@@ -176,7 +177,7 @@ export function CharacterLiveState({
             )}
           </div>
           <div className="flex min-w-0 flex-col gap-1.5 border-t border-foreground/10 pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5">
-            <h3 className="text-xs font-semibold text-status-text/80">최근 감정 변화</h3>
+            <h3 className={cardTitle}>최근 감정 변화</h3>
             {state.emotionChanges.length === 0 ? (
               <p className="text-xs text-foreground/60">아직 장면에서 감정이 바뀐 기록이 없습니다.</p>
             ) : (
@@ -196,7 +197,7 @@ export function CharacterLiveState({
                 ))}
               </ul>
             )}
-            <p className="text-[11px] text-foreground/50">장면별 감정 강도 변화 기록입니다. 요인별 긍정·부정 영향 점수는 아직 기록되지 않습니다.</p>
+            <p className="text-xs text-foreground/50">장면별 감정 강도 변화 기록입니다. 요인별 긍정·부정 영향 점수는 아직 기록되지 않습니다.</p>
           </div>
         </div>
       </section>
@@ -220,7 +221,7 @@ export function CharacterLiveState({
             })}
           </ul>
         )}
-        <p className="text-[11px] text-foreground/50">
+        <p className="text-xs text-foreground/50">
           {characterName}이(가) 상대를 어떻게 보는지입니다(점수는 호감·신뢰·존중 평균, -100~+100). 상대가 {characterName}을(를) 어떻게 보는지는 상대 캐릭터 화면에서 볼 수 있습니다.
         </p>
       </section>
@@ -244,7 +245,7 @@ export function CharacterLiveState({
           </ul>
         )}
         {state.memories.length > MEMORY_PREVIEW_COUNT && (
-          <button type="button" onClick={() => setShowAllMemories((v) => !v)} className="self-start text-xs text-primary-text underline">
+          <button type="button" onClick={() => setShowAllMemories((v) => !v)} className={`self-start text-xs ${textLink}`}>
             {showAllMemories ? "접기" : `더 보기 (${state.memories.length - MEMORY_PREVIEW_COUNT}개)`}
           </button>
         )}

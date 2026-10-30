@@ -5,7 +5,10 @@ import { USER_EVENT_PENDING_MAX, USER_EVENT_TEXT_MAX_LENGTH } from "../../../../
 import { userEventTextLength } from "@/lib/schemas/world-event";
 import { noteText, noteTone, type NoteTone, type SceneNote } from "@/lib/scene-notes";
 import { liveWorldSeconds, worldCalendar } from "@/lib/world-clock";
-import { button, primaryButton } from "../ui";
+import { primaryButton, smallDangerButton } from "../ui";
+import { Modal } from "../../modal";
+import { Toast, useToast } from "../../toast";
+import { errorText, helpText, inputClass } from "../../ui-styles";
 import { send } from "../world-form";
 
 // 대화 화면의 세계 정보 (Phase 7-2-2). 캐릭터 말풍선과 분리된 시스템 영역.
@@ -59,8 +62,9 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
   const [text, setText] = useState("");
   const [requestId, setRequestId] = useState(newRequestId);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ tone: "error" | "ok"; text: string } | null>(null);
+  const [message, setMessage] = useState<{ tone: "error"; text: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  const { toast, show, dismiss } = useToast();
   useImperativeHandle(ref, () => ({
     open: () => {
       setMessage(null);
@@ -98,8 +102,9 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
       }
       setText("");
       setRequestId(newRequestId());
-      setMessage({ tone: "ok", text: "사건을 등록했습니다. 다음 장면부터 등록 순서대로 하나씩 일어납니다." });
       setReload((n) => n + 1);
+      dialog.current?.close(); // 등록하면 닫고 완료 알림을 띄운다 (대기 목록은 대화 화면에 보인다)
+      show("사건을 등록했습니다. 다음 장면부터 등록 순서대로 하나씩 일어납니다.");
     } catch {
       setMessage({ tone: "error", text: "사건을 등록하지 못했습니다. 네트워크 상태를 확인하고 다시 시도하세요." });
     } finally {
@@ -130,7 +135,7 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
           {e.claimed ? (
             <span className="shrink-0 text-xs text-foreground/60">장면에 반영 중</span>
           ) : (
-            <button type="button" className="shrink-0 text-xs text-red-600 underline disabled:opacity-50" onClick={() => void cancel(e.id)} disabled={busy}>
+            <button type="button" className={`shrink-0 ${smallDangerButton}`} onClick={() => void cancel(e.id)} disabled={busy}>
               취소
             </button>
           )}
@@ -148,14 +153,21 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
         </div>
       )}
 
-      <dialog ref={dialog} className="m-auto w-[min(32rem,calc(100%-2rem))] rounded-lg bg-background p-6 text-foreground backdrop:bg-black/50" aria-label="사건 일으키기">
-        <h3 className="text-base font-semibold">사건 일으키기</h3>
-        <p className="mt-1 text-xs text-foreground/70">
+      <Modal
+        ref={dialog}
+        title="사건 일으키기"
+        footer={
+          <button type="button" className={primaryButton} onClick={() => void submit()} disabled={!canSubmit}>
+            {busy ? "처리 중…" : "등록"}
+          </button>
+        }
+      >
+        <p className={helpText}>
           사건은 캐릭터에게 내리는 명령이 아니라 이 세계에 실제로 일어나는 일입니다. 캐릭터가 어떻게 반응하고 해결할지는 캐릭터가 스스로 정합니다. 다음 장면부터 등록
           순서대로 하나씩 일어나며, 대기 중 사건은 최대 {USER_EVENT_PENDING_MAX}개입니다.
         </p>
         <textarea
-          className="mt-3 h-28 w-full resize-none rounded-md border border-foreground/20 bg-transparent p-2 text-sm"
+          className={`${inputClass} mt-3 h-28 resize-none`}
           placeholder="예: 마을 입구에 정체를 알 수 없는 우주선이 내려앉았다."
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -164,9 +176,9 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
         <p className={`text-right text-xs ${length > USER_EVENT_TEXT_MAX_LENGTH ? "text-red-600" : "text-foreground/60"}`}>
           남은 글자 {USER_EVENT_TEXT_MAX_LENGTH - length}자
         </p>
-        {full && <p className="text-xs text-foreground/70">대기 중 사건이 {USER_EVENT_PENDING_MAX}개입니다. 사건이 일어나거나 취소한 뒤 등록할 수 있습니다.</p>}
+        {full && <p className={helpText}>대기 중 사건이 {USER_EVENT_PENDING_MAX}개입니다. 사건이 일어나거나 취소한 뒤 등록할 수 있습니다.</p>}
         {message && (
-          <p role={message.tone === "error" ? "alert" : "status"} className={`mt-2 text-sm ${message.tone === "error" ? "text-red-600" : "text-foreground/80"}`}>
+          <p role="alert" className={`mt-2 ${errorText}`}>
             {message.text}
           </p>
         )}
@@ -176,15 +188,8 @@ export function WorldEvents({ worldId, refreshKey, ref }: { worldId: string; ref
             {pendingList}
           </div>
         )}
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className={button} onClick={() => dialog.current?.close()} disabled={busy}>
-            닫기
-          </button>
-          <button type="button" className={primaryButton} onClick={() => void submit()} disabled={!canSubmit}>
-            {busy ? "처리 중…" : "등록"}
-          </button>
-        </div>
-      </dialog>
+      </Modal>
+      <Toast toast={toast} onDismiss={dismiss} />
     </>
   );
 }

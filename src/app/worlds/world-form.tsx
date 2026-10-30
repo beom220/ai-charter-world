@@ -6,9 +6,12 @@ import { MAX_REQUEST_BODY_BYTES, WORLD_NAME_MAX_LENGTH } from "../../../config/l
 import { WORLD_SETTINGS_LOCKED_MESSAGE, worldInputSchema } from "@/lib/schemas/world";
 import Link from "next/link";
 import { SettingsLockedNotice, useSettingsEditable } from "./settings-lock";
+import { Modal } from "../modal";
+import { Toast, useToast } from "../toast";
+import { dangerButton, errorText, helpText, inputClass, textLink } from "../ui-styles";
 import { button, primaryButton } from "./ui";
 
-// 세계관 생성·수정 폼과 삭제 확인 대화상자 (PRD FR-03). 최소 UI.
+// 세계관 생성·수정 폼과 삭제 확인 대화상자 (PRD FR-03). 완료 문구는 공용 토스트, 오류는 그 자리에 남긴다.
 
 type Initial = { id: string; name: string; worldContext: string } | null;
 
@@ -27,7 +30,8 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
   const [name, setName] = useState(initial?.name ?? "");
   const [worldContext, setWorldContext] = useState(initial?.worldContext ?? "");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ kind: "error"; text: string } | null>(null);
+  const { toast, show, dismiss } = useToast();
   const runtimeEditable = useSettingsEditable(locked ? null : (initial?.id ?? null));
   const editable = !locked && runtimeEditable;
 
@@ -47,7 +51,7 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
         : await send("/api/worlds", "POST", parsed.data);
       if (!ok) return setNotice({ kind: "error", text: json?.error?.message ?? "요청을 처리하지 못했습니다." });
       if (!initial) return router.push(`/worlds/${json.world.id}`);
-      setNotice({ kind: "ok", text: json.changed ? "저장했습니다. 다음 장면부터 반영됩니다." : "변경된 내용이 없습니다." });
+      show(json.changed ? "저장했습니다. 다음 장면부터 반영됩니다." : "변경된 내용이 없습니다.");
       router.refresh();
     } catch {
       setNotice({ kind: "error", text: "요청을 처리하지 못했습니다." });
@@ -61,7 +65,7 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">세계관 이름</span>
         <input
-          className="rounded-md border border-foreground/20 bg-transparent px-3 py-2 disabled:opacity-60"
+          className={`${inputClass} disabled:opacity-60`}
           value={name}
           disabled={locked}
           onChange={(e) => setName(e.target.value)}
@@ -71,9 +75,9 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
       </label>
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">세계관 컨텍스트</span>
-        <span className="text-foreground/60">배경·규칙·현재 상황 등 자유롭게 적으세요. 글자 수 제한은 없습니다(전송 최대 10MB).</span>
+        <span className={helpText}>배경·규칙·현재 상황 등 자유롭게 적으세요. 글자 수 제한은 없습니다(전송 최대 10MB).</span>
         <textarea
-          className="min-h-64 rounded-md border border-foreground/20 bg-transparent px-3 py-2 disabled:opacity-60"
+          className={`${inputClass} min-h-64 disabled:opacity-60`}
           disabled={locked}
           value={worldContext}
           onChange={(e) => setWorldContext(e.target.value)}
@@ -83,12 +87,12 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
       {locked ? (
         <p role="status" className="rounded-md border border-amber-600/40 bg-amber-600/5 px-3 py-2 text-sm">
           {WORLD_SETTINGS_LOCKED_MESSAGE}{" "}
-          <Link href="/worlds/new" className="text-primary-text underline">
+          <Link href="/worlds/new" className={textLink}>
             새 세계관 만들기
           </Link>
         </p>
       ) : (
-        initial && <p className="text-xs text-foreground/60">첫 대화 장면이 만들어지면 세계관 설정은 더 이상 바꿀 수 없습니다.</p>
+        initial && <p className={helpText}>첫 대화 장면이 만들어지면 세계관 설정은 더 이상 바꿀 수 없습니다.</p>
       )}
       {!locked && !runtimeEditable && <SettingsLockedNotice />}
       <div className="flex items-center gap-3">
@@ -96,11 +100,12 @@ export function WorldForm({ initial, locked = false }: { initial: Initial; locke
           {initial ? "저장" : "만들기"}
         </button>
         {notice && (
-          <p role={notice.kind === "error" ? "alert" : "status"} className={notice.kind === "error" ? "text-sm text-red-600" : "text-sm"}>
+          <p role="alert" className={errorText}>
             {notice.text}
           </p>
         )}
       </div>
+      <Toast toast={toast} onDismiss={dismiss} />
     </form>
   );
 }
@@ -166,7 +171,7 @@ export function ConfirmDeleteButton({
     <>
       <button
         type="button"
-        className={trigger?.className ?? `${button} text-red-600`}
+        className={trigger?.className ?? dangerButton}
         onClick={() => dialog.current?.showModal()}
         disabled={!editable}
         aria-label={trigger ? label : undefined}
@@ -174,23 +179,27 @@ export function ConfirmDeleteButton({
       >
         {trigger?.content ?? label}
       </button>
-      <dialog ref={dialog} className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-lg bg-background p-6 text-foreground backdrop:bg-black/50">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <p className="mt-2 text-sm">{children}</p>
+      <Modal
+        ref={dialog}
+        title={title}
+        footer={
+          <>
+            <button type="button" className={button} onClick={() => dialog.current?.close()} disabled={busy}>
+              취소
+            </button>
+            <button type="button" className={dangerButton} onClick={confirmDelete} disabled={busy}>
+              삭제
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm">{children}</p>
         {error && (
-          <p role="alert" className="mt-2 text-sm text-red-600">
+          <p role="alert" className={`mt-2 ${errorText}`}>
             {error}
           </p>
         )}
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className={button} onClick={() => dialog.current?.close()} disabled={busy}>
-            취소
-          </button>
-          <button type="button" className={`${button} text-red-600`} onClick={confirmDelete} disabled={busy}>
-            삭제
-          </button>
-        </div>
-      </dialog>
+      </Modal>
     </>
   );
 }

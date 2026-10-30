@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentSession } from "@/server/auth/session";
 import { SignOutButton } from "./login/auth-buttons";
+import { textLink } from "./ui-styles";
 
 // 공통 상단 바: 세계관 목록·AI 설정 링크와 로그인·로그아웃.
 // 스크롤해도 화면 위에 고정한다. 높이는 h-12(48px)로 고정하고 줄바꿈하지 않는다(세계관 탭 바가 그 아래 top-12에 붙는다).
@@ -26,7 +27,7 @@ export async function SiteHeader() {
               <SignOutButton />
             </>
           ) : (
-            <Link href="/login" className="text-primary-text underline">
+            <Link href="/login" className={textLink}>
               로그인
             </Link>
           )}

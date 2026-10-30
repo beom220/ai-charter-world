@@ -3,9 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { button, errorText, primaryButton } from "../ui-styles";
 
-const buttonClass =
-  "rounded-md border border-foreground/20 px-4 py-2 text-sm font-medium hover:bg-hover disabled:opacity-50";
 
 export function SignInButton() {
   const [pending, setPending] = useState(false);
@@ -24,11 +23,11 @@ export function SignInButton() {
 
   return (
     <>
-      <button type="button" className={buttonClass} onClick={signIn} disabled={pending}>
+      <button type="button" className={primaryButton} onClick={signIn} disabled={pending}>
         Google로 로그인
       </button>
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className={errorText}>
           {error}
         </p>
       )}
@@ -48,7 +47,7 @@ export function SignOutButton() {
   }
 
   return (
-    <button type="button" className={buttonClass} onClick={signOut} disabled={pending}>
+    <button type="button" className={button} onClick={signOut} disabled={pending}>
       로그아웃
     </button>
   );

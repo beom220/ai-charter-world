@@ -21,13 +21,15 @@ import {
   type SimulationStateView,
   type SimulationView,
 } from "@/lib/simulation-view";
-import { eventButton, primaryIconButton, STATUS_LABEL } from "../ui";
+import { primaryIconButton, smallButton, solidButton, STATUS_LABEL } from "../ui";
+import { Modal } from "../../modal";
 import { send } from "../world-form";
 import { CHARACTERS_EVENT, emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
 import { Avatar } from "../avatar";
 import { worldCalendar } from "@/lib/world-clock";
 import { SceneNotes, WorldClock, WorldEvents, type WorldEventsHandle } from "./world-status";
 import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
+import { sectionTitle, textLink } from "../../ui-styles";
 
 // 대화 장면 (Phase 5-1~5-4). [▶ 시작]을 누르면 서버 Runner가 활성 캐릭터 중 2~3명을 골라 장면을 계속 만든다.
 // - 실행 상태의 기준은 서버 SimulationRuntime이다. 버튼은 start/pause/resume/stop API만 부르고, 화면 상태는 응답과
@@ -44,7 +46,7 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 // - SSE(scene.committed) 또는 POST 응답으로 새 장면이 오면 장면 id로 한 번만 넣고, ScenePlayback 큐로
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
 //   입력 중 표시는 저장된 장면의 재생 연출이며 실제 LLM 생성 상태가 아니다.
-// - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기], 가운데 실행 아이콘(시작·일시정지·재개·종료)과
+// - 하단 고정 바(뮤직 앱 재생 바처럼, 화면 전체 너비): 왼쪽 [사건 일으키기](로즈 채움), 가운데 실행 아이콘(시작·일시정지·재개·종료)과
 //   속도 아이콘(모달에서 선택), 오른쪽 [저장]·[불러오기]. 생성 중 표시·시작 안내·시스템 안내·오류는 바 바로 위에 알림 카드로 고정한다.
 // - 스크롤: 피드 자체 스크롤 없이 페이지 스크롤을 쓴다. 처음엔 맨 아래. 하단 근처일 때만 새 발언을 따라 내려가고, 위로 올려 읽는 중이면 움직이지 않는다.
 //   '이전 기록 보기'는 피드 맨 위에 있고, 붙인 뒤에도 보던 위치를 유지한다.
@@ -382,7 +384,7 @@ export function ScenePanel({
   return (
     <section className="flex flex-col gap-3 pt-2" style={{ paddingBottom: dockHeight + 16 }}>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">
+        <h2 className={sectionTitle}>
           대화 장면 <span className="text-sm font-normal text-foreground/60">· {STATUS_LABEL[view.state.status]}</span>
         </h2>
         <span className="text-xs text-foreground/60" aria-live="polite">
@@ -395,7 +397,7 @@ export function ScenePanel({
       <div className="flex min-h-40 flex-col gap-3 rounded-md bg-foreground/[0.02] p-3">
         {hasMore && (
           <div className="flex justify-center">
-            <button type="button" className="text-xs text-foreground/70 underline disabled:opacity-50" onClick={loadMore} disabled={loadingMore}>
+            <button type="button" className={smallButton} onClick={loadMore} disabled={loadingMore}>
               {loadingMore ? "불러오는 중…" : "이전 기록 보기"}
             </button>
           </div>
@@ -412,10 +414,10 @@ export function ScenePanel({
             <div key={s.id} className="flex flex-col gap-2">
               {newDay && (
                 <div className="flex justify-center pt-1">
-                  <span className="rounded-full bg-primary/10 px-3 py-0.5 text-[11px] font-semibold text-primary-text">Day {at.day}</span>
+                  <span className="rounded-full bg-primary/10 px-3 py-0.5 text-xs font-semibold text-primary-text">Day {at.day}</span>
                 </div>
               )}
-              <div className="flex items-center gap-2 py-1 text-[11px] text-foreground/50">
+              <div className="flex items-center gap-2 py-1 text-xs text-foreground/50">
                 <span className="h-px flex-1 bg-primary-soft/40" />
                 <span className="max-w-[70%] truncate">
                   #{s.seq} {s.title}
@@ -448,14 +450,14 @@ export function ScenePanel({
                       </span>
                       <p className={`${bubble} break-words whitespace-pre-wrap`}>{m.dialogue}</p>
                       {m.actionIntent && <span className="text-xs text-foreground/60 italic">({m.actionIntent})</span>}
-                      {at && <span className="text-[11px] text-foreground/40">{at.dateTime}</span>}
+                      {at && <span className="text-xs text-foreground/40">{at.dateTime}</span>}
                     </div>
                   </div>
                 ),
               )}
               {revealed && <SceneNotes notes={(s.notes ?? []).filter((n) => !isStartNote(n))} />}
               {s.contextTruncated && revealed && (
-                <p className="text-[11px] text-foreground/50">세계관 컨텍스트 일부가 이번 장면에 반영되지 않았을 수 있습니다.</p>
+                <p className="text-xs text-foreground/50">세계관 컨텍스트 일부가 이번 장면에 반영되지 않았을 수 있습니다.</p>
               )}
             </div>
           );
@@ -478,7 +480,7 @@ export function ScenePanel({
                 {notice.settingsLink && (
                   <>
                     {" "}
-                    <a href="/settings/providers" className="text-primary-text underline">
+                    <a href="/settings/providers" className={textLink}>
                       Gemini 설정
                     </a>
                   </>
@@ -498,7 +500,7 @@ export function ScenePanel({
             {lacksCharacters ? (
               <Toast tone="info">
                 대화하려면 대화할 수 있는 캐릭터가 {SCENE_PARTICIPANTS_MIN}명 이상 필요합니다.{" "}
-                <Link href={`/worlds/${worldId}/characters`} className="text-primary-text underline">
+                <Link href={`/worlds/${worldId}/characters`} className={textLink}>
                   캐릭터 탭
                 </Link>
                 에서 추가하세요.
@@ -521,7 +523,7 @@ export function ScenePanel({
           {/* 모바일: 위 줄 가운데 실행 아이콘, 아래 줄 좌우 버튼. sm 이상: 왼쪽 | 가운데 | 오른쪽 한 줄 */}
           <div className="grid w-full grid-cols-2 items-center gap-2 px-4 py-3 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
             <span className="justify-self-start">
-              <button type="button" className={eventButton} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
+              <button type="button" className={solidButton} onClick={() => eventsRef.current?.open()} aria-haspopup="dialog">
                 사건 일으키기
               </button>
             </span>
@@ -559,18 +561,8 @@ export function ScenePanel({
           </div>
         </div>
       </div>
-      <dialog
-        ref={speedDialog}
-        aria-label="실행 속도"
-        className="m-auto w-[min(20rem,calc(100vw-2rem))] rounded-lg border border-foreground/20 bg-background p-4 text-foreground backdrop:bg-black/40"
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-base font-semibold">실행 속도</h3>
-          <button type="button" className="text-xs text-foreground/70 underline" onClick={() => speedDialog.current?.close()}>
-            닫기
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-foreground/60">장면이 끝난 뒤 다음 장면을 시작하기까지의 간격입니다.</p>
+      <Modal ref={speedDialog} title="실행 속도" size="sm">
+        <p className="text-xs text-foreground/60">장면이 끝난 뒤 다음 장면을 시작하기까지의 간격입니다.</p>
         <div className="mt-3 flex flex-col gap-2" role="radiogroup" aria-label="실행 속도">
           {INTERVAL_PRESETS.map((p) => (
             <button
@@ -592,7 +584,7 @@ export function ScenePanel({
             </button>
           ))}
         </div>
-      </dialog>
+      </Modal>
     </section>
   );
 }
