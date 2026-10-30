@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { abnormalConditions, emotionView, formatScore, relationView, type RelationValues, type StatusTone } from "@/lib/character-status";
+import { abnormalConditions, emotionView, formatScore, relationView, type IntensityLevel, type RelationValues, type StatusTone } from "@/lib/character-status";
 import type { DiscomfortLevel, InjuryLevel, ThermalCauseValue } from "@/lib/condition-labels";
 import { formatWorldTime } from "@/lib/world-clock";
 import { MOOD_LABEL } from "../../../ui";
@@ -62,6 +62,16 @@ type LiveState = {
 const panel = "flex flex-col gap-1.5 rounded-md border p-3";
 const heading = "border-b border-foreground/10 pb-1.5 text-sm font-semibold";
 const TONE_TEXT: Record<StatusTone, string> = { positive: "text-tone-positive", negative: "text-tone-negative", neutral: "text-tone-neutral" };
+/** 강도 색 단계 → 막대 채움·문구 색 (Tailwind가 찾을 수 있게 클래스 이름을 그대로 쓴다). 0은 채움 없음 */
+const INTENSITY_FILL: Record<IntensityLevel, string> = { 0: "bg-bar-track", 1: "bg-intensity-1", 2: "bg-intensity-2", 3: "bg-intensity-3", 4: "bg-intensity-4", 5: "bg-intensity-5" };
+const INTENSITY_TEXT: Record<IntensityLevel, string> = {
+  0: "text-intensity-text-1",
+  1: "text-intensity-text-1",
+  2: "text-intensity-text-2",
+  3: "text-intensity-text-3",
+  4: "text-intensity-text-4",
+  5: "text-intensity-text-5",
+};
 /** 기억은 처음 이만큼만 보이고 나머지는 "더 보기"로 펼친다 */
 const MEMORY_PREVIEW_COUNT = 5;
 const MEMORY_KIND_LABEL: Record<string, string> = {
@@ -130,14 +140,21 @@ export function CharacterLiveState({
               <MeterRow
                 label={MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood}
                 text={emotion.text}
-                tone={emotion.tone}
-                meter={<Meter percent={emotion.value} valueText={emotion.text} />}
+                level={emotion.level}
+                meter={<Meter percent={emotion.value} level={emotion.level} valueText={emotion.text} />}
               />
             ) : (
               <p className="text-sm text-foreground/60">감정 기록 없음</p>
             )}
             {abnormal.map((a) => (
-              <MeterRow key={a.key} label={a.label} text={a.text} tone="negative" detail={a.detail} meter={<Meter step={a.step} steps={a.steps} valueText={a.text} />} />
+              <MeterRow
+                key={a.key}
+                label={a.label}
+                text={a.text}
+                level={a.level}
+                detail={a.detail}
+                meter={<Meter step={a.step} steps={a.steps} level={a.level} valueText={a.text} />}
+              />
             ))}
             {state.condition.vital === "DEAD" && (
               <div className="flex flex-col">
@@ -229,13 +246,13 @@ export function CharacterLiveState({
   );
 }
 
-/** [이름 | 단계] 한 줄, 그 아래 막대, 설명은 막대 아래 작은 글씨 */
-function MeterRow({ label, text, tone, meter, detail }: { label: string; text: string; tone: StatusTone; meter: React.ReactNode; detail?: string | null }) {
+/** [이름 | 단계] 한 줄, 그 아래 막대, 설명은 막대 아래 작은 글씨. 단계 문구는 강도 색 단계의 진한 글자색 */
+function MeterRow({ label, text, level, meter, detail }: { label: string; text: string; level: IntensityLevel; meter: React.ReactNode; detail?: string | null }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="min-w-0 font-medium break-words">{label}</span>
-        <span className={`shrink-0 text-xs font-medium ${TONE_TEXT[tone]}`}>{text}</span>
+        <span className={`shrink-0 text-xs font-medium ${INTENSITY_TEXT[level]}`}>{text}</span>
       </div>
       {meter}
       {detail && <p className="text-xs break-words text-status-text/70">{detail}</p>}
@@ -244,15 +261,15 @@ function MeterRow({ label, text, tone, meter, detail }: { label: string; text: s
 }
 
 /**
- * 0 → 최대치로 왼쪽부터 채우는 막대 (색은 primary-soft 하나). percent: 실제 값 비율(감정 강도).
+ * 0 → 최대치로 왼쪽부터 채우는 막대. 색은 강도 색 단계(level, 로즈 핑크 5단계)로 길이와 함께 강도를 나타낸다. percent: 실제 값 비율(감정 강도).
  * step/steps: 단계형 데이터는 단계 수만큼 칸을 나눠 채운다(가짜 정밀 수치를 만들지 않는다). 화면 낭독기에는 단계 문구로 읽힌다.
  */
-function Meter({ percent, step, steps, valueText }: { percent?: number; step?: number; steps?: number; valueText: string }) {
+function Meter({ percent, step, steps, level, valueText }: { percent?: number; step?: number; steps?: number; level: IntensityLevel; valueText: string }) {
   if (steps !== undefined && step !== undefined) {
     return (
       <span role="meter" aria-valuemin={0} aria-valuemax={steps} aria-valuenow={step} aria-valuetext={valueText} className="flex h-2.5 gap-0.5">
         {Array.from({ length: steps }, (_, i) => (
-          <span key={i} className={`flex-1 first:rounded-l-full last:rounded-r-full ${i < step ? "bg-primary-soft" : "bg-bar-track"}`} />
+          <span key={i} className={`flex-1 first:rounded-l-full last:rounded-r-full ${i < step ? INTENSITY_FILL[level] : "bg-bar-track"}`} />
         ))}
       </span>
     );
@@ -260,7 +277,7 @@ function Meter({ percent, step, steps, valueText }: { percent?: number; step?: n
   const value = Math.min(100, Math.max(0, percent ?? 0));
   return (
     <span role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} aria-valuetext={valueText} className="block h-2.5 overflow-hidden rounded-full bg-bar-track">
-      <span className="block h-full rounded-full bg-primary-soft" style={{ width: `${value}%` }} />
+      <span className={`block h-full rounded-full ${INTENSITY_FILL[level]}`} style={{ width: `${value}%` }} />
     </span>
   );
 }

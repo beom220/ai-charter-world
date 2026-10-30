@@ -21,7 +21,18 @@
   --tone-negative: #71849B;  /* 블루그레이 */
   --tone-neutral: #8B858B;   /* 그레이 */
   --status-text: #33313A;
-  --bar-track: #E7E7E7;      /* 상태 막대 빈 바탕 (채움은 primary-soft) */
+  --bar-track: #E7E7E7;      /* 상태 막대 빈 바탕 */
+  /* 상태 막대 강도 5단계 채움 (매우 약함 → 매우 강함). 문구는 같은 계열의 진한 색(흰 바탕 대비 4.5:1 이상) */
+  --intensity-1: #F3DDE2;
+  --intensity-2: #ECC2CC;
+  --intensity-3: var(--primary-soft); /* #E8A9B6 */
+  --intensity-4: #D77C96;
+  --intensity-5: #B94E70;
+  --intensity-text-1: var(--primary-strong); /* #BD526F */
+  --intensity-text-2: var(--primary-strong);
+  --intensity-text-3: #A8456A;
+  --intensity-text-4: #9A3D5E;
+  --intensity-text-5: #8A3352;
 }
 
 @theme inline {
@@ -41,6 +52,16 @@
   --color-tone-neutral: var(--tone-neutral);
   --color-status-text: var(--status-text);
   --color-bar-track: var(--bar-track);
+  --color-intensity-1: var(--intensity-1);
+  --color-intensity-2: var(--intensity-2);
+  --color-intensity-3: var(--intensity-3);
+  --color-intensity-4: var(--intensity-4);
+  --color-intensity-5: var(--intensity-5);
+  --color-intensity-text-1: var(--intensity-text-1);
+  --color-intensity-text-2: var(--intensity-text-2);
+  --color-intensity-text-3: var(--intensity-text-3);
+  --color-intensity-text-4: var(--intensity-text-4);
+  --color-intensity-text-5: var(--intensity-text-5);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -60,6 +81,11 @@
     --tone-neutral: #ABA5AB;
     --status-text: var(--foreground);
     --bar-track: #2a2a2a;
+    --intensity-text-1: #ECC2CC;
+    --intensity-text-2: #ECC2CC;
+    --intensity-text-3: #E8A9B6;
+    --intensity-text-4: #E393A8;
+    --intensity-text-5: #DE7B97;
   }
 }
 

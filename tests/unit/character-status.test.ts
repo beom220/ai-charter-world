@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { abnormalConditions, emotionView, formatScore, relationView } from "@/lib/character-status";
+import { abnormalConditions, emotionColorLevel, emotionView, formatScore, relationView } from "@/lib/character-status";
 
 // 캐릭터 상세 텍스트형 상태창: 저장 값 → 단계 문구·점수·색 톤 (UI 전용, 저장 값은 바꾸지 않는다)
 
@@ -28,9 +28,9 @@ describe("관계", () => {
 
 describe("감정", () => {
   it("막대는 실제 강도, 문구는 강도 단계, 톤은 감정 방향(평온·차분 중립)", () => {
-    expect(emotionView("ANXIOUS", 100)).toEqual({ value: 100, text: "매우 강함", tone: "negative" });
-    expect(emotionView("HAPPY", 50)).toEqual({ value: 50, text: "보통", tone: "positive" });
-    expect(emotionView("CALM", 70)).toEqual({ value: 70, text: "강함", tone: "neutral" });
+    expect(emotionView("ANXIOUS", 100)).toEqual({ value: 100, text: "매우 강함", tone: "negative", level: 5 });
+    expect(emotionView("HAPPY", 50)).toEqual({ value: 50, text: "보통", tone: "positive", level: 3 });
+    expect(emotionView("CALM", 70)).toEqual({ value: 70, text: "강함", tone: "neutral", level: 4 });
     expect(emotionView("SAD", 130).value).toBe(100); // 막대 채움은 실제 강도, 범위 밖은 자른다
     expect(emotionView("UNKNOWN", 50).tone).toBe("neutral");
     for (const m of ["ANXIOUS", "SAD", "ANGRY", "FEARFUL", "LONELY", "EMBARRASSED", "TIRED"]) expect(emotionView(m, 40).tone).toBe("negative");
@@ -50,6 +50,21 @@ describe("감정", () => {
   });
 });
 
+describe("막대 색 단계", () => {
+  it("감정: 0 채움 없음, 1~20·21~40·41~60·61~80·81~100 = 1~5 (감정 종류와 무관)", () => {
+    expect([0, 1, 20, 21, 40, 41, 60, 61, 80, 81, 100].map(emotionColorLevel)).toEqual([0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]);
+    expect(emotionView("HAPPY", 90).level).toBe(emotionView("ANXIOUS", 90).level);
+  });
+
+  it("신체: 추위·더위·고통 경미·심함·극심 = 2·4·5, 부상 1~4단계 = 1·3·4·5", () => {
+    const normal = { thermalCause: "NONE", thermalLevel: "NONE", painLevel: "NONE", painCause: null, injury: "NONE", injuryCause: null } as const;
+    const level = (c: Parameters<typeof abnormalConditions>[0]) => abnormalConditions(c).map((a) => a.level);
+    expect((["MILD", "SEVERE", "EXTREME"] as const).flatMap((l) => level({ ...normal, thermalCause: "COLD", thermalLevel: l }))).toEqual([2, 4, 5]);
+    expect((["MILD", "SEVERE", "EXTREME"] as const).flatMap((l) => level({ ...normal, painLevel: l }))).toEqual([2, 4, 5]);
+    expect((["MILD", "MODERATE", "SEVERE", "CRITICAL"] as const).flatMap((l) => level({ ...normal, injury: l }))).toEqual([1, 3, 4, 5]);
+  });
+});
+
 describe("신체 상태", () => {
   it("현재 상태 카드: 정상이 아닌 항목만 (추위·더위 → 고통 → 부상), 기존 단계 문구, 단계/단계 수 칸 채움", () => {
     const normal = { thermalCause: "NONE", thermalLevel: "NONE", painLevel: "NONE", painCause: null, injury: "NONE", injuryCause: null } as const;
@@ -58,7 +73,7 @@ describe("신체 상태", () => {
     expect(rows({ ...normal, thermalCause: "NONE", thermalLevel: "SEVERE" })).toEqual([]);
     expect(rows({ ...normal, thermalCause: "COLD", thermalLevel: "SEVERE" })).toEqual(["추위:심함:2/3"]);
     expect(rows({ ...normal, thermalCause: "HEAT", thermalLevel: "MILD" })).toEqual(["더위:경미:1/3"]);
-    expect(abnormalConditions({ ...normal, injury: "MODERATE", injuryCause: "넘어짐" })).toEqual([{ key: "injury", label: "부상", text: "아픔", step: 2, steps: 4, detail: "넘어짐" }]);
+    expect(abnormalConditions({ ...normal, injury: "MODERATE", injuryCause: "넘어짐" })).toEqual([{ key: "injury", label: "부상", text: "아픔", step: 2, steps: 4, level: 3, detail: "넘어짐" }]);
     expect(rows({ thermalCause: "HEAT", thermalLevel: "EXTREME", painLevel: "MILD", painCause: "고열", injury: "CRITICAL", injuryCause: null })).toEqual(["더위:극심:3/3", "고통:경미:1/3", "부상:위독:4/4"]);
   });
 });

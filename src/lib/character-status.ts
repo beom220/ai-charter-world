@@ -74,11 +74,23 @@ export function intensityStageIndex(intensity: number): number {
   return v <= 20 ? 1 : v <= 40 ? 2 : v <= 60 ? 3 : v <= 80 ? 4 : 5;
 }
 
-/** 막대 채움은 실제 강도(0~100), 문구는 강도 단계, 톤은 감정 방향 */
-export function emotionView(mood: string, intensity: number): { value: number; text: string; tone: StatusTone } {
+// ── 막대 색 단계 (감정·신체 공통 5단계 로즈 핑크, 1 가장 연함 ~ 5 가장 진함, 0은 채움 없음)
+// 색 값은 globals.css의 --intensity-1~5(막대 채움)·--intensity-text-1~5(문구, 흰 바탕 대비 4.5:1 이상) 토큰이다.
+// 감정·신체 종류와 무관하게 강도만으로 정한다. 길이 계산·단계 판정과 독립이다.
+
+export type IntensityLevel = 0 | 1 | 2 | 3 | 4 | 5;
+
+/** 감정 강도 0~100 → 색 단계. 0이면 채움 없음, 그 밖은 강도 5단계(1~20·21~40·41~60·61~80·81~100)와 같다 */
+export function emotionColorLevel(intensity: number): IntensityLevel {
+  return Math.round(intensity) <= 0 ? 0 : (intensityStageIndex(intensity) as IntensityLevel);
+}
+
+/** 막대 채움은 실제 강도(0~100), 문구는 강도 단계, 톤은 감정 방향, level은 막대 색 단계 */
+export function emotionView(mood: string, intensity: number): { value: number; text: string; tone: StatusTone; level: IntensityLevel } {
   const polarity = moodVisual(mood).polarity;
   return {
     value: Math.min(100, Math.max(0, Math.round(intensity))),
+    level: emotionColorLevel(intensity),
     text: INTENSITY_STAGES[intensityStageIndex(intensity) - 1]!,
     tone: polarity > 0 ? "positive" : polarity < 0 ? "negative" : "neutral",
   };
@@ -88,6 +100,9 @@ export function emotionView(mood: string, intensity: number): { value: number; t
 
 const DISCOMFORT_STEP: Record<DiscomfortLevel, number> = { NONE: 0, MILD: 1, SEVERE: 2, EXTREME: 3 };
 const INJURY_STEP: Record<InjuryLevel, number> = { NONE: 0, MILD: 1, MODERATE: 2, SEVERE: 3, CRITICAL: 4 };
+/** 신체 단계 → 막대 색 단계. 추위·더위·고통 경미·심함·극심 = 2·4·5, 부상 1~4단계 = 1·3·4·5 */
+const DISCOMFORT_COLOR: Record<DiscomfortLevel, IntensityLevel> = { NONE: 0, MILD: 2, SEVERE: 4, EXTREME: 5 };
+const INJURY_COLOR: Record<InjuryLevel, IntensityLevel> = { NONE: 0, MILD: 1, MODERATE: 3, SEVERE: 4, CRITICAL: 5 };
 
 export type ConditionInput = {
   thermalCause: ThermalCauseValue;
@@ -97,7 +112,7 @@ export type ConditionInput = {
   injury: InjuryLevel;
   injuryCause: string | null;
 };
-export type AbnormalCondition = { key: "thermal" | "pain" | "injury"; label: string; text: string; step: number; steps: number; detail: string | null };
+export type AbnormalCondition = { key: "thermal" | "pain" | "injury"; label: string; text: string; step: number; steps: number; level: IntensityLevel; detail: string | null };
 
 /**
  * 정상이 아닌 신체 항목만 (추위·더위 → 고통 → 부상 순). 모두 정상이면 빈 배열이라 화면은 신체 영역을 그리지 않는다. 사망은 따로 보인다.
@@ -107,11 +122,13 @@ export function abnormalConditions(c: ConditionInput): AbnormalCondition[] {
   const out: AbnormalCondition[] = [];
   if (c.thermalCause !== "NONE" && c.thermalLevel !== "NONE") {
     const label = c.thermalCause === "COLD" ? "추위" : "더위";
-    out.push({ key: "thermal", label, text: DISCOMFORT_LABEL[c.thermalLevel], step: DISCOMFORT_STEP[c.thermalLevel], steps: 3, detail: null });
+    out.push({ key: "thermal", label, text: DISCOMFORT_LABEL[c.thermalLevel], step: DISCOMFORT_STEP[c.thermalLevel], steps: 3, level: DISCOMFORT_COLOR[c.thermalLevel], detail: null });
   }
   if (c.painLevel !== "NONE") {
-    out.push({ key: "pain", label: "고통", text: DISCOMFORT_LABEL[c.painLevel], step: DISCOMFORT_STEP[c.painLevel], steps: 3, detail: c.painCause });
+    out.push({ key: "pain", label: "고통", text: DISCOMFORT_LABEL[c.painLevel], step: DISCOMFORT_STEP[c.painLevel], steps: 3, level: DISCOMFORT_COLOR[c.painLevel], detail: c.painCause });
   }
-  if (c.injury !== "NONE") out.push({ key: "injury", label: "부상", text: INJURY_LABEL[c.injury], step: INJURY_STEP[c.injury], steps: 4, detail: c.injuryCause });
+  if (c.injury !== "NONE") {
+    out.push({ key: "injury", label: "부상", text: INJURY_LABEL[c.injury], step: INJURY_STEP[c.injury], steps: 4, level: INJURY_COLOR[c.injury], detail: c.injuryCause });
+  }
   return out;
 }
