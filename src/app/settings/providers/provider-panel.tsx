@@ -171,7 +171,6 @@ export function ProviderPanel({ initialConnection }: { initialConnection: Connec
             spellCheck={false}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="AIza…"
             aria-label="Gemini API 키"
             className="flex-1 rounded-md border border-foreground/20 px-3 py-1.5 text-sm"
           />

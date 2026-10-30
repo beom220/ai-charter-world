@@ -248,7 +248,6 @@ export function CharacterLiveState({
             {showAllMemories ? "접기" : `더 보기 (${state.memories.length - MEMORY_PREVIEW_COUNT}개)`}
           </button>
         )}
-        <p className="text-[11px] text-foreground/50">AI가 생성한 허구의 캐릭터 기억입니다. 이 캐릭터만 아는 내용이며 다른 캐릭터의 대화에는 쓰이지 않습니다.</p>
       </section>
     </div>
   );

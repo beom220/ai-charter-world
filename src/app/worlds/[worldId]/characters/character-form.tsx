@@ -266,7 +266,7 @@ export function CharacterForm({
 
       <label className="flex flex-col gap-1 text-sm">
         {header("캐릭터 컨텍스트", "characterContext")}
-        <span className="text-foreground/60">배경·말투·가치관 등을 적으세요. AI에게 그대로 전달됩니다.</span>
+        <span className="text-foreground/60">배경·말투·가치관 등을 적으세요.</span>
         <textarea className={`${input} min-h-28`} value={draft.characterContext} onChange={(e) => set("characterContext", e.target.value)} />
         <span className={`text-right text-xs ${contextLength > CHARACTER_CONTEXT_MAX_LENGTH ? "text-red-600" : "text-foreground/60"}`}>
           {contextLength}/{CHARACTER_CONTEXT_MAX_LENGTH}자
