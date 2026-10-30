@@ -155,19 +155,31 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       </label>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm">
+        <div className="flex flex-col gap-1 text-sm">
           {header("성별", "gender")}
-          <select className={input} value={genderChosen ? (draft.gender ?? "") : ""} onChange={(e) => set("gender", e.target.value as GenderInput)}>
-            <option value="" disabled>
-              {draft.gender && !genderChosen ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}
-            </option>
-            {GENDER_INPUTS.map((g) => (
-              <option key={g} value={g}>
-                {GENDER_LABEL[g]}
-              </option>
-            ))}
-          </select>
-        </label>
+          <div role="radiogroup" aria-label="성별" className="flex gap-2">
+            {GENDER_INPUTS.map((g) => {
+              const checked = draft.gender === g;
+              return (
+                <button
+                  key={g}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  aria-label={GENDER_LABEL[g]}
+                  title={GENDER_LABEL[g]}
+                  onClick={() => set("gender", g)}
+                  className={`flex h-10 w-14 items-center justify-center rounded-md border ${checked ? GENDER_ICON[g].checked : "border-foreground/20 bg-background opacity-60 hover:bg-hover hover:opacity-100"}`}
+                >
+                  <GenderIcon gender={g} />
+                </button>
+              );
+            })}
+          </div>
+          {!genderChosen && (
+            <span className="text-xs text-foreground/60">{draft.gender ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}</span>
+          )}
+        </div>
         <label className="flex flex-col gap-1 text-sm">
           {header("나이", "age")}
           <input
@@ -220,5 +232,32 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
         )}
       </div>
     </form>
+  );
+}
+
+// 성별 아이콘 버튼 색: 남자 하늘색(사건 파랑과 구분), 여자 로즈 핑크
+const GENDER_ICON: Record<GenderInput, { color: string; checked: string }> = {
+  MALE: { color: "text-sky-500", checked: "border-sky-500 bg-sky-500/10" },
+  FEMALE: { color: "text-primary", checked: "border-primary bg-primary/10" },
+};
+
+/** ♂·♀ 기호 (이모지 대체를 피하려고 인라인 SVG) */
+function GenderIcon({ gender }: { gender: GenderInput }) {
+  return (
+    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className={GENDER_ICON[gender].color}>
+      {gender === "MALE" ? (
+        <>
+          <circle cx="10" cy="14" r="5" />
+          <path d="M13.5 10.5 19 5" />
+          <path d="M15 5h4v4" />
+        </>
+      ) : (
+        <>
+          <circle cx="12" cy="9" r="5" />
+          <path d="M12 14v7" />
+          <path d="M9 18h6" />
+        </>
+      )}
+    </svg>
   );
 }
