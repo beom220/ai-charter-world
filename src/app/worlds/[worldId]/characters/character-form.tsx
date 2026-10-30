@@ -35,7 +35,7 @@ import { PersonalitySelect } from "./personality-select";
 //   기존 캐릭터의 일러스트가 비어 있거나 쓸 수 없으면(이전 데이터) 첫 번째 남은 일러스트를 미리 고른다(서버 렌더와 같게 랜덤 아님). 저장 전까지 DB는 바뀌지 않는다.
 //   남은 일러스트가 없으면 중복을 허용하지 않고 안내한다. 최종 중복 검사는 서버가 저장 때 한다(AVATAR_IN_USE).
 // 생성 화면 상태 초기화: cacheComponents에서 Next.js는 떠난 화면을 <Activity>로 숨겨 상태를 남긴다.
-//   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비워, 다시 들어오면 항상 빈 폼으로 시작한다. 수정 폼은 그대로 둔다.
+//   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비우고, 다시 들어오면 전체 랜덤 한 번으로 미리 채운다. 수정 폼은 그대로 둔다.
 
 const input = "rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-sm";
 const small = "rounded border border-primary-soft/60 bg-background px-2 py-0.5 text-xs hover:bg-primary/10 disabled:opacity-50";
@@ -65,15 +65,24 @@ export function CharacterForm({
   const usedAvatars = new Set(usedAvatarIds);
   const avatarUsable = (id: string | null, gender: string | null) => isAvatarForGender(id, gender) && !usedAvatarIds.includes(id!);
 
+  // 생성 화면에 들어올 때마다 🎲 전체 랜덤을 한 번 실행해 값을 미리 채운다(일러스트도 사용 가능한 것 중에서).
+  // 응답 전에 사용자가 이미 입력을 시작했으면(빈 초안이 아니면) 덮어쓰지 않는다. 실패해도 빈 폼으로 그대로 쓸 수 있다.
   useEffect(() => {
     if (characterId) return;
+    let cancelled = false;
+    send(`/api/worlds/${worldId}/characters/random`, "POST", { draft: EMPTY_CHARACTER_DRAFT, lockedFields: [] })
+      .then(({ ok, json }) => {
+        if (!cancelled && ok) setDraft((d) => (d === EMPTY_CHARACTER_DRAFT ? (json.draft as CharacterDraft) : d));
+      })
+      .catch(() => undefined);
     return () => {
+      cancelled = true;
       setDraft(EMPTY_CHARACTER_DRAFT);
       setLocked(new Set());
       setNotice(null);
       setBusy(false);
     };
-  }, [characterId]);
+  }, [characterId, worldId]);
 
   const set = <K extends keyof CharacterDraft>(key: K, value: CharacterDraft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   /** 저장될 나이: 비우면 생성은 성인 자동, 수정은 현재 나이 */
