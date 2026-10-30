@@ -56,7 +56,7 @@ export function ProfileBar({ worldId, initial }: { worldId: string; initial: Pro
     <nav aria-label="캐릭터 프로필" className="border-b border-foreground/10">
       {/* 가운데 정렬: 폭이 남으면 가운데, 모자라면 가로 스크롤(w-max + mx-auto라 왼쪽 항목이 잘리지 않는다) */}
       <div className="mx-auto w-full max-w-3xl overflow-x-auto px-4 sm:px-8">
-        <ul className="mx-auto flex w-max gap-1 py-1.5">
+        <ul className="mx-auto flex w-max gap-0.5 py-1.5">
           {characters.map((c) => {
             const href = `/worlds/${worldId}/characters/${c.id}`;
             const current = pathname === href;
@@ -65,7 +65,7 @@ export function ProfileBar({ worldId, initial }: { worldId: string; initial: Pro
                 <Link
                   href={href}
                   aria-current={current ? "page" : undefined}
-                  className={`flex w-16 flex-col items-center gap-0.5 rounded-md px-1 py-1 outline-offset-2 hover:bg-hover ${current ? "bg-primary/10" : ""}`}
+                  className={`flex w-12 flex-col items-center gap-0.5 rounded-md px-0.5 py-1 outline-offset-2 hover:bg-hover ${current ? "bg-primary/10" : ""}`}
                 >
                   <Avatar
                     avatarId={c.avatarId}
