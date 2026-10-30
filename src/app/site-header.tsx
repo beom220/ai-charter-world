@@ -8,7 +8,7 @@ import { SignOutButton } from "./login/auth-buttons";
 export async function SiteHeader() {
   const session = await getCurrentSession().catch(() => null);
   return (
-    <header className="sticky top-0 z-30 h-12 border-b border-foreground/10 bg-background/95 backdrop-blur">
+    <header className="sticky top-0 z-30 h-12 border-b border-foreground/10 bg-header/95 backdrop-blur">
       <nav className="mx-auto flex h-full w-full max-w-3xl items-center gap-4 px-4 text-sm sm:px-8">
         <Link href="/" className="min-w-0 truncate font-semibold">
           AI Character World
