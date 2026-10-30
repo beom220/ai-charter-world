@@ -353,17 +353,16 @@ function GenderIcon({ gender }: { gender: GenderInput }) {
 }
 
 /**
- * 굴러가는 주사위 (랜덤). 직접 그린 인라인 SVG(외부 아이콘 미사용): 면마다 명암이 다른 입체 주사위를 기울이고 왼쪽에 움직임 선을 둔다.
+ * 주사위 (랜덤). 직접 그린 인라인 SVG(외부 아이콘 미사용): 면마다 명암이 다른 입체 주사위를 비스듬히 기울였다.
  * 색은 currentColor(로즈 핑크), 어두운 면의 눈은 배경색. 버튼에 마우스를 올리면 더 기울고(group-hover),
  * 랜덤 요청 중(rolling)에는 계속 돈다(동작 줄이기 설정이면 멈춤).
  */
 function DiceIcon({ size, rolling = false }: { size: number; rolling?: boolean }) {
   const pip = { r: 0.9, fill: "var(--background)", stroke: "none" } as const;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="overflow-visible">
-      <path d="M0.8 10.5h3.2M0 14h2.6M0.8 17.5h3.2" strokeWidth={1.7} opacity={0.5} />
-      <g className={`origin-[14px_12.5px] transition-transform duration-200 group-hover:-rotate-[30deg] ${rolling ? "motion-safe:animate-spin" : ""}`}>
-        <g transform="rotate(-14 14 12.5)">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <g className={`origin-[12px_12.5px] transition-transform duration-200 group-hover:-rotate-[30deg] ${rolling ? "motion-safe:animate-spin" : ""}`}>
+        <g transform="translate(-2 0) rotate(-14 14 12.5)">
           <path d="M14 3.5 21 7.5 14 11.5 7 7.5Z" fill="currentColor" fillOpacity={0.18} />
           <path d="M7 7.5 14 11.5V20.5L7 16.5Z" fill="currentColor" fillOpacity={0.55} />
           <path d="M14 11.5 21 7.5V16.5L14 20.5Z" fill="currentColor" />
@@ -379,12 +378,19 @@ function DiceIcon({ size, rolling = false }: { size: number; rolling?: boolean }
   );
 }
 
-/** 자물쇠 (잠김·풀림). 이모지 대신 인라인 SVG */
+/**
+ * 자물쇠 (잠김·풀림). 주사위와 같은 입체 스타일: 앞면은 진하게, 윗면·옆면은 연하게, 열쇠 구멍은 배경색.
+ * 풀림이면 고리가 위로 올라가 한쪽이 빠진다. 색은 버튼 글자색(잠김 로즈, 풀림 회색)을 따른다.
+ */
 function LockIcon({ locked, size }: { locked: boolean; size: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="4.5" y="11" width="15" height="10" rx="2" />
-      <path d={locked ? "M8 11V7.5a4 4 0 0 1 8 0V11" : "M8 11V7.5a4 4 0 0 1 7.5-1.9"} />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d={locked ? "M7 10.5V7.3a3.9 3.9 0 0 1 7.8 0V10.5" : "M7 10.5V5.6a3.9 3.9 0 0 1 7.8 0V6.6"} strokeWidth={2.4} />
+      <path d="M3.5 10.5 6.5 8.5H20.5L17.5 10.5Z" fill="currentColor" fillOpacity={0.18} />
+      <path d="M17.5 10.5 20.5 8.5V18.5L17.5 21Z" fill="currentColor" fillOpacity={0.55} />
+      <rect x="3.5" y="10.5" width="14" height="10.5" rx="1.2" fill="currentColor" />
+      <circle cx="10.5" cy="14.6" r="1.5" fill="var(--background)" stroke="none" />
+      <path d="M10.5 15.4v2.6" stroke="var(--background)" strokeWidth={1.6} />
     </svg>
   );
 }
