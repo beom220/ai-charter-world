@@ -418,7 +418,7 @@ export function ScenePanel({
               <div className="flex items-center gap-2 py-1 text-[11px] text-foreground/50">
                 <span className="h-px flex-1 bg-primary-soft/40" />
                 <span className="max-w-[70%] truncate">
-                  #{s.seq} {s.title} · 허구의 캐릭터 발화 · AI 생성
+                  #{s.seq} {s.title}
                 </span>
                 <span className="h-px flex-1 bg-primary-soft/40" />
               </div>
