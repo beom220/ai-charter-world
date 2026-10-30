@@ -478,7 +478,7 @@ Runner 없이 사용자가 버튼을 누를 때 장면 1개를 만든다(`POST /
 - clamp(`engine/commit/state-changes.ts`): 같은 캐릭터·같은 `(from,to)` 제안은 합산 후 감정 강도 ±20·관계 축별 ±5로 자르고, 값 범위(감정 0..100, 호감·신뢰·존중 -100..100, 친밀 0..100)로 자른다. `EmotionChange`·`RelationshipChange`에 원 제안값과 `clamped`를 남긴다. 기억 중요도는 1..5로 자른다. 관계가 없던 쌍은 baseline, 없으면 0에서 시작하고, 감정 행이 없으면 `NEUTRAL`·50에서 시작한다.
 - 커밋(`domain/scenes/scene-state.ts` `applySceneProposals`): §6.7 트랜잭션 안에서 장면·발언 다음에 감정 → 관계 → 기억을 반영하고, 그 뒤 GameState(`stateVersion`·`changeSeq`)·자동저장 메타·outbox를 갱신한다. 별칭은 이번 장면 참가자의 캐릭터 ID로만 되돌린다. 실패·펜싱 거부(`stateVersion`·Run·lease·attemptId)면 아무것도 남지 않는다. 같은 attemptId 결과가 다시 와도 `stateVersion`이 이미 올라 거부되고 `attemptId` UNIQUE가 2차로 막는다.
 - 다음 장면 컨텍스트(`loadParticipantContext`, §6.4): 참가자마다 다른 참가자를 보는 관계 4축과 그 인물이 소유한 기억(중요도·최신순 최대 8개, 캐릭터당 1,500자)을 `<character>` 안에 `[Cn만 아는 기억]` 라벨로 넣는다. 비참가자의 기억·관계는 넣지 않는다. 기억이 예산으로 빠져도 `contextTruncated`는 바꾸지 않는다(worldContext 전용).
-- 화면: 메인 피드는 대사만 보인다. 캐릭터 상세(`/worlds/[id]/characters/[cid]`)에서 현재 감정, 다른 활성 캐릭터와의 관계(양방향 현재 값), 이 캐릭터의 기억(중요도·최신순 30개)을 보여 준다. 변화 이력 화면은 없다.
+- 화면: 메인 피드는 대사만 보인다. 캐릭터 상세(`/worlds/[id]/characters/[cid]`)에서 현재 감정, 다른 활성 캐릭터와의 관계, 이 캐릭터의 기억(중요도·최신순 30개)을 보여 준다. 변화 이력 화면은 없다. 감정·관계·신체 상태는 수치 대신 칸 막대와 단계 문구로 보인다(`src/lib/character-status.ts`, 표시 전용). 관계는 이 캐릭터 → 상대 한 방향만, 호감·신뢰·존중 평균의 5단계(≤-60 매우 나쁨, ≤-20 나쁨, <20 보통, <60 좋음, 그 이상 매우 좋음, 친밀도 제외). 감정 강도는 0~20·21~40·41~60·61~80·81~100의 5단계. 신체 상태는 기존 단계 수만큼 칸을 채운다. 성격 수치(Big Five)는 상세 화면에 보이지 않는다(데이터·프롬프트는 유지).
 - 아직 없음: `scene.committed` payload의 관계·감정 변화·기억 요약(§10.2, 현재는 장면·대사·시스템 노트만), 반복 감지·동기 기반 SceneDirector. `shareGroupId`는 Phase 7-2-3부터 사건별 기억 연결에 쓴다(§13.6).
 
 ### 6.9 AgentModeStrategy 확장 경로 (후속, 미구현)
