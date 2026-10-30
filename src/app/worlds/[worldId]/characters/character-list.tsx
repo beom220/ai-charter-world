@@ -5,9 +5,11 @@ import { conditionBadges } from "@/lib/condition-labels";
 import { GENDER_LABEL } from "@/lib/schemas/character";
 import type { CharacterView } from "@/server/domain/characters/characters";
 import { MOOD_LABEL, primaryButton } from "../../ui";
+import { ConfirmDeleteButton } from "../../world-form";
 
 // 세계관 상세의 캐릭터 목록 (활성 캐릭터만). 6명이면 추가 버튼 대신 상한 안내를 보인다. 생성 화면 하단에서는 추가 버튼을 숨긴다(showAdd).
 // 사망자도 목록에 남아 슬롯을 차지한다(Phase 7-2-2). 신체 상태가 정상이 아니면 배지로 보인다.
+// 카드 오른쪽 위 ✕로 바로 삭제한다(상세 화면 삭제와 같은 확인 대화상자·API·실행 중 잠금). 보고 있던 캐릭터를 지우면 캐릭터 탭으로 간다.
 
 export const tagLabel = (code: string) => PERSONALITY_TAGS.find((t) => t.code === code)?.label ?? code;
 
@@ -49,11 +51,11 @@ export function CharacterList({
       ) : (
         <ul className="grid gap-2 sm:grid-cols-2">
           {characters.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="relative">
               <Link
                 href={`/worlds/${worldId}/characters/${c.id}`}
                 aria-current={c.id === currentId ? "page" : undefined}
-                className={`flex flex-col gap-1 rounded-md border p-3 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
+                className={`flex flex-col gap-1 rounded-md border p-3 pr-10 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
               >
                 <span className="font-medium break-all">
                   {c.name}
@@ -68,6 +70,25 @@ export function CharacterList({
                 </span>
                 <span className="text-xs text-foreground/70">{c.personalityTags.map(tagLabel).join(", ")}</span>
               </Link>
+              <div className="absolute top-2 right-2">
+                <ConfirmDeleteButton
+                  label={`${c.name} 삭제`}
+                  title="캐릭터를 삭제할까요?"
+                  path={`/api/worlds/${worldId}/characters/${c.id}`}
+                  redirectTo={c.id === currentId ? `/worlds/${worldId}/characters` : null}
+                  lockWorldId={worldId}
+                  trigger={{
+                    className: "flex h-7 w-7 items-center justify-center rounded-md text-foreground/50 hover:bg-red-600/10 hover:text-red-600 disabled:opacity-40",
+                    content: (
+                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" aria-hidden>
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    ),
+                  }}
+                >
+                  <strong>{c.name}</strong>은(는) 이후 대화에 참가하지 않습니다. 지난 대화·기억·관계 기록은 남고, 과거 대사에는 &quot;삭제된 캐릭터&quot;로 표시됩니다.
+                </ConfirmDeleteButton>
+              </div>
             </li>
           ))}
         </ul>

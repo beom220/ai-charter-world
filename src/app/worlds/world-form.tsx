@@ -126,14 +126,18 @@ export function ConfirmDeleteButton({
   path,
   redirectTo,
   lockWorldId = null,
+  trigger,
   children,
 }: {
   label: string;
   title: string;
   path: string;
-  redirectTo: string;
+  /** 삭제 후 이동할 경로. null이면 이동하지 않고 현재 화면만 다시 읽는다 (캐릭터 목록 카드) */
+  redirectTo: string | null;
   /** 설정 변경으로 취급해 실행 중에는 막을 세계관 (캐릭터 삭제) */
   lockWorldId?: string | null;
+  /** 기본 글자 버튼 대신 쓸 열기 버튼 모양 (label은 접근성 이름이 된다) */
+  trigger?: { className: string; content: React.ReactNode };
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -149,7 +153,7 @@ export function ConfirmDeleteButton({
       const { ok, json } = await send(path, "DELETE");
       if (!ok) return setError(json?.error?.message ?? "삭제하지 못했습니다.");
       dialog.current?.close();
-      router.push(redirectTo);
+      if (redirectTo) router.push(redirectTo);
       router.refresh();
     } catch {
       setError("삭제하지 못했습니다.");
@@ -160,8 +164,15 @@ export function ConfirmDeleteButton({
 
   return (
     <>
-      <button type="button" className={`${button} text-red-600`} onClick={() => dialog.current?.showModal()} disabled={!editable}>
-        {label}
+      <button
+        type="button"
+        className={trigger?.className ?? `${button} text-red-600`}
+        onClick={() => dialog.current?.showModal()}
+        disabled={!editable}
+        aria-label={trigger ? label : undefined}
+        title={trigger ? label : undefined}
+      >
+        {trigger?.content ?? label}
       </button>
       <dialog ref={dialog} className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-lg bg-background p-6 text-foreground backdrop:bg-black/50">
         <h2 className="text-lg font-semibold">{title}</h2>
