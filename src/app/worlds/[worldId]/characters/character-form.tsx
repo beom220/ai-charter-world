@@ -353,21 +353,26 @@ function GenderIcon({ gender }: { gender: GenderInput }) {
 }
 
 /**
- * 굴러가는 주사위 (랜덤). 이모지 대신 인라인 SVG: 기울어진 주사위 + 왼쪽 움직임 선.
- * 버튼에 마우스를 올리면 더 기울고(group-hover), 랜덤 요청 중(rolling)에는 계속 돈다(동작 줄이기 설정이면 멈춤).
+ * 굴러가는 주사위 (랜덤). 직접 그린 인라인 SVG(외부 아이콘 미사용): 면마다 명암이 다른 입체 주사위를 기울이고 왼쪽에 움직임 선을 둔다.
+ * 색은 currentColor(로즈 핑크), 어두운 면의 눈은 배경색. 버튼에 마우스를 올리면 더 기울고(group-hover),
+ * 랜덤 요청 중(rolling)에는 계속 돈다(동작 줄이기 설정이면 멈춤).
  */
 function DiceIcon({ size, rolling = false }: { size: number; rolling?: boolean }) {
+  const pip = { r: 0.9, fill: "var(--background)", stroke: "none" } as const;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="overflow-visible">
-      <path d="M1.5 9.5h3.5M0.5 13.5h3M1.5 17.5h3.5" strokeWidth={1.8} opacity={0.55} />
-      <g
-        className={`origin-[14.5px_12px] transition-transform duration-200 group-hover:-rotate-[32deg] ${rolling ? "motion-safe:animate-spin" : ""}`}
-      >
-        <g transform="rotate(-16 14.5 12)">
-          <rect x="7.5" y="5" width="14" height="14" rx="3.2" />
-          <circle cx="11" cy="8.5" r="1.35" fill="currentColor" stroke="none" />
-          <circle cx="14.5" cy="12" r="1.35" fill="currentColor" stroke="none" />
-          <circle cx="18" cy="15.5" r="1.35" fill="currentColor" stroke="none" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="overflow-visible">
+      <path d="M0.8 10.5h3.2M0 14h2.6M0.8 17.5h3.2" strokeWidth={1.7} opacity={0.5} />
+      <g className={`origin-[14px_12.5px] transition-transform duration-200 group-hover:-rotate-[30deg] ${rolling ? "motion-safe:animate-spin" : ""}`}>
+        <g transform="rotate(-14 14 12.5)">
+          <path d="M14 3.5 21 7.5 14 11.5 7 7.5Z" fill="currentColor" fillOpacity={0.18} />
+          <path d="M7 7.5 14 11.5V20.5L7 16.5Z" fill="currentColor" fillOpacity={0.55} />
+          <path d="M14 11.5 21 7.5V16.5L14 20.5Z" fill="currentColor" />
+          <ellipse cx="14" cy="7.5" rx="1.5" ry="0.9" fill="currentColor" stroke="none" />
+          <circle cx="9.1" cy="11.4" {...pip} />
+          <circle cx="11.9" cy="16.6" {...pip} />
+          <circle cx="15.6" cy="12.6" {...pip} />
+          <circle cx="17.5" cy="14" {...pip} />
+          <circle cx="19.4" cy="15.4" {...pip} />
         </g>
       </g>
     </svg>
