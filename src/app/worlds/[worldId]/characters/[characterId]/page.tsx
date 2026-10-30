@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BACKGROUND_RARITY_LABEL, BACKGROUND_STAGE_LABEL, findBackground, requiresAdulthood, type BackgroundStage } from "../../../../../../config/character-backgrounds";
-import { BIG_FIVE_LABEL, type BigFiveAxis } from "../../../../../../config/personality-map";
 import { getCurrentSession } from "@/server/auth/session";
 import { findDeletedCharacterName, getCharacter, listCharacters } from "@/server/domain/characters/characters";
 import { getCharacterInsights } from "@/server/domain/characters/insights";
@@ -115,19 +114,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           relations: insights.relations,
           memories: JSON.parse(JSON.stringify(insights.memories)) as LiveMemory[],
         }}
-      >
-        <section className={panel}>
-          <h2 className="text-sm font-semibold">성격 수치</h2>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 text-sm">
-            {(Object.keys(BIG_FIVE_LABEL) as BigFiveAxis[]).map((axis) => (
-              <div key={axis} className="contents">
-                <dt className="text-foreground/70">{BIG_FIVE_LABEL[axis]}</dt>
-                <dd>{c.bigFive[axis]}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      </CharacterLiveState>
+      />
 
       {c.condition.vital === "DEAD" ? (
         <p role="status" className="rounded-md border border-red-600/40 bg-red-600/5 px-3 py-2 text-sm">

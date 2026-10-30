@@ -3,18 +3,21 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { INJURY_LABEL, painLabel, thermalLabel, type DiscomfortLevel, type InjuryLevel, type ThermalCauseValue } from "@/lib/condition-labels";
+import { injuryBar, intensityBar, moodVisual, painBar, relationBar, thermalBar, type RelationValues } from "@/lib/character-status";
+import type { DiscomfortLevel, InjuryLevel, ThermalCauseValue } from "@/lib/condition-labels";
 import { formatWorldTime } from "@/lib/world-clock";
 import { MOOD_LABEL } from "../../../ui";
 import { send } from "../../../world-form";
+import { StatusBar } from "./status-bar";
 
 // 캐릭터 상세의 감정·관계·기억 (Phase 5-5 화면, Phase 6 실시간 갱신).
 // - 세계관 SSE를 구독해 scene.committed가 오면 /characters/[id]/state를 다시 읽는다. 상태 변화 수치는 메인 피드에 보이지 않는다.
 // - 요청마다 번호를 붙여 가장 최근 요청의 응답만 반영한다(응답 순서가 뒤집혀도 오래된 값으로 덮어쓰지 않음).
 // - state.replaced(불러오기)면 페이지 전체를 서버에서 다시 그린다(프로필이 바뀌었거나 캐릭터가 없어졌을 수 있음).
 // - 신체 상태(Phase 7-2-2): 온도 불편·고통·부상·생존. 사망하면 원인·장면·월드 시각을 보이고, 페이지를 다시 그려 수정 폼을 닫는다.
+// - 표시(게임형 상태창): 감정·관계·신체 상태를 칸 막대(status-bar.tsx)로 보인다. 단계·색 변환은 src/lib/character-status.ts.
+//   관계는 이 캐릭터 → 상대 한 방향만 보인다(반대 방향은 상대 캐릭터 상세에서). 수치는 화면에 직접 내보이지 않는다.
 
-type RelationValues = { affinity: number; trust: number; respect: number; familiarity: number };
 export type LiveMemory = { id: string; kind: string; acquisition: string; importance: number; content: string; aboutName: string | null };
 export type LiveCondition = {
   thermalCause: ThermalCauseValue;
@@ -46,7 +49,6 @@ const MEMORY_KIND_LABEL: Record<string, string> = {
   OTHER: "기타",
 };
 const ACQUISITION_LABEL: Record<string, string> = { WITNESSED: "직접 겪음", TOLD: "전해 들음", OBSERVED: "관찰" };
-const relationText = (r: RelationValues) => `호감 ${r.affinity} · 신뢰 ${r.trust} · 존중 ${r.respect} · 친밀 ${r.familiarity}`;
 
 export function CharacterLiveState({
   worldId,
@@ -54,15 +56,12 @@ export function CharacterLiveState({
   characterName,
   eventCursor,
   initial,
-  children,
 }: {
   worldId: string;
   characterId: string;
   characterName: string;
   eventCursor: string;
   initial: LiveState;
-  /** 감정 옆에 놓을 서버 렌더 패널 (성격 수치) */
-  children: React.ReactNode;
 }) {
   const router = useRouter();
   const [state, setState] = useState(initial);
@@ -92,9 +91,26 @@ export function CharacterLiveState({
     return () => es.close();
   }, [worldId, eventCursor, reload, router]);
 
+  const thermal = thermalBar(state.condition.thermalCause, state.condition.thermalLevel);
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <section className={`${panel} sm:col-span-2 ${state.condition.vital === "DEAD" ? "border-red-600/40" : ""}`}>
+      <section className={panel}>
+        <h2 className="text-sm font-semibold">현재 감정</h2>
+        {state.emotion ? (
+          <>
+            <p className="flex items-center gap-2 text-base font-semibold">
+              <span aria-hidden className="text-2xl leading-none">
+                {moodVisual(state.emotion.mood).icon}
+              </span>
+              {MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood}
+            </p>
+            <StatusBar label="강도" bar={intensityBar(state.emotion.mood, state.emotion.intensity)} />
+          </>
+        ) : (
+          <p className="text-sm text-foreground/60">기록 없음</p>
+        )}
+      </section>
+      <section className={`${panel} ${state.condition.vital === "DEAD" ? "border-red-600/40" : ""}`}>
         <h2 className="text-sm font-semibold">신체 상태</h2>
         {state.condition.vital === "DEAD" ? (
           <p className="text-sm">
@@ -105,49 +121,36 @@ export function CharacterLiveState({
             </span>
           </p>
         ) : (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 text-sm">
-            <dt className="text-foreground/70">체감 온도</dt>
-            <dd>{thermalLabel(state.condition.thermalCause, state.condition.thermalLevel)}</dd>
-            <dt className="text-foreground/70">고통</dt>
-            <dd>
-              {painLabel(state.condition.painLevel)}
-              {state.condition.painCause && <span className="text-xs text-foreground/60"> · {state.condition.painCause}</span>}
-            </dd>
-            <dt className="text-foreground/70">부상</dt>
-            <dd>
-              {INJURY_LABEL[state.condition.injury]}
-              {state.condition.injuryCause && <span className="text-xs text-foreground/60"> · {state.condition.injuryCause}</span>}
-            </dd>
-          </dl>
+          <div className="flex flex-col gap-2">
+            <StatusBar label="온도 불편감" icon={thermal.cause === "COLD" ? "❄️" : thermal.cause === "HEAT" ? "🔥" : "🌡️"} bar={thermal} />
+            <StatusBar label="고통" icon="💢" bar={painBar(state.condition.painLevel)} detail={state.condition.painCause} />
+            <StatusBar label="부상" icon="🩹" bar={injuryBar(state.condition.injury)} detail={state.condition.injuryCause} />
+          </div>
         )}
       </section>
-      <section className={panel}>
-        <h2 className="text-sm font-semibold">현재 감정</h2>
-        <p className="text-sm">{state.emotion ? `${MOOD_LABEL[state.emotion.mood]} (강도 ${state.emotion.intensity}/100)` : "기록 없음"}</p>
-      </section>
-      {children}
       <section className={`${panel} sm:col-span-2`}>
         <h2 className="text-sm font-semibold">관계</h2>
         {state.relations.length === 0 ? (
           <p className="text-sm text-foreground/60">다른 캐릭터가 없습니다.</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-sm">
+          <ul className="flex flex-col gap-2">
             {state.relations.map((r) => (
-              <li key={r.otherId} className="flex flex-col">
-                <Link href={`/worlds/${worldId}/characters/${r.otherId}`} className="font-medium underline">
-                  {r.otherName}
-                </Link>
-                <span className="text-foreground/80">
-                  {characterName} → {r.otherName}: {relationText(r.outgoing)}
-                </span>
-                <span className="text-foreground/60">
-                  {r.otherName} → {characterName}: {relationText(r.incoming)}
-                </span>
+              <li key={r.otherId}>
+                <StatusBar
+                  label={
+                    <Link href={`/worlds/${worldId}/characters/${r.otherId}`} className="truncate font-medium underline">
+                      {r.otherName}
+                    </Link>
+                  }
+                  bar={relationBar(r.outgoing)}
+                />
               </li>
             ))}
           </ul>
         )}
-        <p className="text-[11px] text-foreground/50">호감·신뢰·존중 -100~100, 친밀 0~100. 대화 장면마다 축별 최대 ±5씩 변합니다.</p>
+        <p className="text-[11px] text-foreground/50">
+          {characterName}이(가) 상대를 어떻게 보는지입니다(호감·신뢰·존중을 합친 5단계). 상대가 {characterName}을(를) 어떻게 보는지는 상대 캐릭터 화면에서 볼 수 있습니다.
+        </p>
       </section>
       <section className={`${panel} sm:col-span-2`}>
         <h2 className="text-sm font-semibold">기억</h2>
