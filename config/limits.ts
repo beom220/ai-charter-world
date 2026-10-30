@@ -75,8 +75,8 @@ export const PERSONALITY_TAGS_MAX = 5;
 /** 나이 입력 범위 (DB CHECK 0~1000, 판타지 종족 고려) */
 export const CHARACTER_AGE_MAX = 1000;
 
-/** 랜덤·자동 나이 범위 (성인 기본, 세계관 템플릿 도입 전 공통값) */
-export const RANDOM_ADULT_AGE_RANGE = { min: 20, max: CHARACTER_AGE_MAX } as const;
+/** 랜덤 나이 범위 (PRD v2.6). 저장 시 빈 나이 자동 설정은 성년기 배경과 맞도록 성인(ADULTHOOD_MIN_AGE)부터 상한까지 */
+export const RANDOM_AGE_RANGE = { min: 1, max: 80 } as const;
 
 // ── 대화 장면 생성 (Phase 5-1, architecture.md §6.4·§6.5 StoryMode) ──
 

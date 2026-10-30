@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHARACTER_DRAFT, speakerHref, togglePersonalityTag } from "@/lib/character-form";
 import { characterInputSchema } from "@/lib/schemas/character";
-import { randomAge, randomGender } from "@/server/domain/characters/random";
+import { autoAge, randomAge, randomGender } from "@/server/domain/characters/random";
 
-// 캐릭터 화면 개선: 성격 다중 선택 제한, 빈 생성 폼, 대화 속 이름 링크, 성별(남자·여자), 랜덤 나이 20~1000
+// 캐릭터 화면 개선: 성격 다중 선택 제한, 빈 생성 폼, 대화 속 이름 링크, 성별(남자·여자), 랜덤 나이 1~80·자동 나이 19~80
 
 describe("캐릭터 화면", () => {
   it("성격 토글: 추가·제거, 5개가 차면 더 넣지 않는다", () => {
@@ -42,7 +42,9 @@ describe("캐릭터 화면", () => {
     for (const gender of ["AUTO", "NONBINARY", "CUSTOM", "UNSPECIFIED", undefined]) expect(characterInputSchema.safeParse({ ...base, gender }).success).toBe(false);
     expect(characterInputSchema.safeParse({ ...base, gender: "MALE", age: 1001 }).success).toBe(false);
     expect(new Set([0, 0.49, 0.5, 0.99].map((r) => randomGender(() => r)))).toEqual(new Set(["MALE", "FEMALE"]));
-    expect(randomAge(() => 0)).toBe(20);
-    expect(randomAge(() => 0.999999)).toBe(1000);
+    expect(randomAge(() => 0)).toBe(1);
+    expect(randomAge(() => 0.999999)).toBe(80);
+    expect(autoAge(() => 0)).toBe(19); // 빈 나이 자동 설정은 성년기 배경과 충돌하지 않게 성인만
+    expect(autoAge(() => 0.999999)).toBe(80);
   });
 });

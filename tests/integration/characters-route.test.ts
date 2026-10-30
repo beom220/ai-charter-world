@@ -85,7 +85,7 @@ describe("캐릭터 CRUD", () => {
     expect((await RANDOM(req("POST", { body: {} }), worldCtx("w"))).status).toBe(401);
   });
 
-  it("생성: Big Five는 태그에서 계산하고 EmotionState를 초기화하며 changeSeq를 올린다. 성별은 남자·여자만, 빈 나이는 자동(20~1000)", async () => {
+  it("생성: Big Five는 태그에서 계산하고 EmotionState를 초기화하며 changeSeq를 올린다. 성별은 남자·여자만, 빈 나이는 자동(19~80)", async () => {
     const { world, cookie } = await setup("char-create");
     const r = await json(await POST(req("POST", { cookie, body: { ...valid(), extraversion: 99, worldId: "other" } }), worldCtx(world.id)));
     expect(r.status).toBe(201);
@@ -98,8 +98,8 @@ describe("캐릭터 CRUD", () => {
     }
     const auto = await json(await POST(req("POST", { cookie, body: { ...valid("자동"), gender: "FEMALE", age: null } }), worldCtx(world.id)));
     expect(auto.body.character.gender).toBe("FEMALE");
-    expect(auto.body.character.age).toBeGreaterThanOrEqual(20);
-    expect(auto.body.character.age).toBeLessThanOrEqual(1000);
+    expect(auto.body.character.age).toBeGreaterThanOrEqual(19);
+    expect(auto.body.character.age).toBeLessThanOrEqual(80);
 
     const list = await json(await LIST(req("GET", { cookie }), worldCtx(world.id)));
     expect(list.body.characters.map((c: { name: string }) => c.name)).toEqual(["도윤", "자동"]);
@@ -237,8 +237,8 @@ describe("캐릭터 CRUD", () => {
 
     const one = await json(await RANDOM(req("POST", { cookie, body: { draft, fields: ["age", "name"], lockedFields: ["name"] } }), worldCtx(world.id)));
     expect(one.body.draft).toMatchObject({ name: "고정", personalityTags: ["kind"], characterContext: "유지", goal: "" });
-    expect(one.body.draft.age).toBeGreaterThanOrEqual(20);
-    expect(one.body.draft.age).toBeLessThanOrEqual(1000);
+    expect(one.body.draft.age).toBeGreaterThanOrEqual(1);
+    expect(one.body.draft.age).toBeLessThanOrEqual(80);
 
     expect(await prisma.character.count({ where: { worldId: world.id } })).toBe(0);
     expect(await changeSeq(world.id)).toBe(0);

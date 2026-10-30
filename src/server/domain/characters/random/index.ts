@@ -1,5 +1,5 @@
-import { pickRandomBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
-import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_ADULT_AGE_RANGE } from "../../../../../config/limits";
+import { ADULTHOOD_MIN_AGE, pickRandomBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
+import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_AGE_RANGE } from "../../../../../config/limits";
 import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
 import { GENDER_INPUTS, RANDOM_FIELDS, type CharacterDraft, type GenderInput, type RandomField } from "@/lib/schemas/character";
 import { CONTEXT_TEMPLATES, GOAL_TEMPLATES, NAME_POOL } from "./data";
@@ -16,8 +16,14 @@ export function randomGender(rng: Rng = Math.random): GenderInput {
   return pick(GENDER_INPUTS, rng);
 }
 
+/** 🎲 랜덤 나이 (1~80). 18세 이하가 나오면 randomizeCharacter가 성년기 배경을 비운다 */
 export function randomAge(rng: Rng = Math.random): number {
-  return intBetween(RANDOM_ADULT_AGE_RANGE.min, RANDOM_ADULT_AGE_RANGE.max, rng);
+  return intBetween(RANDOM_AGE_RANGE.min, RANDOM_AGE_RANGE.max, rng);
+}
+
+/** 저장 시 빈 나이 자동 설정 (19~80). 빈 나이는 성인으로 보고 성년기 배경을 필수로 받으므로 미성년이 나오면 안 된다 */
+export function autoAge(rng: Rng = Math.random): number {
+  return intBetween(ADULTHOOD_MIN_AGE, RANDOM_AGE_RANGE.max, rng);
 }
 
 function randomName(gender: CharacterDraft["gender"], rng: Rng): string {

@@ -6,7 +6,7 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/server/domain/e
 import type { AuthenticatedUserId } from "@/server/domain/identity";
 import { assertSettingsEditable, lockOwnedWorld } from "@/server/domain/worlds";
 import { conditionSelect, toConditionView, type ConditionView } from "./conditions";
-import { randomAge } from "./random";
+import { autoAge } from "./random";
 
 // 캐릭터 CRUD (PRD FR-04, database.md §6.6·§6.7·§7). 런타임 독립 모듈.
 // - 모든 접근은 world.ownerId 조건을 건다. 없거나 타인 소유이거나 삭제된 캐릭터는 NotFoundError(404).
@@ -95,7 +95,7 @@ const activeWhere = (userId: AuthenticatedUserId, worldId: string) => ({ worldId
 /** 입력 → 저장 값. 나이 비움은 저장 시 자동으로 정한다 (architecture.md §13). 성별은 남자·여자만 받는다. Big Five는 태그에서 계산한다 */
 function toData(input: CharacterInput) {
   const gender = input.gender;
-  const age = input.age ?? randomAge();
+  const age = input.age ?? autoAge();
   const issue = adulthoodBackgroundIssue(age, input.adulthoodBackgroundId);
   if (issue) throw new BadRequestError(issue);
   return {

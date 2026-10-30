@@ -82,6 +82,8 @@ describe("랜덤 생성", () => {
     expect(findBackground(next.childhoodBackgroundId, "CHILDHOOD")).not.toBeNull();
     expect(next.age).toBeGreaterThanOrEqual(19);
     expect(findBackground(next.adulthoodBackgroundId, "ADULTHOOD")).not.toBeNull();
+    const minor = randomizeCharacter({ ...draft, adulthoodBackgroundId: "adulthood_doctor" }, { fields: ["age"] }, () => 0.1); // 랜덤 나이 1~80: 9세
+    expect(minor).toMatchObject({ age: 9, adulthoodBackgroundId: null });
   });
 
   it("나이 규칙이 잠금보다 우선: 잠근 나이가 18세 이하면 잠근 성년기도 비운다. 항목별 랜덤은 다른 배경을 건드리지 않는다", () => {
