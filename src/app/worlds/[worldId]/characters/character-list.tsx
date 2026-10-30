@@ -6,7 +6,7 @@ import { GENDER_LABEL } from "@/lib/schemas/character";
 import type { CharacterView } from "@/server/domain/characters/characters";
 import { MOOD_LABEL, primaryButton } from "../../ui";
 
-// 세계관 상세의 캐릭터 목록 (활성 캐릭터만). 6명이면 추가 버튼 대신 상한 안내를 보인다.
+// 세계관 상세의 캐릭터 목록 (활성 캐릭터만). 6명이면 추가 버튼 대신 상한 안내를 보인다. 생성 화면 하단에서는 추가 버튼을 숨긴다(showAdd).
 // 사망자도 목록에 남아 슬롯을 차지한다(Phase 7-2-2). 신체 상태가 정상이 아니면 배지로 보인다.
 
 export const tagLabel = (code: string) => PERSONALITY_TAGS.find((t) => t.code === code)?.label ?? code;
@@ -15,7 +15,7 @@ export function genderText(c: Pick<CharacterView, "gender" | "genderCustom">) {
   return c.gender === "CUSTOM" ? (c.genderCustom ?? "") : GENDER_LABEL[c.gender];
 }
 
-export function CharacterList({ worldId, characters }: { worldId: string; characters: CharacterView[] }) {
+export function CharacterList({ worldId, characters, showAdd = true }: { worldId: string; characters: CharacterView[]; showAdd?: boolean }) {
   const full = characters.length >= MAX_ACTIVE_CHARACTERS_PER_WORLD;
   return (
     <section className="flex flex-col gap-3">
@@ -26,9 +26,11 @@ export function CharacterList({ worldId, characters }: { worldId: string; charac
         {full ? (
           <p className="text-sm text-foreground/70">캐릭터는 최대 {MAX_ACTIVE_CHARACTERS_PER_WORLD}명입니다. 추가하려면 기존 캐릭터를 삭제하세요.</p>
         ) : (
-          <Link href={`/worlds/${worldId}/characters/new`} className={primaryButton}>
-            캐릭터 추가
-          </Link>
+          showAdd && (
+            <Link href={`/worlds/${worldId}/characters/new`} className={primaryButton}>
+              캐릭터 추가
+            </Link>
+          )
         )}
       </div>
       {characters.length === 0 ? (

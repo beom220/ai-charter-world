@@ -8,8 +8,9 @@ import { NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { LoginRequired } from "../../../ui";
 import { CharacterForm } from "../character-form";
+import { CharacterList } from "../character-list";
 
-// 캐릭터 생성 (PRD §6 /worlds/[worldId]/characters/new).
+// 캐릭터 생성 (PRD §6 /worlds/[worldId]/characters/new). 만든 뒤에도 이 화면에 머물고, 하단 목록으로 결과를 보인다.
 
 export default function NewCharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/new">) {
   return (
@@ -26,9 +27,9 @@ async function NewCharacter({ params }: { params: Promise<{ worldId: string }> }
   if (!session) return <LoginRequired />;
   const { worldId } = await params;
 
-  let count;
+  let characters;
   try {
-    count = (await listCharacters(asAuthenticatedUserId(session.user.id), worldId)).length;
+    characters = await listCharacters(asAuthenticatedUserId(session.user.id), worldId);
   } catch (error) {
     if (error instanceof NotFoundError) notFound();
     throw error;
@@ -40,13 +41,14 @@ async function NewCharacter({ params }: { params: Promise<{ worldId: string }> }
         ← 캐릭터 목록
       </Link>
       <h2 className="text-xl font-semibold">새 캐릭터</h2>
-      {count >= MAX_ACTIVE_CHARACTERS_PER_WORLD ? (
+      {characters.length >= MAX_ACTIVE_CHARACTERS_PER_WORLD ? (
         <p role="alert" className="text-sm">
           캐릭터는 세계관당 최대 {MAX_ACTIVE_CHARACTERS_PER_WORLD}명입니다. 추가하려면 기존 캐릭터를 삭제하세요.
         </p>
       ) : (
         <CharacterForm worldId={worldId} />
       )}
+      <CharacterList worldId={worldId} characters={characters} showAdd={false} />
     </>
   );
 }

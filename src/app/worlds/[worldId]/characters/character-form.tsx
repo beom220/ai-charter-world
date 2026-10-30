@@ -100,7 +100,10 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
       const { ok, json } = characterId ? await send(`${base}/${characterId}`, "PATCH", parsed.data) : await send(base, "POST", parsed.data);
       if (!ok) return setNotice({ kind: "error", text: json?.error?.message ?? "요청을 처리하지 못했습니다." });
       if (!characterId) {
-        router.push(`/worlds/${worldId}/characters/${json.character.id}`);
+        // 생성 후에는 화면을 옮기지 않고 빈 폼으로 돌려, 아래 캐릭터 목록만 새로 읽는다
+        setDraft(EMPTY_CHARACTER_DRAFT);
+        setLocked(new Set());
+        setNotice({ kind: "ok", text: `${parsed.data.name} 캐릭터를 만들었습니다.` });
         return router.refresh();
       }
       setNotice({ kind: "ok", text: json.changed ? "저장했습니다. 다음 장면부터 반영됩니다." : "변경된 내용이 없습니다." });
