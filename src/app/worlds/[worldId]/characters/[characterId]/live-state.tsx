@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { injuryBar, intensityBar, moodVisual, painBar, relationBar, thermalBar, type RelationValues } from "@/lib/character-status";
+import { abnormalConditions, intensityBar, relationBar, type RelationValues } from "@/lib/character-status";
 import type { DiscomfortLevel, InjuryLevel, ThermalCauseValue } from "@/lib/condition-labels";
 import { formatWorldTime } from "@/lib/world-clock";
 import { MOOD_LABEL } from "../../../ui";
@@ -16,6 +16,7 @@ import { StatusBar } from "./status-bar";
 // - state.replaced(불러오기)면 페이지 전체를 서버에서 다시 그린다(프로필이 바뀌었거나 캐릭터가 없어졌을 수 있음).
 // - 신체 상태(Phase 7-2-2): 온도 불편·고통·부상·생존. 사망하면 원인·장면·월드 시각을 보이고, 페이지를 다시 그려 수정 폼을 닫는다.
 // - 표시(게임형 상태창): 감정·관계·신체 상태를 칸 막대(status-bar.tsx)로 보인다. 단계·색 변환은 src/lib/character-status.ts.
+//   "현재 상태" 카드 하나에 감정 → 신체 이상(정상이 아닌 항목만, 모두 정상이면 영역 없음) → 사망 순으로 보인다. 이모지는 쓰지 않는다.
 //   관계는 이 캐릭터 → 상대 한 방향만 보인다(반대 방향은 상대 캐릭터 상세에서). 수치는 화면에 직접 내보이지 않는다.
 
 export type LiveMemory = { id: string; kind: string; acquisition: string; importance: number; content: string; aboutName: string | null };
@@ -91,40 +92,30 @@ export function CharacterLiveState({
     return () => es.close();
   }, [worldId, eventCursor, reload, router]);
 
-  const thermal = thermalBar(state.condition.thermalCause, state.condition.thermalLevel);
+  const abnormal = state.condition.vital === "DEAD" ? [] : abnormalConditions(state.condition);
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <section className={panel}>
-        <h2 className="text-sm font-semibold">현재 감정</h2>
+      <section className={`flex flex-col gap-2.5 rounded-md border p-3 sm:col-span-2 ${state.condition.vital === "DEAD" ? "border-red-600/40" : "border-foreground/15"}`}>
+        <h2 className="text-sm font-semibold">현재 상태</h2>
         {state.emotion ? (
-          <>
-            <p className="flex items-center gap-2 text-base font-semibold">
-              <span aria-hidden className="text-2xl leading-none">
-                {moodVisual(state.emotion.mood).icon}
-              </span>
-              {MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood}
-            </p>
-            <StatusBar label="강도" bar={intensityBar(state.emotion.mood, state.emotion.intensity)} />
-          </>
+          <StatusBar stacked label={MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood} bar={intensityBar(state.emotion.mood, state.emotion.intensity)} />
         ) : (
-          <p className="text-sm text-foreground/60">기록 없음</p>
+          <p className="text-sm text-foreground/60">감정 기록 없음</p>
         )}
-      </section>
-      <section className={`${panel} ${state.condition.vital === "DEAD" ? "border-red-600/40" : ""}`}>
-        <h2 className="text-sm font-semibold">신체 상태</h2>
-        {state.condition.vital === "DEAD" ? (
-          <p className="text-sm">
+        {state.condition.vital === "DEAD" && (
+          <p className="border-t border-foreground/10 pt-2.5 text-sm">
             <span className="font-semibold text-red-600">사망</span> — {state.condition.deathCause ?? "원인 미상"}
             <span className="text-xs text-foreground/60">
               {state.condition.deathSceneSeq !== null ? ` · 장면 #${state.condition.deathSceneSeq}` : ""}
               {state.condition.deathWorldSeconds !== null ? ` · ${formatWorldTime(state.condition.deathWorldSeconds)}` : ""}
             </span>
           </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            <StatusBar label="온도 불편감" icon={thermal.cause === "COLD" ? "❄️" : thermal.cause === "HEAT" ? "🔥" : "🌡️"} bar={thermal} />
-            <StatusBar label="고통" icon="💢" bar={painBar(state.condition.painLevel)} detail={state.condition.painCause} />
-            <StatusBar label="부상" icon="🩹" bar={injuryBar(state.condition.injury)} detail={state.condition.injuryCause} />
+        )}
+        {abnormal.length > 0 && (
+          <div className="flex flex-col gap-2.5 border-t border-foreground/10 pt-2.5">
+            {abnormal.map((a) => (
+              <StatusBar key={a.key} stacked label={a.label} bar={a.bar} detail={a.detail} />
+            ))}
           </div>
         )}
       </section>

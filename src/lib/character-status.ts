@@ -35,21 +35,22 @@ export function relationBar(r: RelationValues): StatusBarView {
 
 // ── 감정
 // 표정 매핑은 moodVisual 한 곳에 둔다. 나중에 프로필 일러스트 표정 전환은 expression 키로 연결한다(이번에는 이미지 없음).
+// 화면에는 이모지·아이콘 없이 감정 이름과 막대 색으로만 보인다.
 
-export type MoodVisual = { icon: string; color: string; expression: string };
+export type MoodVisual = { color: string; expression: string };
 const MOOD_VISUAL: Record<string, MoodVisual> = {
-  NEUTRAL: { icon: "😐", color: "#CFCAB9", expression: "neutral" },
-  HAPPY: { icon: "😊", color: "#F2B8C6", expression: "smile" },
-  EXCITED: { icon: "🤩", color: "#F59AB0", expression: "excited" },
-  CALM: { icon: "😌", color: "#A9D4C2", expression: "calm" },
-  SAD: { icon: "😢", color: "#A8BCD8", expression: "sad" },
-  ANXIOUS: { icon: "😰", color: "#C7B3DE", expression: "anxious" },
-  ANGRY: { icon: "😠", color: "#E8868F", expression: "angry" },
-  FEARFUL: { icon: "😨", color: "#9FA6C9", expression: "fearful" },
-  EMBARRASSED: { icon: "😳", color: "#F4A99A", expression: "embarrassed" },
-  LONELY: { icon: "🥺", color: "#B9C3D6", expression: "lonely" },
-  HOPEFUL: { icon: "🥰", color: "#F3C98B", expression: "hopeful" },
-  TIRED: { icon: "😪", color: "#C9C2B4", expression: "tired" },
+  NEUTRAL: { color: "#CFCAB9", expression: "neutral" },
+  HAPPY: { color: "#F2B8C6", expression: "smile" },
+  EXCITED: { color: "#F59AB0", expression: "excited" },
+  CALM: { color: "#A9D4C2", expression: "calm" },
+  SAD: { color: "#A8BCD8", expression: "sad" },
+  ANXIOUS: { color: "#C7B3DE", expression: "anxious" },
+  ANGRY: { color: "#E8868F", expression: "angry" },
+  FEARFUL: { color: "#9FA6C9", expression: "fearful" },
+  EMBARRASSED: { color: "#F4A99A", expression: "embarrassed" },
+  LONELY: { color: "#B9C3D6", expression: "lonely" },
+  HOPEFUL: { color: "#F3C98B", expression: "hopeful" },
+  TIRED: { color: "#C9C2B4", expression: "tired" },
 };
 
 export function moodVisual(mood: string): MoodVisual {
@@ -79,12 +80,12 @@ const COLD_COLORS = ["#A9CBEA", "#7FAEDB", "#5A8CC7"] as const;
 const HEAT_COLORS = ["#F3C98B", "#F2A07B", "#E8737F"] as const;
 const EMPTY_COLOR = "transparent";
 
-/** 온도 불편: 정상(빈 막대) / 추움·더움 경미·심함·극심 (3칸) */
-export function thermalBar(cause: ThermalCauseValue, level: DiscomfortLevel): StatusBarView & { cause: ThermalCauseValue } {
+/** 온도 불편: 정상(빈 막대) / 추위·더위(thermalCause) 경미·심함·극심(thermalLevel) 3칸. label은 원인에서 정한다 */
+export function thermalBar(cause: ThermalCauseValue, level: DiscomfortLevel): StatusBarView & { cause: ThermalCauseValue; label: string } {
   const step = cause === "NONE" ? 0 : DISCOMFORT_STEP[level];
-  if (step === 0) return { segments: 3, filled: 0, color: EMPTY_COLOR, text: "정상", cause: "NONE" };
+  if (step === 0) return { segments: 3, filled: 0, color: EMPTY_COLOR, text: "정상", cause: "NONE", label: "체감 온도" };
   const colors = cause === "COLD" ? COLD_COLORS : HEAT_COLORS;
-  return { segments: 3, filled: step, color: colors[step - 1]!, text: `${cause === "COLD" ? "추움" : "더움"} · ${DISCOMFORT_LABEL[level]}`, cause };
+  return { segments: 3, filled: step, color: colors[step - 1]!, text: DISCOMFORT_LABEL[level], cause, label: cause === "COLD" ? "추위" : "더위" };
 }
 
 /** 고통: 없음(빈 막대) / 경미·심함·극심 (3칸) */
@@ -97,4 +98,26 @@ export function painBar(level: DiscomfortLevel): StatusBarView {
 export function injuryBar(level: InjuryLevel): StatusBarView {
   const step = INJURY_STEP[level];
   return { segments: 4, filled: step, color: step === 0 ? EMPTY_COLOR : SEVERITY_COLORS[step - 1]!, text: INJURY_LABEL[level] };
+}
+
+export type ConditionInput = {
+  thermalCause: ThermalCauseValue;
+  thermalLevel: DiscomfortLevel;
+  painLevel: DiscomfortLevel;
+  painCause: string | null;
+  injury: InjuryLevel;
+  injuryCause: string | null;
+};
+export type AbnormalCondition = { key: "thermal" | "pain" | "injury"; label: string; bar: StatusBarView; detail: string | null };
+
+/** 정상이 아닌 신체 항목만 (추위·더위 → 고통 → 부상 순). 모두 정상이면 빈 배열이라 화면은 신체 영역을 그리지 않는다. 사망은 따로 보인다 */
+export function abnormalConditions(c: ConditionInput): AbnormalCondition[] {
+  const out: AbnormalCondition[] = [];
+  const thermal = thermalBar(c.thermalCause, c.thermalLevel);
+  if (thermal.filled > 0) out.push({ key: "thermal", label: thermal.label, bar: thermal, detail: null });
+  const pain = painBar(c.painLevel);
+  if (pain.filled > 0) out.push({ key: "pain", label: "고통", bar: pain, detail: c.painCause });
+  const injury = injuryBar(c.injury);
+  if (injury.filled > 0) out.push({ key: "injury", label: "부상", bar: injury, detail: c.injuryCause });
+  return out;
 }
