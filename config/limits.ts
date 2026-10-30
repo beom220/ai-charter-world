@@ -149,6 +149,9 @@ export const RUNNER_POLL_INTERVAL_MS = 2_000;
 /** 설정 화면: 실행 중·진행 중 장면 때문에 수정이 막혀 있는 동안 실행 상태를 다시 확인하는 간격 (Phase 7-2) */
 export const SETTINGS_LOCK_POLL_MS = 3_000;
 
+/** 완료 알림 토스트(캐릭터 저장 등)가 보였다 사라지기까지의 시간. 닫기 버튼으로 더 빨리 닫을 수 있다 */
+export const TOAST_DURATION_MS = 800;
+
 /** 복구 스위퍼 주기: lease가 비었거나 만료된 RUNNING·PAUSING 세계관을 찾아 Runner를 붙인다 (§7.4) */
 export const RUNNER_SWEEP_INTERVAL_MS = 15_000;
 
