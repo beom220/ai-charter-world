@@ -11,14 +11,13 @@ import { CharacterLiveState, type LiveMemory } from "./live-state";
 import { NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { LoginRequired } from "../../../ui";
-import { ConfirmDeleteButton } from "../../../world-form";
 import { CharacterForm } from "../character-form";
 import { CharacterList, genderText, tagLabel } from "../character-list";
 
 // 캐릭터 상세 패널과 편집 (PRD §6 /worlds/[worldId]/characters/[characterId]).
 // 감정·관계·기억은 여기서만 보여 준다(메인 대화창에는 변화 알림을 띄우지 않는다). 변화 이력 없이 현재 값만 보여 준다(Phase 5-5).
 // 장면이 커밋되면 SSE로 알고 최신 값을 다시 읽는다(live-state.tsx, Phase 6).
-// 맨 아래에 같은 세계관의 캐릭터 목록을 보여 다른 캐릭터로 바로 옮겨 갈 수 있게 한다(현재 캐릭터 강조).
+// 맨 아래에 같은 세계관의 캐릭터 목록을 보여 다른 캐릭터로 바로 옮겨 갈 수 있게 한다(현재 캐릭터 강조). 삭제는 목록 카드의 ✕로 한다.
 
 export default function CharacterPage({ params }: PageProps<"/worlds/[worldId]/characters/[characterId]">) {
   return (
@@ -153,19 +152,6 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         />
       </section>
       )}
-
-      <section className="flex flex-col gap-2 border-t border-foreground/10 pt-6">
-        <ConfirmDeleteButton
-          label="캐릭터 삭제"
-          title="캐릭터를 삭제할까요?"
-          path={`/api/worlds/${worldId}/characters/${c.id}`}
-          redirectTo={`/worlds/${worldId}`}
-          lockWorldId={worldId}
-        >
-          <strong>{c.name}</strong>은(는) 이후 대화에 참가하지 않습니다. 지난 대화·기억·관계 기록은 남고, 과거 대사에는 &quot;삭제된 캐릭터&quot;로
-          표시됩니다.
-        </ConfirmDeleteButton>
-      </section>
 
       <div className="border-t border-foreground/10 pt-6">
         <CharacterList worldId={worldId} characters={characters} currentId={c.id} />
