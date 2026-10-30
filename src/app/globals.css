@@ -16,6 +16,7 @@
   --pastel-to: color-mix(in srgb, var(--blush) 45%, #ffffff);
   --hover: #FFF9F8;         /* 웜 화이트: 보조 버튼·목록 행 hover 배경 */
   --header: var(--ivory);    /* 상단 헤더 배경 (아래 흰 탭 바와 구분) */
+  --bar-track: #E7E7E7;      /* 상태 막대 빈 바탕 (채움은 primary-soft, 중앙 기준선은 primary-strong) */
 }
 
 @theme inline {
@@ -30,6 +31,7 @@
   --color-pastel: var(--pastel);
   --color-hover: var(--hover);
   --color-header: var(--header);
+  --color-bar-track: var(--bar-track);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -44,6 +46,7 @@
     --pastel-to: color-mix(in srgb, var(--primary) 10%, var(--background));
     --hover: color-mix(in srgb, var(--ivory) 12%, var(--background));
     --header: color-mix(in srgb, var(--ivory) 8%, var(--background));
+    --bar-track: #2a2a2a;
   }
 }
 
