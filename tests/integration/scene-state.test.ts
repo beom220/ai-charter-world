@@ -94,6 +94,10 @@ describe("감정·관계·기억 반영", () => {
     const insights = await getCharacterInsights(uid, world.id, garam!.id);
     expect(insights.relations.find((r) => r.otherId === narae!.id)).toMatchObject({ outgoing: { affinity: 5 }, incoming: { affinity: 0 } });
     expect(insights.memories.map((m) => m.content)).toEqual(["나래와 내일 등대에 가기로 약속했다"]);
+    // 최근 감정 변화: 커밋된 EmotionChange 그대로(clamp 후 +20), 출처 장면 제목·번호와 함께
+    expect(insights.emotionChanges).toMatchObject([{ fromMood: "NEUTRAL", toMood: "HAPPY", dIntensity: 20, sceneTitle: "약속" }]);
+    expect(insights.emotionChanges[0]!.sceneSeq).toEqual(expect.any(Number));
+    expect((await getCharacterInsights(uid, world.id, daon!.id)).emotionChanges).toEqual([]);
   });
 
   it("다음 장면 프롬프트에 바뀐 감정·관계와 소유자 라벨이 붙은 기억이 들어간다", async () => {

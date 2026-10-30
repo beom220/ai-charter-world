@@ -14,8 +14,9 @@ import { send } from "../../../world-form";
 // - 요청마다 번호를 붙여 가장 최근 요청의 응답만 반영한다(응답 순서가 뒤집혀도 오래된 값으로 덮어쓰지 않음).
 // - state.replaced(불러오기)면 페이지 전체를 서버에서 다시 그린다(프로필이 바뀌었거나 캐릭터가 없어졌을 수 있음).
 // - 신체 상태(Phase 7-2-2): 온도 불편·고통·부상·생존. 사망하면 원인·장면·월드 시각을 보이고, 페이지를 다시 그려 수정 폼을 닫는다.
-// - 표시(게임형 정보창): 막대 없이 [이름 | 단계·점수] 행과 그 아래 작은 설명으로 보인다. 단계·점수·색 톤 변환은 src/lib/character-status.ts.
-//   "현재 상태" 카드 하나에 감정 → 신체 이상(정상이 아닌 항목만, 모두 정상이면 없음) → 사망 순으로 보인다. 감정·신체에는 점수를 붙이지 않는다. 이모지는 쓰지 않는다.
+// - 표시(게임형 상태창): 막대 채움·단계·점수·색 톤 변환은 src/lib/character-status.ts. 이모지는 쓰지 않는다.
+//   "현재 상태" 카드는 좌우 2열(모바일은 위아래). 왼쪽은 감정 → 신체 이상(정상이 아닌 항목만) → 사망을 0부터 채우는 막대로,
+//   오른쪽은 최근 감정 변화(장면별 EmotionChange)를 보인다. 요인별 감정 영향 점수 데이터는 없어서 만들지 않는다.
 //   관계는 이 캐릭터 → 상대 한 방향만 [단계 | 이름 | 점수(호감·신뢰·존중 평균)]로 보인다(반대 방향은 상대 캐릭터 상세에서).
 //   기억은 최신순(서버에서 정렬)이며 처음 몇 개만 보이고 "더 보기"로 펼친다.
 
@@ -41,11 +42,21 @@ export type LiveCondition = {
   deathSceneSeq: number | null;
   deathWorldSeconds: number | null;
 };
+export type LiveEmotionChange = {
+  id: string;
+  fromMood: string;
+  toMood: string;
+  dIntensity: number;
+  sceneSeq: number | null;
+  sceneTitle: string | null;
+  worldSeconds: number | null;
+};
 type LiveState = {
   emotion: { mood: string; intensity: number } | null;
   condition: LiveCondition;
   relations: { otherId: string; otherName: string; outgoing: RelationValues; incoming: RelationValues }[];
   memories: LiveMemory[];
+  emotionChanges: LiveEmotionChange[];
 };
 
 const panel = "flex flex-col gap-1.5 rounded-md border p-3";
@@ -113,24 +124,56 @@ export function CharacterLiveState({
     <div className="flex flex-col gap-3 text-status-text">
       <section className={`${panel} ${state.condition.vital === "DEAD" ? "border-red-600/40" : "border-foreground/15"}`}>
         <h2 className={heading}>현재 상태</h2>
-        {state.emotion && emotion ? (
-          <StatusRow label={MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood} value={emotion.text} tone={emotion.tone} />
-        ) : (
-          <p className="text-sm text-foreground/60">감정 기록 없음</p>
-        )}
-        {abnormal.map((a) => (
-          <StatusRow key={a.key} label={a.label} value={a.text} tone="negative" detail={a.detail} />
-        ))}
-        {state.condition.vital === "DEAD" && (
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-red-600">사망</span>
-            <p className="pl-3 text-xs break-words text-status-text/70">
-              {state.condition.deathCause ?? "원인 미상"}
-              {state.condition.deathSceneSeq !== null ? ` · 장면 #${state.condition.deathSceneSeq}` : ""}
-              {state.condition.deathWorldSeconds !== null ? ` · ${formatWorldTime(state.condition.deathWorldSeconds)}` : ""}
-            </p>
+        <div className="grid gap-3 sm:grid-cols-2 sm:gap-5">
+          <div className="flex min-w-0 flex-col gap-2.5">
+            {state.emotion && emotion ? (
+              <MeterRow
+                label={MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood}
+                text={emotion.text}
+                tone={emotion.tone}
+                meter={<Meter percent={emotion.value} valueText={emotion.text} />}
+              />
+            ) : (
+              <p className="text-sm text-foreground/60">감정 기록 없음</p>
+            )}
+            {abnormal.map((a) => (
+              <MeterRow key={a.key} label={a.label} text={a.text} tone="negative" detail={a.detail} meter={<Meter step={a.step} steps={a.steps} valueText={a.text} />} />
+            ))}
+            {state.condition.vital === "DEAD" && (
+              <div className="flex flex-col">
+                <span className="text-sm font-semibold text-red-600">사망</span>
+                <p className="text-xs break-words text-status-text/70">
+                  {state.condition.deathCause ?? "원인 미상"}
+                  {state.condition.deathSceneSeq !== null ? ` · 장면 #${state.condition.deathSceneSeq}` : ""}
+                  {state.condition.deathWorldSeconds !== null ? ` · ${formatWorldTime(state.condition.deathWorldSeconds)}` : ""}
+                </p>
+              </div>
+            )}
           </div>
-        )}
+          <div className="flex min-w-0 flex-col gap-1.5 border-t border-foreground/10 pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5">
+            <h3 className="text-xs font-semibold text-status-text/80">최근 감정 변화</h3>
+            {state.emotionChanges.length === 0 ? (
+              <p className="text-xs text-foreground/60">아직 장면에서 감정이 바뀐 기록이 없습니다.</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {state.emotionChanges.map((e) => (
+                  <li key={e.id} className="flex flex-col text-sm">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="min-w-0 break-words">{e.sceneTitle ?? "기록이 삭제된 장면"}</span>
+                      <span className="shrink-0 text-xs text-tone-neutral tabular-nums">강도 {formatScore(e.dIntensity)}</span>
+                    </div>
+                    <span className="text-xs text-status-text/60">
+                      {e.fromMood === e.toMood ? (MOOD_LABEL[e.toMood] ?? e.toMood) : `${MOOD_LABEL[e.fromMood] ?? e.fromMood} → ${MOOD_LABEL[e.toMood] ?? e.toMood}`}
+                      {e.sceneSeq !== null && ` · 장면 #${e.sceneSeq}`}
+                      {e.worldSeconds !== null && ` · ${formatWorldTime(e.worldSeconds)}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[11px] text-foreground/50">장면별 감정 강도 변화 기록입니다. 요인별 긍정·부정 영향 점수는 아직 기록되지 않습니다.</p>
+          </div>
+        </div>
       </section>
       <section className={`${panel} border-foreground/15`}>
         <h2 className={heading}>관계</h2>
@@ -186,15 +229,38 @@ export function CharacterLiveState({
   );
 }
 
-/** 이름 왼쪽, 단계 오른쪽. 설명은 행 아래 작은 글씨 */
-function StatusRow({ label, value, tone, detail }: { label: string; value: string; tone: StatusTone; detail?: string | null }) {
+/** [이름 | 단계] 한 줄, 그 아래 막대, 설명은 막대 아래 작은 글씨 */
+function MeterRow({ label, text, tone, meter, detail }: { label: string; text: string; tone: StatusTone; meter: React.ReactNode; detail?: string | null }) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="min-w-0 font-medium break-words">{label}</span>
-        <span className={`shrink-0 font-medium ${TONE_TEXT[tone]}`}>{value}</span>
+        <span className={`shrink-0 text-xs font-medium ${TONE_TEXT[tone]}`}>{text}</span>
       </div>
-      {detail && <p className="pl-3 text-xs break-words text-status-text/70">{detail}</p>}
+      {meter}
+      {detail && <p className="text-xs break-words text-status-text/70">{detail}</p>}
     </div>
+  );
+}
+
+/**
+ * 0 → 최대치로 왼쪽부터 채우는 막대 (색은 primary-soft 하나). percent: 실제 값 비율(감정 강도).
+ * step/steps: 단계형 데이터는 단계 수만큼 칸을 나눠 채운다(가짜 정밀 수치를 만들지 않는다). 화면 낭독기에는 단계 문구로 읽힌다.
+ */
+function Meter({ percent, step, steps, valueText }: { percent?: number; step?: number; steps?: number; valueText: string }) {
+  if (steps !== undefined && step !== undefined) {
+    return (
+      <span role="meter" aria-valuemin={0} aria-valuemax={steps} aria-valuenow={step} aria-valuetext={valueText} className="flex h-2.5 gap-0.5">
+        {Array.from({ length: steps }, (_, i) => (
+          <span key={i} className={`flex-1 first:rounded-l-full last:rounded-r-full ${i < step ? "bg-primary-soft" : "bg-bar-track"}`} />
+        ))}
+      </span>
+    );
+  }
+  const value = Math.min(100, Math.max(0, percent ?? 0));
+  return (
+    <span role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} aria-valuetext={valueText} className="block h-2.5 overflow-hidden rounded-full bg-bar-track">
+      <span className="block h-full rounded-full bg-primary-soft" style={{ width: `${value}%` }} />
+    </span>
   );
 }

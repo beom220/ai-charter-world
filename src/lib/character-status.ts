@@ -1,5 +1,6 @@
-// 캐릭터 상세 상태창의 표시용 변환 (텍스트 중심 게임형 정보 UI). 클라이언트·서버 공용 순수 함수.
-// 저장 값(관계 수치·감정 강도·신체 상태 단계)은 그대로 두고 화면에 보일 단계 문구·점수·색 톤만 계산한다.
+// 캐릭터 상세 상태창의 표시용 변환 (게임형 상태창). 클라이언트·서버 공용 순수 함수.
+// 저장 값(관계 수치·감정 강도·신체 상태 단계)은 그대로 두고 화면에 보일 막대 채움·단계 문구·점수·색 톤만 계산한다.
+// 막대는 0에서 최대치까지 왼쪽 → 오른쪽으로 채우는 일반 막대다. 감정 강도(0~100)는 실제 값 비율, 신체 상태는 단계형이라 칸(단계 수) 단위로 채운다.
 // 감정·관계·신체 상태 계산 로직, 프롬프트, DB·세이브 구조와 무관하다.
 
 import { DISCOMFORT_LABEL, INJURY_LABEL, type DiscomfortLevel, type InjuryLevel, type ThermalCauseValue } from "./condition-labels";
@@ -73,13 +74,20 @@ export function intensityStageIndex(intensity: number): number {
   return v <= 20 ? 1 : v <= 40 ? 2 : v <= 60 ? 3 : v <= 80 ? 4 : 5;
 }
 
-/** 문구는 강도 단계, 톤은 감정 방향 */
-export function emotionView(mood: string, intensity: number): { text: string; tone: StatusTone } {
+/** 막대 채움은 실제 강도(0~100), 문구는 강도 단계, 톤은 감정 방향 */
+export function emotionView(mood: string, intensity: number): { value: number; text: string; tone: StatusTone } {
   const polarity = moodVisual(mood).polarity;
-  return { text: INTENSITY_STAGES[intensityStageIndex(intensity) - 1]!, tone: polarity > 0 ? "positive" : polarity < 0 ? "negative" : "neutral" };
+  return {
+    value: Math.min(100, Math.max(0, Math.round(intensity))),
+    text: INTENSITY_STAGES[intensityStageIndex(intensity) - 1]!,
+    tone: polarity > 0 ? "positive" : polarity < 0 ? "negative" : "neutral",
+  };
 }
 
-// ── 신체 상태 (기존 단계 문구 그대로. 점수를 만들지 않는다)
+// ── 신체 상태 (기존 단계 문구 그대로. 점수를 만들지 않고 단계/단계 수만큼 칸을 채운다)
+
+const DISCOMFORT_STEP: Record<DiscomfortLevel, number> = { NONE: 0, MILD: 1, SEVERE: 2, EXTREME: 3 };
+const INJURY_STEP: Record<InjuryLevel, number> = { NONE: 0, MILD: 1, MODERATE: 2, SEVERE: 3, CRITICAL: 4 };
 
 export type ConditionInput = {
   thermalCause: ThermalCauseValue;
@@ -89,7 +97,7 @@ export type ConditionInput = {
   injury: InjuryLevel;
   injuryCause: string | null;
 };
-export type AbnormalCondition = { key: "thermal" | "pain" | "injury"; label: string; text: string; detail: string | null };
+export type AbnormalCondition = { key: "thermal" | "pain" | "injury"; label: string; text: string; step: number; steps: number; detail: string | null };
 
 /**
  * 정상이 아닌 신체 항목만 (추위·더위 → 고통 → 부상 순). 모두 정상이면 빈 배열이라 화면은 신체 영역을 그리지 않는다. 사망은 따로 보인다.
@@ -98,9 +106,12 @@ export type AbnormalCondition = { key: "thermal" | "pain" | "injury"; label: str
 export function abnormalConditions(c: ConditionInput): AbnormalCondition[] {
   const out: AbnormalCondition[] = [];
   if (c.thermalCause !== "NONE" && c.thermalLevel !== "NONE") {
-    out.push({ key: "thermal", label: c.thermalCause === "COLD" ? "추위" : "더위", text: DISCOMFORT_LABEL[c.thermalLevel], detail: null });
+    const label = c.thermalCause === "COLD" ? "추위" : "더위";
+    out.push({ key: "thermal", label, text: DISCOMFORT_LABEL[c.thermalLevel], step: DISCOMFORT_STEP[c.thermalLevel], steps: 3, detail: null });
   }
-  if (c.painLevel !== "NONE") out.push({ key: "pain", label: "고통", text: DISCOMFORT_LABEL[c.painLevel], detail: c.painCause });
-  if (c.injury !== "NONE") out.push({ key: "injury", label: "부상", text: INJURY_LABEL[c.injury], detail: c.injuryCause });
+  if (c.painLevel !== "NONE") {
+    out.push({ key: "pain", label: "고통", text: DISCOMFORT_LABEL[c.painLevel], step: DISCOMFORT_STEP[c.painLevel], steps: 3, detail: c.painCause });
+  }
+  if (c.injury !== "NONE") out.push({ key: "injury", label: "부상", text: INJURY_LABEL[c.injury], step: INJURY_STEP[c.injury], steps: 4, detail: c.injuryCause });
   return out;
 }

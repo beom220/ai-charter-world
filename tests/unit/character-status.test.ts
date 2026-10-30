@@ -27,10 +27,11 @@ describe("관계", () => {
 });
 
 describe("감정", () => {
-  it("문구는 강도 단계, 톤은 감정 방향(평온·차분 중립)", () => {
-    expect(emotionView("ANXIOUS", 100)).toEqual({ text: "매우 강함", tone: "negative" });
-    expect(emotionView("HAPPY", 50)).toEqual({ text: "보통", tone: "positive" });
-    expect(emotionView("CALM", 70)).toEqual({ text: "강함", tone: "neutral" });
+  it("막대는 실제 강도, 문구는 강도 단계, 톤은 감정 방향(평온·차분 중립)", () => {
+    expect(emotionView("ANXIOUS", 100)).toEqual({ value: 100, text: "매우 강함", tone: "negative" });
+    expect(emotionView("HAPPY", 50)).toEqual({ value: 50, text: "보통", tone: "positive" });
+    expect(emotionView("CALM", 70)).toEqual({ value: 70, text: "강함", tone: "neutral" });
+    expect(emotionView("SAD", 130).value).toBe(100); // 막대 채움은 실제 강도, 범위 밖은 자른다
     expect(emotionView("UNKNOWN", 50).tone).toBe("neutral");
     for (const m of ["ANXIOUS", "SAD", "ANGRY", "FEARFUL", "LONELY", "EMBARRASSED", "TIRED"]) expect(emotionView(m, 40).tone).toBe("negative");
     for (const m of ["HAPPY", "EXCITED", "HOPEFUL"]) expect(emotionView(m, 40).tone).toBe("positive");
@@ -50,14 +51,14 @@ describe("감정", () => {
 });
 
 describe("신체 상태", () => {
-  it("현재 상태 카드: 정상이 아닌 항목만 (추위·더위 → 고통 → 부상), 기존 단계 문구", () => {
+  it("현재 상태 카드: 정상이 아닌 항목만 (추위·더위 → 고통 → 부상), 기존 단계 문구, 단계/단계 수 칸 채움", () => {
     const normal = { thermalCause: "NONE", thermalLevel: "NONE", painLevel: "NONE", painCause: null, injury: "NONE", injuryCause: null } as const;
-    const rows = (c: Parameters<typeof abnormalConditions>[0]) => abnormalConditions(c).map((a) => `${a.label}:${a.text}`);
+    const rows = (c: Parameters<typeof abnormalConditions>[0]) => abnormalConditions(c).map((a) => `${a.label}:${a.text}:${a.step}/${a.steps}`);
     expect(abnormalConditions(normal)).toEqual([]);
     expect(rows({ ...normal, thermalCause: "NONE", thermalLevel: "SEVERE" })).toEqual([]);
-    expect(rows({ ...normal, thermalCause: "COLD", thermalLevel: "SEVERE" })).toEqual(["추위:심함"]);
-    expect(rows({ ...normal, thermalCause: "HEAT", thermalLevel: "MILD" })).toEqual(["더위:경미"]);
-    expect(abnormalConditions({ ...normal, injury: "MODERATE", injuryCause: "넘어짐" })).toEqual([{ key: "injury", label: "부상", text: "아픔", detail: "넘어짐" }]);
-    expect(rows({ thermalCause: "HEAT", thermalLevel: "EXTREME", painLevel: "MILD", painCause: "고열", injury: "CRITICAL", injuryCause: null })).toEqual(["더위:극심", "고통:경미", "부상:위독"]);
+    expect(rows({ ...normal, thermalCause: "COLD", thermalLevel: "SEVERE" })).toEqual(["추위:심함:2/3"]);
+    expect(rows({ ...normal, thermalCause: "HEAT", thermalLevel: "MILD" })).toEqual(["더위:경미:1/3"]);
+    expect(abnormalConditions({ ...normal, injury: "MODERATE", injuryCause: "넘어짐" })).toEqual([{ key: "injury", label: "부상", text: "아픔", step: 2, steps: 4, detail: "넘어짐" }]);
+    expect(rows({ thermalCause: "HEAT", thermalLevel: "EXTREME", painLevel: "MILD", painCause: "고열", injury: "CRITICAL", injuryCause: null })).toEqual(["더위:극심:3/3", "고통:경미:1/3", "부상:위독:4/4"]);
   });
 });

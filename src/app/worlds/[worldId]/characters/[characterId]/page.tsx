@@ -113,6 +113,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
           condition: c.condition,
           relations: insights.relations,
           memories: JSON.parse(JSON.stringify(insights.memories)) as LiveMemory[],
+          emotionChanges: insights.emotionChanges,
         }}
       />
 
