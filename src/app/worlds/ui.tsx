@@ -5,14 +5,15 @@ import Link from "next/link";
 export const button =
   "rounded-md border border-foreground/20 px-4 py-2 text-sm font-medium hover:bg-hover disabled:opacity-50";
 
-// 주요 동작(생성·저장·확인) 버튼: 딥 로즈 채움에 흰 글자(로즈 핑크는 흰 글자 대비가 낮아 hover에만 쓴다)
-export const primaryButton =
-  "rounded-md bg-primary-strong px-4 py-2 text-sm font-medium text-white hover:bg-primary disabled:opacity-50";
+// 주요 동작(생성·저장·확인·전체 랜덤) 버튼: 소프트 핑크 테두리, 옅은 로즈 면, 딥 로즈 글자
+const primaryTone = "border border-primary-soft bg-primary/10 font-medium text-primary-text hover:bg-primary/15 disabled:opacity-50";
+export const primaryButton = `rounded-md px-4 py-2 text-sm ${primaryTone}`;
+export const primaryIconButton = `flex h-10 w-10 items-center justify-center rounded-full ${primaryTone}`;
 
-// 대화 화면 하단 고정 바의 색 버튼: 사건 일으키기(파랑, 사건 메시지 색), 저장(딥 로즈 채움), 불러오기(로즈 테두리)
+// 대화 화면 하단 고정 바의 색 버튼: 사건 일으키기(파랑, 사건 메시지 색), 저장(주요 버튼), 불러오기(로즈 테두리)
 const solid = "rounded-md px-3 py-2 text-sm font-medium text-white disabled:opacity-50 sm:px-4";
 export const eventButton = `${solid} bg-[#3B82F6] hover:bg-[#2563EB]`;
-export const saveButton = `${solid} bg-primary-strong hover:bg-primary`;
+export const saveButton = `rounded-md px-3 py-2 text-sm sm:px-4 ${primaryTone}`;
 export const loadButton =
   "rounded-md border border-primary px-3 py-2 text-sm font-medium text-primary-text hover:bg-primary/10 disabled:opacity-50 sm:px-4";
 
