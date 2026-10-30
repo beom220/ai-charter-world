@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { LoadingFallback } from "@/app/loading-fallback";
 import { getCurrentSession } from "@/server/auth/session";
 import { listCharacters } from "@/server/domain/characters/characters";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
@@ -20,7 +21,7 @@ export default function WorldLayout({ children, params }: LayoutProps<"/worlds/[
         <WorldHeader params={params} />
       </Suspense>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4 sm:p-8">
-        <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>{children}</Suspense>
+        <Suspense fallback={<LoadingFallback />}>{children}</Suspense>
       </main>
     </div>
   );

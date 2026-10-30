@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { LoadingFallback } from "@/app/loading-fallback";
 import { getCurrentSession } from "@/server/auth/session";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { getGeminiConnection } from "@/server/domain/providers/gemini-connection";
@@ -15,7 +16,7 @@ export default function ProvidersPage() {
         본인의 Gemini API 키만 사용합니다. 키는 서버에서 암호화해 저장하며 화면에는 끝 4자리만 표시합니다. 검증·모델 선택을 누를 때만 Google
         Gemini API로 요청을 보냅니다.
       </p>
-      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+      <Suspense fallback={<LoadingFallback />}>
         <ProviderSection />
       </Suspense>
     </main>

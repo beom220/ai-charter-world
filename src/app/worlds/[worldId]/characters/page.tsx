@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { LoadingFallback } from "@/app/loading-fallback";
 import { notFound } from "next/navigation";
 import { getCurrentSession } from "@/server/auth/session";
 import { listCharacters } from "@/server/domain/characters/characters";
@@ -12,7 +13,7 @@ import { CharacterList } from "./character-list";
 // cacheComponents: 세션·params·DB를 읽는 부분은 페이지 안의 Suspense 경계에 둔다 (탐색·프리렌더 시 uncached data 오류 방지)
 export default function CharactersPage({ params }: PageProps<"/worlds/[worldId]/characters">) {
   return (
-    <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+    <Suspense fallback={<LoadingFallback />}>
       <Characters params={params} />
     </Suspense>
   );

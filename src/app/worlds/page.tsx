@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { LoadingFallback } from "@/app/loading-fallback";
 import { getCurrentSession } from "@/server/auth/session";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { listWorlds } from "@/server/domain/worlds";
@@ -16,7 +17,7 @@ export default function WorldsPage() {
           새 세계관
         </Link>
       </div>
-      <Suspense fallback={<p className="text-sm text-foreground/70">불러오는 중…</p>}>
+      <Suspense fallback={<LoadingFallback />}>
         <WorldList />
       </Suspense>
     </main>
