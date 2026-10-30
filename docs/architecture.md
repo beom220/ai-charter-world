@@ -1160,10 +1160,10 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **에셋·매핑**: `config/avatars.ts`(여 17·남 6종, 표정 8종), `src/lib/avatars.ts`(감정 12 → 표정 8 `moodExpression`, 성별 목록, `pickAvailableAvatar`, 경로). 에셋 구조·헤더(512×512 WebP·알파)는 `tests/unit/avatar-assets.test.ts`가 검사한다.
 - **표정 정책**: 생성·편집(선택 목록·미리보기)과 대화창 대사 옆 프로필은 항상 neutral이다. 발화 당시 감정·표정 스냅샷을 저장하지 않고 메시지·SSE 포맷도 바꾸지 않는다(발화자 일러스트는 클라이언트의 활성 캐릭터 목록에서 `speakerCharacterId`로 찾는다. 삭제된 발화자는 대체 표시). 현재 감정 표정은 **상단 고정 프로필**과 **캐릭터 상세**에서만 보인다.
 - **중복 금지·검증**: 입력 스키마가 알려진 ID·성별 일치를 검사하고, 도메인이 World 잠금 아래에서 같은 세계관 활성 캐릭터 중복을 거절한다(409 `AVATAR_IN_USE`, database.md §3.5c). 400(입력 오류)을 409보다 먼저 판정한다. 랜덤(`randomizeCharacter`)은 사용 중인 ID(`listUsedAvatarIds`, 자기 자신 제외)를 피하고, 성별 규칙이 잠금보다 우선한다(맞지 않거나 사용 중이 된 잠긴 일러스트는 다시 고름, 남은 것이 없으면 null과 안내).
-- **선택 UI**: 생성·편집 폼에는 미리보기와 [일러스트 선택·변경] 버튼만 두고, 목록은 모달(`<dialog>`, 배경 선택 모달과 같은 방식)로 연다. 하나를 고르면 닫힌다.
+- **선택 UI**: 생성·편집 폼에는 미리보기 일러스트만 두고, 그 일러스트를 누르면 목록 모달(`<dialog>`, 배경 선택 모달과 같은 방식)이 열린다. 하나를 고르면 닫힌다. 목록 썸네일은 폼을 열 때 미리 받아(축소본이라 작다) 모달이 바로 뜬다.
 - **캐릭터 상세**: 프로필 일러스트는 상단 캐릭터 정보(이름·나이·성격) 왼쪽에 있다(`[characterId]/header-avatar.tsx`, 현재 감정 표정). 상태창(`live-state.tsx`)이 SSE로 다시 읽은 감정을 브라우저 이벤트 `CHARACTER_MOOD_EVENT`로 넘겨 표정을 바꾼다(별도 구독·요청 없음). 별도 "현재 감정" 표시는 두지 않는다.
 - **상단 고정 프로필**(`[worldId]/profile-bar.tsx`, 가운데 정렬, 세로로 긴 직사각형 4:5 프로필): `layout.tsx`에서 탭 바(`world-tabs.tsx`)와 함께 하나의 `sticky top-12 z-20` 묶음 안에 둔다(틈·겹침 없음, 헤더 z-30 아래, 묶음 높이만큼 문서 흐름을 차지해 본문이 가려지지 않음). 초기값은 layout 서버 컴포넌트의 `listCharacters`. **새 SSE 구독·폴링 없이** 대화 패널(scene.committed·state.replaced·sync.required·재연결)과 상세 화면(scene.committed·sync.required)이 보내는 브라우저 이벤트 `CHARACTERS_EVENT`(`world-events.ts`)와 경로 변경 때 `GET /api/worlds/[id]/characters`를 다시 읽는다(최신 요청만 반영). 별도 컴포넌트 상태라 대화 피드를 다시 그리지 않는다.
-- **이미지 표시**(`src/app/worlds/avatar.tsx`): 고정 크기·`object-contain`·지연 로딩(상단·상세는 즉시), 표정 파일 실패 → neutral → 이름 첫 글자 원. 184개 일괄 프리로드는 하지 않는다.
+- **이미지 표시**(`src/app/worlds/avatar.tsx`): `next/image`로 표시 크기에 맞춘 축소본을 받는다(원본 512×512 약 300KB → 64px 약 2.4KB). 고정 크기·`object-contain`(세로 직사각형은 `object-cover`)·지연 로딩(상단·상세·선택 목록은 즉시), 표정 파일 실패 → neutral → 이름 첫 글자 원. 184개 일괄 프리로드는 하지 않는다.
 - **스냅샷 v5**: database.md §5.3.
 
 ---

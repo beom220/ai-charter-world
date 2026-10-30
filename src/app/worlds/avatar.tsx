@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { memo, useState } from "react";
 import type { AvatarExpression } from "../../../config/avatars";
 import { avatarSrc } from "@/lib/avatars";
@@ -8,6 +9,7 @@ import { avatarSrc } from "@/lib/avatars";
 // 생성·편집 화면과 대화창은 neutral, 상단 고정 프로필과 캐릭터 상세는 현재 감정 표정(lib/avatars.ts moodExpression).
 // - width·height를 고정해 레이아웃 이동이 없다. 원형은 object-contain, 세로 직사각형(portrait, 가로:세로 = 4:5)은 비율을 유지한 채
 //   좌우를 조금 잘라(object-cover) 채운다(정사각 일러스트를 늘리지 않는다). 지연 로딩한다(일괄 프리로드 없음).
+// - next/image로 표시 크기에 맞게 줄인 이미지를 받는다(원본 512×512 약 300KB → 수 KB, 선택 모달 17개도 빠르게 뜬다).
 // - 표정 파일을 못 읽으면 neutral로, neutral도 없거나 avatarId가 없으면(기존 데이터) 이름 첫 글자 원으로 대체한다.
 
 export const Avatar = memo(function Avatar({
@@ -45,15 +47,12 @@ export const Avatar = memo(function Avatar({
   }
   return (
     <span aria-hidden className={box} style={{ width: size, height }}>
-      {/* 정적 WebP(512×512)를 그대로 쓴다. next/image 최적화 경로를 거치지 않아도 되는 고정 에셋이다 */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <Image
         src={src}
         alt=""
         width={size}
         height={height}
         loading={eager ? "eager" : "lazy"}
-        decoding="async"
         draggable={false}
         className={`h-full w-full ${portrait ? "object-cover" : "object-contain"}`}
         onError={() => setFailed((prev) => new Set(prev).add(src))}
