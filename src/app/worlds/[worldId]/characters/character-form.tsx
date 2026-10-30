@@ -25,7 +25,7 @@ import { AvatarPicker } from "./avatar-picker";
 import { BackgroundPicker } from "./background-picker";
 import { PersonalitySelect } from "./personality-select";
 
-// 캐릭터 생성·수정 폼 (PRD FR-04). 🎲 전체 랜덤·항목별 랜덤과 필드 잠금을 지원한다.
+// 캐릭터 생성·수정 폼 (PRD FR-04). 전체 랜덤·항목별 랜덤과 필드 잠금을 지원한다.
 // 잠금은 클라이언트 상태이며 랜덤 요청에 lockedFields로 보낸다(architecture.md §13).
 // 배경(Phase 7-1): 유년기 필수, 성년기는 나이 19세 이상 필수·18세 이하 불가. 나이를 비우면 생성은 성인 자동, 수정은 현재 나이 기준이다.
 // 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비운다. 필수 배경을 고르기 전에는 저장할 수 없다(서버도 같은 규칙으로 거절).
@@ -39,7 +39,7 @@ import { PersonalitySelect } from "./personality-select";
 //   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비우고, 다시 들어오면 전체 랜덤 한 번으로 미리 채운다. 수정 폼은 그대로 둔다.
 
 const input = "rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-sm";
-const small = "rounded border border-primary-soft/60 bg-background px-2 py-0.5 text-xs hover:bg-primary/10 disabled:opacity-50";
+const small = "flex h-6 items-center gap-1 rounded border border-primary-soft/60 bg-background px-1.5 text-xs hover:bg-primary/10 disabled:opacity-50";
 
 export function CharacterForm({
   worldId,
@@ -75,7 +75,7 @@ export function CharacterForm({
   const usedAvatars = new Set(usedAvatarIds);
   const avatarUsable = (id: string | null, gender: string | null) => isAvatarForGender(id, gender) && !usedAvatarIds.includes(id!);
 
-  // 생성 화면에 들어올 때마다 🎲 전체 랜덤을 한 번 실행해 값을 미리 채운다(일러스트도 사용 가능한 것 중에서).
+  // 생성 화면에 들어올 때마다 전체 랜덤을 한 번 실행해 값을 미리 채운다(일러스트도 사용 가능한 것 중에서).
   // 응답 전에 사용자가 이미 입력을 시작했으면(빈 초안이 아니면) 덮어쓰지 않는다. 실패해도 빈 폼으로 그대로 쓸 수 있다.
   useEffect(() => {
     if (characterId) return;
@@ -164,14 +164,22 @@ export function CharacterForm({
     }
   }
 
-  /** 필드 제목 옆의 🎲(항목별 랜덤)와 잠금 토글 */
+  /** 필드 제목 옆의 항목별 랜덤(주사위)과 잠금 토글(자물쇠) */
   const controls = (f: RandomField) => (
     <span className="flex gap-1">
-      <button type="button" className={small} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤">
-        🎲
+      <button type="button" className={`${small} text-primary-text`} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤" title="이 항목 랜덤">
+        <DiceIcon size={14} />
       </button>
-      <button type="button" className={small} onClick={() => toggleLock(f)} aria-pressed={locked.has(f)} aria-label="잠금">
-        {locked.has(f) ? "🔒 잠김" : "🔓"}
+      <button
+        type="button"
+        className={`${small} ${locked.has(f) ? "border-primary bg-primary/10 text-primary-text" : "text-foreground/50"}`}
+        onClick={() => toggleLock(f)}
+        aria-pressed={locked.has(f)}
+        aria-label="잠금"
+        title={locked.has(f) ? "잠김 (랜덤에서 유지)" : "잠금"}
+      >
+        <LockIcon locked={locked.has(f)} size={14} />
+        {locked.has(f) && <span>잠김</span>}
       </button>
     </span>
   );
@@ -196,8 +204,9 @@ export function CharacterForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-foreground/15 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={primaryButton} onClick={() => randomize()} disabled={busy}>
-          🎲 전체 랜덤
+        <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => randomize()} disabled={busy}>
+          <DiceIcon size={16} />
+          전체 랜덤
         </button>
         <span className="text-xs text-foreground/60">잠근 항목은 유지됩니다.</span>
       </div>
@@ -339,6 +348,30 @@ function GenderIcon({ gender }: { gender: GenderInput }) {
           <path d="M9 18h6" />
         </>
       )}
+    </svg>
+  );
+}
+
+/** 주사위 (랜덤). 이모지 대신 인라인 SVG */
+function DiceIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      <circle cx="8.5" cy="8.5" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="8.5" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="8.5" cy="15.5" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="15.5" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** 자물쇠 (잠김·풀림). 이모지 대신 인라인 SVG */
+function LockIcon({ locked, size }: { locked: boolean; size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="4.5" y="11" width="15" height="10" rx="2" />
+      <path d={locked ? "M8 11V7.5a4 4 0 0 1 8 0V11" : "M8 11V7.5a4 4 0 0 1 7.5-1.9"} />
     </svg>
   );
 }

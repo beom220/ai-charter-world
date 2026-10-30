@@ -19,7 +19,7 @@ export function BackgroundPicker({
   onChange: (id: string) => void;
   /** 있으면 선택할 수 없고 이 안내만 보여 준다 (18세 이하 성년기) */
   disabledReason?: string | null;
-  /** 제목 옆 🎲·잠금 버튼 */
+  /** 제목 옆 랜덤·잠금 버튼 */
   controls?: React.ReactNode;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
