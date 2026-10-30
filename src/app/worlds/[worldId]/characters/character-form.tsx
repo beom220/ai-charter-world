@@ -167,8 +167,8 @@ export function CharacterForm({
   /** 필드 제목 옆의 항목별 랜덤(주사위)과 잠금 토글(자물쇠) */
   const controls = (f: RandomField) => (
     <span className="flex gap-1">
-      <button type="button" className={`${small} text-primary-text`} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤" title="이 항목 랜덤">
-        <DiceIcon size={14} />
+      <button type="button" className={`group ${small} text-primary-text`} onClick={() => randomize([f])} disabled={busy || locked.has(f)} aria-label="이 항목 랜덤" title="이 항목 랜덤">
+        <DiceIcon size={14} rolling={busy} />
       </button>
       <button
         type="button"
@@ -204,8 +204,8 @@ export function CharacterForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-foreground/15 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => randomize()} disabled={busy}>
-          <DiceIcon size={16} />
+        <button type="button" className={`group ${primaryButton} flex items-center gap-1.5`} onClick={() => randomize()} disabled={busy}>
+          <DiceIcon size={16} rolling={busy} />
           전체 랜덤
         </button>
         <span className="text-xs text-foreground/60">잠근 항목은 유지됩니다.</span>
@@ -352,16 +352,24 @@ function GenderIcon({ gender }: { gender: GenderInput }) {
   );
 }
 
-/** 주사위 (랜덤). 이모지 대신 인라인 SVG */
-function DiceIcon({ size }: { size: number }) {
+/**
+ * 굴러가는 주사위 (랜덤). 이모지 대신 인라인 SVG: 기울어진 주사위 + 왼쪽 움직임 선.
+ * 버튼에 마우스를 올리면 더 기울고(group-hover), 랜덤 요청 중(rolling)에는 계속 돈다(동작 줄이기 설정이면 멈춤).
+ */
+function DiceIcon({ size, rolling = false }: { size: number; rolling?: boolean }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="3" y="3" width="18" height="18" rx="4" />
-      <circle cx="8.5" cy="8.5" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="15.5" cy="8.5" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="8.5" cy="15.5" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="15.5" cy="15.5" r="1.3" fill="currentColor" stroke="none" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="overflow-visible">
+      <path d="M1.5 9.5h3.5M0.5 13.5h3M1.5 17.5h3.5" strokeWidth={1.8} opacity={0.55} />
+      <g
+        className={`origin-[14.5px_12px] transition-transform duration-200 group-hover:-rotate-[32deg] ${rolling ? "motion-safe:animate-spin" : ""}`}
+      >
+        <g transform="rotate(-16 14.5 12)">
+          <rect x="7.5" y="5" width="14" height="14" rx="3.2" />
+          <circle cx="11" cy="8.5" r="1.35" fill="currentColor" stroke="none" />
+          <circle cx="14.5" cy="12" r="1.35" fill="currentColor" stroke="none" />
+          <circle cx="18" cy="15.5" r="1.35" fill="currentColor" stroke="none" />
+        </g>
+      </g>
     </svg>
   );
 }
