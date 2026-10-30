@@ -8,16 +8,14 @@ import type { DiscomfortLevel, InjuryLevel, ThermalCauseValue } from "@/lib/cond
 import { formatWorldTime } from "@/lib/world-clock";
 import { MOOD_LABEL } from "../../../ui";
 import { send } from "../../../world-form";
-import { moodExpression } from "@/lib/avatars";
-import { Avatar } from "../../../avatar";
-import { CHARACTERS_EVENT, emitWorldEvent } from "../../world-events";
+import { CHARACTER_MOOD_EVENT, CHARACTERS_EVENT, emitWorldEvent } from "../../world-events";
 
 // 캐릭터 상세의 감정·관계·기억 (Phase 5-5 화면, Phase 6 실시간 갱신).
 // - 세계관 SSE를 구독해 scene.committed가 오면 /characters/[id]/state를 다시 읽는다. 상태 변화 수치는 메인 피드에 보이지 않는다.
 // - 요청마다 번호를 붙여 가장 최근 요청의 응답만 반영한다(응답 순서가 뒤집혀도 오래된 값으로 덮어쓰지 않음).
 // - state.replaced(불러오기)면 페이지 전체를 서버에서 다시 그린다(프로필이 바뀌었거나 캐릭터가 없어졌을 수 있음).
 // - 신체 상태(Phase 7-2-2): 온도 불편·고통·부상·생존. 사망하면 원인·장면·월드 시각을 보이고, 페이지를 다시 그려 수정 폼을 닫는다.
-// - 프로필: 맨 위에 큰 일러스트를 현재 감정 표정으로 보인다(lib/avatars.ts moodExpression, 감정 없음·모르는 값은 neutral). 다시 읽으면 함께 바뀐다.
+// - 프로필 일러스트는 페이지 상단 캐릭터 정보 왼쪽(header-avatar.tsx)에 있다. 다시 읽은 현재 감정을 CHARACTER_MOOD_EVENT로 넘겨 표정을 바꾼다.
 //   장면 커밋·재동기화를 받으면 상단 고정 프로필에도 CHARACTERS_EVENT로 알린다(별도 구독 없음).
 // - 표시(게임형 상태창): 막대 채움·단계·점수·색 톤 변환은 src/lib/character-status.ts. 이모지는 쓰지 않는다.
 //   "현재 상태" 카드는 좌우 2열(모바일은 위아래). 왼쪽은 감정 → 신체 이상(정상이 아닌 항목만) → 사망을 0부터 채우는 막대로,
@@ -94,14 +92,12 @@ export function CharacterLiveState({
   worldId,
   characterId,
   characterName,
-  avatarId,
   eventCursor,
   initial,
 }: {
   worldId: string;
   characterId: string;
   characterName: string;
-  avatarId: string | null;
   eventCursor: string;
   initial: LiveState;
 }) {
@@ -122,6 +118,7 @@ export function CharacterLiveState({
         router.refresh(); // 사망: 수정 폼을 닫는다
       }
       setState(next);
+      emitWorldEvent(CHARACTER_MOOD_EVENT, { characterId, mood: next.emotion?.mood ?? null });
     }
   }, [worldId, characterId, router]);
 
@@ -143,20 +140,6 @@ export function CharacterLiveState({
   const memories = showAllMemories ? state.memories : state.memories.slice(0, MEMORY_PREVIEW_COUNT);
   return (
     <div className="flex flex-col gap-3 text-status-text">
-      <div className="flex items-center gap-4">
-        <Avatar
-          avatarId={avatarId}
-          expression={moodExpression(state.emotion?.mood)}
-          name={characterName}
-          size={112}
-          eager
-          className={`border-2 ${state.condition.vital === "DEAD" ? "border-red-600/40" : "border-primary-soft"}`}
-        />
-        <p className="flex flex-col text-sm">
-          <span className="text-xs text-foreground/60">현재 감정</span>
-          <span className="font-semibold">{state.emotion ? (MOOD_LABEL[state.emotion.mood] ?? state.emotion.mood) : "기록 없음"}</span>
-        </p>
-      </div>
       <section className={`${panel} ${state.condition.vital === "DEAD" ? "border-red-600/40" : "border-foreground/15"}`}>
         <h2 className={heading}>현재 상태</h2>
         <div className="grid gap-3 sm:grid-cols-2 sm:gap-5">

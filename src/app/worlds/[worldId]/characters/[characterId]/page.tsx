@@ -6,6 +6,7 @@ import { getCurrentSession } from "@/server/auth/session";
 import { findDeletedCharacterName, getCharacter, listCharacters } from "@/server/domain/characters/characters";
 import { getCharacterInsights } from "@/server/domain/characters/insights";
 import { currentWorldEventCursor } from "@/server/events/world-stream";
+import { HeaderAvatar } from "./header-avatar";
 import { CharacterLiveState, type LiveMemory } from "./live-state";
 import { NotFoundError } from "@/server/domain/errors";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
@@ -65,11 +66,14 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
 
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-semibold break-all">{c.name}</h2>
-        <p className="text-sm text-foreground/70">
-          {genderText(c)} · {c.age ?? "?"}세 · {c.personalityTags.map(tagLabel).join(", ")}
-        </p>
+      <div className="flex items-center gap-4">
+        <HeaderAvatar characterId={c.id} avatarId={c.avatarId} name={c.name} initialMood={c.emotion?.mood ?? null} dead={c.condition.vital === "DEAD"} />
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="text-xl font-semibold break-all">{c.name}</h2>
+          <p className="text-sm text-foreground/70">
+            {genderText(c)} · {c.age ?? "?"}세 · {c.personalityTags.map(tagLabel).join(", ")}
+          </p>
+        </div>
       </div>
 
       <section className={panel}>
@@ -107,7 +111,6 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         worldId={worldId}
         characterId={c.id}
         characterName={c.name}
-        avatarId={c.avatarId}
         eventCursor={eventCursor}
         initial={{
           emotion: c.emotion,
