@@ -6,7 +6,7 @@ import { createCharacter, listCharacters } from "@/server/domain/characters/char
 import { ensureAutoEventPeriod } from "@/server/domain/events/auto-periods";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { createManualSave, loadSave } from "@/server/domain/saves/saves";
-import { cleanupTestUsers, createTestUser, createTestWorld } from "./helpers";
+import { cleanupTestUsers, createTestUser, createTestWorld, testAvatar } from "./helpers";
 
 // Phase 7-2-1: 자동 사건 구간 추첨 영속화(동시성·재판정), 사망자 슬롯 불변식, 사용자 사건 멱등 키, 사건·구간·신체 상태 저장·불러오기. 실제 DB.
 
@@ -19,6 +19,7 @@ const input = (name: string): CharacterInput => ({
   characterContext: "",
   childhoodBackgroundId: "childhood_farm",
   adulthoodBackgroundId: "adulthood_farmer",
+  avatarId: testAvatar("MALE", name),
 });
 
 afterAll(async () => {

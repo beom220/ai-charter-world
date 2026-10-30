@@ -51,7 +51,7 @@ describe("프리셋", () => {
 
 describe("입력 검증", () => {
   const input = (patch: Record<string, unknown>) =>
-    characterInputSchema.safeParse({ name: "a", gender: "MALE", age: 30, personalityTags: ["sociable", "calm", "diligent"], characterContext: "", childhoodBackgroundId: "childhood_city", adulthoodBackgroundId: "adulthood_doctor", ...patch });
+    characterInputSchema.safeParse({ name: "a", gender: "MALE", age: 30, personalityTags: ["sociable", "calm", "diligent"], characterContext: "", childhoodBackgroundId: "childhood_city", adulthoodBackgroundId: "adulthood_doctor", avatarId: "male-01", ...patch });
 
   it("유년기 필수·알 수 없는 ID·단계가 다른 ID는 거절", () => {
     expect(input({}).success).toBe(true);
@@ -75,7 +75,7 @@ describe("입력 검증", () => {
 });
 
 describe("랜덤 생성", () => {
-  const draft = { name: "", gender: null, age: null, personalityTags: [], goal: "", characterContext: "", childhoodBackgroundId: null, adulthoodBackgroundId: null };
+  const draft = { name: "", gender: null, age: null, personalityTags: [], goal: "", characterContext: "", childhoodBackgroundId: null, adulthoodBackgroundId: null, avatarId: null };
 
   it("전체 랜덤은 유년기를 항상, 성인이면 성년기도 고른다", () => {
     const next = randomizeCharacter(draft, {}, () => 0.5);

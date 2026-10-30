@@ -1,6 +1,7 @@
 import { characterRandomRequestSchema } from "@/lib/schemas/character";
 import { assertSameOrigin, requireRequestUser } from "@/server/auth/request";
 import { requireOwnedWorld } from "@/server/db/scope";
+import { listUsedAvatarIds } from "@/server/domain/characters/characters";
 import { randomizeCharacter } from "@/server/domain/characters/random";
 import { BadRequestError } from "@/server/domain/errors";
 import { errorResponse, jsonResponse, readJsonWithLimit } from "../../../../_lib/http";
@@ -8,6 +9,7 @@ import { errorResponse, jsonResponse, readJsonWithLimit } from "../../../../_lib
 // 캐릭터 랜덤 초안 (PRD FR-04, architecture.md §13). 규칙 기반이며 LLM·DB 쓰기가 없다.
 //   POST { draft, lockedFields, fields? } → 200 { draft }
 //   fields 없음 = 전체 랜덤, 있음 = 항목별 랜덤. lockedFields는 어느 쪽이든 유지한다.
+//   일러스트는 이 세계관의 활성 캐릭터가 쓰지 않는 것만 고른다(characterId = 수정 중인 자기 자신은 제외). 최종 중복 검사는 저장 때 한다.
 
 const SCOPE = "characters.random";
 
@@ -20,8 +22,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/worlds/[wor
     const parsed = characterRandomRequestSchema.safeParse(await readJsonWithLimit(request));
     if (!parsed.success) throw new BadRequestError();
 
-    const { draft, lockedFields, fields } = parsed.data;
-    return jsonResponse({ draft: randomizeCharacter(draft, { lockedFields, fields }) });
+    const { draft, lockedFields, fields, characterId } = parsed.data;
+    const usedAvatarIds = await listUsedAvatarIds(userId, worldId, characterId);
+    return jsonResponse({ draft: randomizeCharacter(draft, { lockedFields, fields, usedAvatarIds }) });
   } catch (error) {
     return errorResponse(SCOPE, error);
   }

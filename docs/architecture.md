@@ -830,9 +830,9 @@ export interface RunnerHost {
 |---|---|---|
 | 설정 | World, Character, RelationshipBaseline, 실행 설정 | 사용자가 편집 |
 | 활성 진행 상태 | GameState, ConversationScene·Message, RelationshipState·Change, EmotionState·Change, CharacterMemory, WorldEvent | 장면마다 커밋 |
-| 스냅샷 | GameSnapshot(JSONB, `schemaVersion`, 현재 v4) | 수동·자동 슬롯과 복구 지점이 참조 |
+| 스냅샷 | GameSnapshot(JSONB, `schemaVersion`, 현재 v5) | 수동·자동 슬롯과 복구 지점이 참조 |
 
-**스냅샷에 포함**: 설정 계층 전체(삭제된 캐릭터 포함) + 활성 진행 상태 전체(Phase 7부터 캐릭터 배경, 사건·자동 사건 구간, 신체 상태와 변화 이력, 월드 시간 포함 — 스냅샷 v4, `claimedAttemptId`·시계 기준 시각 제외).
+**스냅샷에 포함**: 설정 계층 전체(삭제된 캐릭터 포함) + 활성 진행 상태 전체(Phase 7부터 캐릭터 배경, 사건·자동 사건 구간, 신체 상태와 변화 이력, 월드 시간 포함 — 스냅샷 v4, 캐릭터 일러스트 `avatarId` — v5, `claimedAttemptId`·시계 기준 시각 제외).
 **스냅샷에서 제외**: 인증 정보, API 키·연결, 사용량·한도, ApiRequestLog, SimulationRun, SystemNotice, SimulationEvent.
 
 ### 9.2 흐름
@@ -1154,6 +1154,15 @@ ownedByUser(userId) => ({ world: { ownerId: userId } })        // 하위 리소�
 - **검증한 것**: #3에 자동 사건(극심한 기상 변화, HIGH)과 사용자 사건(곰 출현)이 함께 주입되어 둘 다 실제로 일어났고, 캐릭터가 명령이 아닌 자율 반응을 보였다. 두 사건 모두 #3에서 `RESOLVED`(장면 반영 완료, 해결 요약 없음), 자동 사건 구간 1회 발생. 기억은 참가자 2명 × 사건 2개 = 4개(모델 기억 2개 + 서버 보완 2개, 비참가자 0, 중복 없음). #4에는 `<events>`가 없었고 기록·기억으로 곰 대치가 이어졌으며, 신체 상태(추움 경미)가 유지됐다.
 - **DB 대조(2026-10-29, 읽기 전용)**: 해당 세계관의 `ApiRequestLog` SUCCESS 2건(2026-10-28 21:21 KST), 장면 #3·#4, 사건 2건 `RESOLVED`(`startedSceneSeq = resolvedSceneSeq = 3`), 사건 연결 기억 4개가 남아 있어 보고서와 일치한다.
 - **관찰(미수정)**: 모델이 한 기억에 두 사건을 함께 적는 경우가 있어 서버 보완 기억과 내용이 일부 겹친다. `emotionCue` 언어 혼용(화면에서는 한국어 변환·영어 숨김으로 처리, `aaef380`).
+
+### 13.9 캐릭터 프로필 일러스트와 상단 고정 프로필 (PRD v2.7)
+
+- **에셋·매핑**: `config/avatars.ts`(여 17·남 6종, 표정 8종), `src/lib/avatars.ts`(감정 12 → 표정 8 `moodExpression`, 성별 목록, `pickAvailableAvatar`, 경로). 에셋 구조·헤더(512×512 WebP·알파)는 `tests/unit/avatar-assets.test.ts`가 검사한다.
+- **표정 정책**: 생성·편집(선택 목록·미리보기)과 대화창 대사 옆 프로필은 항상 neutral이다. 발화 당시 감정·표정 스냅샷을 저장하지 않고 메시지·SSE 포맷도 바꾸지 않는다(발화자 일러스트는 클라이언트의 활성 캐릭터 목록에서 `speakerCharacterId`로 찾는다. 삭제된 발화자는 대체 표시). 현재 감정 표정은 **상단 고정 프로필**과 **캐릭터 상세**에서만 보인다.
+- **중복 금지·검증**: 입력 스키마가 알려진 ID·성별 일치를 검사하고, 도메인이 World 잠금 아래에서 같은 세계관 활성 캐릭터 중복을 거절한다(409 `AVATAR_IN_USE`, database.md §3.5c). 400(입력 오류)을 409보다 먼저 판정한다. 랜덤(`randomizeCharacter`)은 사용 중인 ID(`listUsedAvatarIds`, 자기 자신 제외)를 피하고, 성별 규칙이 잠금보다 우선한다(맞지 않거나 사용 중이 된 잠긴 일러스트는 다시 고름, 남은 것이 없으면 null과 안내).
+- **상단 고정 프로필**(`[worldId]/profile-bar.tsx`): `layout.tsx`에서 탭 바(`world-tabs.tsx`)와 함께 하나의 `sticky top-12 z-20` 묶음 안에 둔다(틈·겹침 없음, 헤더 z-30 아래, 묶음 높이만큼 문서 흐름을 차지해 본문이 가려지지 않음). 초기값은 layout 서버 컴포넌트의 `listCharacters`. **새 SSE 구독·폴링 없이** 대화 패널(scene.committed·state.replaced·sync.required·재연결)과 상세 화면(scene.committed·sync.required)이 보내는 브라우저 이벤트 `CHARACTERS_EVENT`(`world-events.ts`)와 경로 변경 때 `GET /api/worlds/[id]/characters`를 다시 읽는다(최신 요청만 반영). 별도 컴포넌트 상태라 대화 피드를 다시 그리지 않는다.
+- **이미지 표시**(`src/app/worlds/avatar.tsx`): 고정 크기·`object-contain`·지연 로딩(상단·상세는 즉시), 표정 파일 실패 → neutral → 이름 첫 글자 원. 184개 일괄 프리로드는 하지 않는다.
+- **스냅샷 v5**: database.md §5.3.
 
 ---
 

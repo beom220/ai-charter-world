@@ -12,7 +12,7 @@ import { generateScene, prepareScene, runSceneAttempt } from "@/server/domain/sc
 import { runSimulationCommand } from "@/server/domain/simulation/control";
 import { updateCharacter } from "@/server/domain/characters/characters";
 import { createMockGeminiClient, type MockGeminiScript } from "@/server/llm/mock/gemini-mock";
-import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey } from "./helpers";
+import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey, testAvatar } from "./helpers";
 
 // 세이브 (Phase 6). 실제 DB + Mock Gemini. 슬롯 정책, 자동 저장 순환·간격, 스냅샷 검증, 원자적 복원, 실행 중 차단, 펜싱, 롤백, 복구 지점.
 
@@ -26,6 +26,7 @@ const renamed = (name: string) => ({
   characterContext: "",
   childhoodBackgroundId: "childhood_bookworm",
   adulthoodBackgroundId: "adulthood_scientist",
+  avatarId: testAvatar("FEMALE", name),
 });
 
 const material = readProviderKeyMaterial({

@@ -10,7 +10,7 @@ import { GET as LIST, POST } from "@/app/api/worlds/[worldId]/characters/route";
 import { AUTH_ENV_KEYS, readAuthEnv } from "@/server/auth/env";
 import { authOptions } from "@/server/auth/options";
 import { prisma } from "@/server/db/client";
-import { characterData, cleanupTestUsers, createTestUser, createTestWorld } from "./helpers";
+import { characterData, cleanupTestUsers, createTestUser, createTestWorld, testAvatar } from "./helpers";
 
 // 캐릭터 Route Handler를 실제 Better Auth 세션 쿠키로 호출한다 (Phase 4-2, PRD FR-04, database.md §6.6·§7).
 
@@ -67,6 +67,7 @@ const valid = (name = "도윤") => ({
   characterContext: "차분한 말투",
   childhoodBackgroundId: "childhood_city",
   adulthoodBackgroundId: "adulthood_doctor",
+  avatarId: testAvatar("MALE", name),
 });
 
 async function setup(label: string) {
@@ -96,7 +97,7 @@ describe("캐릭터 CRUD", () => {
     for (const gender of ["AUTO", "NONBINARY", "CUSTOM", "UNSPECIFIED", null]) {
       expect((await POST(req("POST", { cookie, body: { ...valid("거절"), gender } }), worldCtx(world.id))).status).toBe(400);
     }
-    const auto = await json(await POST(req("POST", { cookie, body: { ...valid("자동"), gender: "FEMALE", age: null } }), worldCtx(world.id)));
+    const auto = await json(await POST(req("POST", { cookie, body: { ...valid("자동"), gender: "FEMALE", avatarId: testAvatar("FEMALE", "자동"), age: null } }), worldCtx(world.id)));
     expect(auto.body.character.gender).toBe("FEMALE");
     expect(auto.body.character.age).toBeGreaterThanOrEqual(19);
     expect(auto.body.character.age).toBeLessThanOrEqual(80);

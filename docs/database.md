@@ -5,7 +5,7 @@
 > **DBMS / ORM:** PostgreSQL 16+ / Prisma
 > **작성일:** 2026-10-27
 > **v1.5 (2026-10-29)**: Phase 7 종료 기준 정합화 — 폐지된 LIVE/MATERIALIZED 자동저장 서술을 복구 지점(RECOVERY) 기준으로 정정(§3.6·§5.2·§5.4·§6·§7), `StatusReason`에 `NOT_ENOUGH_CHARACTERS` 반영. 스키마·마이그레이션 변경 없음.
-> **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). Phase 7 마이그레이션은 7-1(20261028120000)·7-2-1(20261028140000)·7-2-2(20261028150000), 스냅샷 v4. 7-2-3·7-4는 스키마 변경 없음. 단계별 현황은 PRD §10.1
+> **진행 상태:** Phase 7 종료(2026-10-29, `e64c620`). Phase 7 마이그레이션은 7-1(20261028120000)·7-2-1(20261028140000)·7-2-2(20261028150000), 스냅샷 v4. 7-2-3·7-4는 스키마 변경 없음. 이후 캐릭터 프로필 일러스트(20261030120000, `Character.avatarId`), 스냅샷 v5. 단계별 현황은 PRD §10.1
 
 아래 Prisma 코드 블록은 **설계 기준**이다. 실제 구현은 `prisma/schema.prisma`와 `prisma/migrations/`에 있다(Phase 2-1). 구현에서 확정된 차이는 다음과 같다.
 
@@ -246,6 +246,7 @@ model Character {
   characterContext     String    @default("") @db.VarChar(300)   // 코드 포인트 300자
   childhoodBackgroundId String?  @db.VarChar(64)  // 유년기 배경 프리셋 ID (Phase 7-1, 신규·수정 시 필수, 구버전 NULL 허용)
   adulthoodBackgroundId String?  @db.VarChar(64)  // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL — CHECK character_adulthood_age)
+  avatarId             String?   @db.VarChar(32)     // 프로필 일러스트 ID (config/avatars, 신규·수정 시 필수, 이전 데이터 NULL — §3.5c)
   initialMood          Mood      @default(NEUTRAL)   // 감정 초기화 기준값
   initialMoodIntensity Int       @default(50)        // 0..100
   sortOrder            Int       @default(0)
@@ -596,6 +597,13 @@ model SimulationEvent {                               // SSE outbox (A6)
 }
 ```
 
+### 3.5c 캐릭터 프로필 일러스트 (PRD v2.7, 마이그레이션 20261030120000)
+
+- `Character.avatarId VARCHAR(32) NULL` 하나만 추가한다. 이미지 파일은 `public/characters/{avatarId}/{표정}.webp` 정적 에셋이고 DB에는 ID만 둔다. 메시지별 표정·감정 컬럼은 두지 않는다(대화창은 항상 기본 표정).
+- 기존 행은 NULL로 두고 임의 배정하지 않는다(화면은 이름 첫 글자 원으로 대체 표시, 캐릭터를 수정할 때 선택).
+- **같은 세계관 활성 캐릭터 중복 금지**: `createCharacter`·`updateCharacter`가 World 행 잠금(§6) 아래에서 같은 세계관의 `deletedAt IS NULL` 캐릭터(사망자 포함, 자기 자신 제외)가 같은 `avatarId`를 쓰는지 확인하고 409 `AVATAR_IN_USE`로 거절한다. 활성 6명 상한과 같은 직렬화 방식이라 동시 요청에서도 중복이 생기지 않는다. 소프트 삭제된 캐릭터는 점유하지 않는다.
+- 부분 UNIQUE 인덱스(`WHERE "deletedAt" IS NULL`)는 Prisma 스키마로 표현할 수 없어(Prisma 7.10) 두지 않았다. 불러오기 복원은 같은 World 잠금 안에서 스냅샷 상태로 통째로 바뀌고, 스냅샷 검증(`snapshotV5Error`)이 활성 캐릭터 중복을 거절한다.
+
 ### 3.5b 월드 시간·신체 상태 재구성 (Phase 7-2-2, 마이그레이션 20261028150000)
 
 - `GameState.worldSeconds`(정산된 월드 초), `SimulationRuntime.clockAnchorAt`·`clockCheckpointAt`(흐르는 중인 구간 시작·마지막 확인, 스냅샷 제외), `ConversationScene.worldSeconds`, `WorldEvent.startedWorldSeconds`·`resolvedWorldSeconds`, `CharacterConditionChange.worldSeconds`.
@@ -843,7 +851,7 @@ type SnapshotV1 = {
 
 ### 5.3 schemaVersion 정책
 
-- **현재 버전**: `SNAPSHOT_SCHEMA_VERSION = 4` (`config/limits.ts`, `lib/snapshot/v1.ts`~`v4.ts`). v2 = 캐릭터 배경(Phase 7-1), v3 = 사건 확장·자동 사건 구간·캐릭터 신체 상태와 이력(Phase 7-2), v4 = 월드 시간·온도 원인/단계·고통 분리(Phase 7-2-2). 읽기는 v1 → v2 → v3 → v4 순으로 변환하고, 저장된 원본·checksum은 바꾸지 않는다.
+- **현재 버전**: `SNAPSHOT_SCHEMA_VERSION = 5` (`config/limits.ts`, `lib/snapshot/v1.ts`~`v5.ts`). v2 = 캐릭터 배경(Phase 7-1), v3 = 사건 확장·자동 사건 구간·캐릭터 신체 상태와 이력(Phase 7-2), v4 = 월드 시간·온도 원인/단계·고통 분리(Phase 7-2-2), v5 = 캐릭터 `avatarId`(PRD v2.7, v4 이하는 NULL로 읽음; 알려진 ID·성별 일치·활성 캐릭터 중복 없음을 검사, 위반은 `BAD_AVATAR`·`DUPLICATE_AVATAR`). 읽기는 v1 → v2 → v3 → v4 → v5 순으로 변환하고, 저장된 원본·checksum은 바꾸지 않는다.
 - **읽기 경로**: `parse(raw) → migrations[v→v+1]… → SnapshotCurrent.parse()`. 원본 행은 수정하지 않는다.
 - **버전을 올리는 경우**: 스냅샷 대상 테이블에 필드 추가·삭제·의미 변경이 있을 때 반드시 버전을 올린다.
 - 각 마이그레이터에 이전 버전 픽스처 기반 테스트를 붙인다.

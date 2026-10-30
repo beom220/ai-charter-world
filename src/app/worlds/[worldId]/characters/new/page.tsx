@@ -46,7 +46,7 @@ async function NewCharacter({ params }: { params: Promise<{ worldId: string }> }
           캐릭터는 세계관당 최대 {MAX_ACTIVE_CHARACTERS_PER_WORLD}명입니다. 추가하려면 기존 캐릭터를 삭제하세요.
         </p>
       ) : (
-        <CharacterForm worldId={worldId} />
+        <CharacterForm worldId={worldId} usedAvatarIds={characters.flatMap((c) => (c.avatarId ? [c.avatarId] : []))} />
       )}
       <CharacterList worldId={worldId} characters={characters} showAdd={false} />
     </>

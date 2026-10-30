@@ -24,6 +24,7 @@ describe("캐릭터 화면", () => {
       characterContext: "",
       childhoodBackgroundId: null,
       adulthoodBackgroundId: null,
+      avatarId: null,
     });
   });
 
@@ -37,10 +38,10 @@ describe("캐릭터 화면", () => {
 
   it("성별은 남자·여자만 받고, 랜덤 성별·나이도 같은 범위다", () => {
     const base = { name: "a", age: 30, personalityTags: ["sociable", "calm", "diligent"], characterContext: "", childhoodBackgroundId: "childhood_city", adulthoodBackgroundId: "adulthood_doctor" };
-    expect(characterInputSchema.safeParse({ ...base, gender: "MALE" }).success).toBe(true);
-    expect(characterInputSchema.safeParse({ ...base, gender: "FEMALE" }).success).toBe(true);
+    expect(characterInputSchema.safeParse({ ...base, gender: "MALE", avatarId: "male-01" }).success).toBe(true);
+    expect(characterInputSchema.safeParse({ ...base, gender: "FEMALE", avatarId: "female-01" }).success).toBe(true);
     for (const gender of ["AUTO", "NONBINARY", "CUSTOM", "UNSPECIFIED", undefined]) expect(characterInputSchema.safeParse({ ...base, gender }).success).toBe(false);
-    expect(characterInputSchema.safeParse({ ...base, gender: "MALE", age: 1001 }).success).toBe(false);
+    expect(characterInputSchema.safeParse({ ...base, gender: "MALE", avatarId: "male-01", age: 1001 }).success).toBe(false);
     expect(new Set([0, 0.49, 0.5, 0.99].map((r) => randomGender(() => r)))).toEqual(new Set(["MALE", "FEMALE"]));
     expect(randomAge(() => 0)).toBe(1);
     expect(randomAge(() => 0.999999)).toBe(80);

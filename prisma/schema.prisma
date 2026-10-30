@@ -263,6 +263,7 @@ model Character {
   characterContext      String    @default("") @db.VarChar(300) // 코드 포인트 300자
   childhoodBackgroundId String?   @db.VarChar(64) // 유년기 배경 프리셋 ID (config/character-backgrounds, 신규·수정 시 필수, Phase 7-1)
   adulthoodBackgroundId String?   @db.VarChar(64) // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL)
+  avatarId              String?   @db.VarChar(32) // 프로필 일러스트 ID (config/avatars, 신규·수정 시 필수, 기존 NULL은 대체 표시). 같은 세계관 활성 캐릭터끼리 중복 불가(World 잠금 + 앱 검증)
   initialMood           Mood      @default(NEUTRAL) // 감정 초기화 기준값
   initialMoodIntensity  Int       @default(50) // 0..100
   sortOrder             Int       @default(0)

@@ -13,6 +13,7 @@ export const EMPTY_CHARACTER_DRAFT: CharacterDraft = {
   characterContext: "",
   childhoodBackgroundId: null,
   adulthoodBackgroundId: null,
+  avatarId: null,
 };
 
 /** 성격 태그 선택 토글: 이미 있으면 빼고, 없으면 최대 개수 안에서만 더한다 */

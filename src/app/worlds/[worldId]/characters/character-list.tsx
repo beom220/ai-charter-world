@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Avatar } from "../../avatar";
 import { MAX_ACTIVE_CHARACTERS_PER_WORLD } from "../../../../../config/limits";
 import { PERSONALITY_TAGS } from "../../../../../config/personality-map";
 import { conditionBadges } from "@/lib/condition-labels";
@@ -55,8 +56,10 @@ export function CharacterList({
               <Link
                 href={`/worlds/${worldId}/characters/${c.id}`}
                 aria-current={c.id === currentId ? "page" : undefined}
-                className={`flex flex-col gap-1 rounded-md border p-3 pr-10 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
+                className={`flex items-start gap-3 rounded-md border p-3 pr-10 hover:bg-hover ${c.id === currentId ? "border-primary bg-primary/5" : "border-foreground/15"}`}
               >
+                <Avatar avatarId={c.avatarId} name={c.name} size={44} />
+                <span className="flex min-w-0 flex-col gap-1">
                 <span className="font-medium break-all">
                   {c.name}
                   {conditionBadges(c.condition).map((b) => (
@@ -69,6 +72,7 @@ export function CharacterList({
                   {genderText(c)} · {c.age ?? "?"}세 · 기분 {c.emotion ? MOOD_LABEL[c.emotion.mood] : "-"}
                 </span>
                 <span className="text-xs text-foreground/70">{c.personalityTags.map(tagLabel).join(", ")}</span>
+                </span>
               </Link>
               <div className="absolute top-2 right-2">
                 <ConfirmDeleteButton

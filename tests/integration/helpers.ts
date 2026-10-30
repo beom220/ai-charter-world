@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { avatarIdsFor } from "@/lib/avatars";
 import { prisma } from "@/server/db/client";
 
 // 통합 테스트는 개발 DB를 공유한다. 테스트가 만든 사용자만 지워 정리하고(Cascade), DB 초기화는 하지 않는다.
@@ -101,4 +102,20 @@ export async function cleanupTestUsers() {
 export function fakeGeminiKey(seed: string): string {
   const body = `Test${seed.replace(/[^0-9A-Za-z_-]/g, "")}`.padEnd(35, "0").slice(0, 35);
   return ["AI", "za", body].join("");
+}
+
+/**
+ * 테스트 캐릭터 입력용 일러스트 ID. 같은 (성별, 이름)은 늘 같은 ID, 새 이름은 다음 ID를 받는다.
+ * 한 세계관 안의 캐릭터는 이름이 서로 다르므로 성별 목록 수(여 17·남 6) 이하에서는 중복되지 않는다(같은 세계관 중복 금지 규칙 통과용).
+ */
+const testAvatars = new Map<string, string>();
+export function testAvatar(gender: "MALE" | "FEMALE", name: string): string {
+  const key = `${gender}:${name}`;
+  let id = testAvatars.get(key);
+  if (!id) {
+    const ids = avatarIdsFor(gender);
+    id = ids[[...testAvatars.keys()].filter((k) => k.startsWith(`${gender}:`)).length % ids.length]!;
+    testAvatars.set(key, id);
+  }
+  return id;
 }

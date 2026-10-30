@@ -23,7 +23,8 @@ import {
 } from "@/lib/simulation-view";
 import { eventButton, primaryIconButton, STATUS_LABEL } from "../ui";
 import { send } from "../world-form";
-import { emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
+import { CHARACTERS_EVENT, emitWorldEvent, RUNTIME_EVENT, SAVES_EVENT } from "./world-events";
+import { Avatar } from "../avatar";
 import { worldCalendar } from "@/lib/world-clock";
 import { SceneNotes, WorldClock, WorldEvents, type WorldEventsHandle } from "./world-status";
 import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
@@ -37,6 +38,8 @@ import { emotionCueText, type SceneNote } from "@/lib/scene-notes";
 //   state.replaced(불러오기)면 서버 컴포넌트를 다시 읽는다. 페이지가 이 패널의 key를 불러오기 표식으로 주므로 패널이 새로 마운트되어
 //   재생 큐·입력 중 표시·이전 기록 커서·중복 제거 상태·SSE 커서가 모두 초기화되고, 불러오기 전 장면은 남지 않는다.
 // - 하나의 연속 대화 피드: 오래된 장면이 위, 최신이 아래(seq·turnIndex 오름차순). 장면 제목은 얇은 구분선으로만 표시한다.
+// - 대사 옆 원형 프로필은 항상 neutral 표정이다(발화 당시·현재 감정·표정 스냅샷을 쓰지 않음, 메시지·SSE 포맷 변경 없음).
+//   현재 감정 표정은 상단 고정 프로필(profile-bar.tsx)과 캐릭터 상세에서만 보인다. 장면 커밋·불러오기·재동기화·재연결 때 CHARACTERS_EVENT로 알린다.
 // - 모든 발언은 왼쪽 정렬. 사용자 입력창·감정/관계/기억 변화 알림은 두지 않는다. 연결 상태·시스템 오류는 피드 밖에 둔다.
 // - SSE(scene.committed) 또는 POST 응답으로 새 장면이 오면 장면 id로 한 번만 넣고, ScenePlayback 큐로
 //   "쉼 → 발언자 입력 중… → 대사 공개"를 순서대로 재생한다. 처음 불러온 기록·이전 기록·sync.required 재조회는 즉시 표시한다.
@@ -102,7 +105,7 @@ export function ScenePanel({
   /** 월드 시작일 "yyyy-mm-dd" (Day 0, 세계관 생성일 KST) */
   worldStartDate: string;
   /** 이 세계관의 활성(삭제되지 않은) 캐릭터: 발화자 이름을 상세 페이지로 잇는다(이름이 같아도 ID로 구분, 사망자 포함). 생존자 수는 시작 안내에 쓴다 */
-  activeCharacters: { id: string; alive: boolean }[];
+  activeCharacters: { id: string; alive: boolean; avatarId: string | null }[];
   /** 실행 제어 줄에 놓을 [저장]·[불러오기] */
   saveControls: React.ReactNode;
   initialScenes: SceneItem[];
@@ -129,6 +132,8 @@ export function ScenePanel({
     setCharacters(activeCharacters);
   }
   const activeIds = new Set(characters.map((c) => c.id));
+  // 대사 옆 프로필은 항상 neutral(과거·현재 모든 대사 같음). 발화자 → 일러스트는 활성 캐릭터 목록에서 찾는다(삭제된 발화자는 대체 표시)
+  const avatarOf = new Map(characters.map((c) => [c.id, c.avatarId]));
   const aliveCount = characters.filter((c) => c.alive).length;
 
   const scenesRef = useRef(scenes);
@@ -184,7 +189,10 @@ export function ScenePanel({
   /** 활성 캐릭터 목록을 다시 읽는다 (다른 탭에서 추가·삭제했을 수 있다) */
   const refreshCharacters = useCallback(async () => {
     const { ok, json } = await send(`/api/worlds/${worldId}/characters`, "GET").catch(() => ({ ok: false, json: null }));
-    if (ok) setCharacters((json.characters as { id: string; condition: { vital: string } }[]).map((c) => ({ id: c.id, alive: c.condition.vital === "ALIVE" })));
+    if (ok) {
+      const list = json.characters as { id: string; avatarId: string | null; condition: { vital: string } }[];
+      setCharacters(list.map((c) => ({ id: c.id, alive: c.condition.vital === "ALIVE", avatarId: c.avatarId })));
+    }
   }, [worldId]);
 
   // 세계관 이벤트 구독. 이 연결은 장면 생성·실행 명령을 시작하지 않는다 (연결 자체가 서버의 연결 보류를 해제할 뿐)
@@ -207,6 +215,7 @@ export function ScenePanel({
       setStream("open");
       void refreshState();
       void refreshCharacters();
+      emitWorldEvent(CHARACTERS_EVENT); // 재연결: 끊긴 동안 바뀐 표정을 상단 프로필이 다시 읽는다
     };
     es.onerror = () => {
       setStream(es.readyState === EventSource.CLOSED ? "closed" : "reconnecting");
@@ -224,6 +233,7 @@ export function ScenePanel({
         setView((v) => applySimEvent(v, type, payload, Date.now()));
         if (type !== "runtime.status") setEventsTick((n) => n + 1); // 시작(점유)·커밋(발생)·실패(점유 해제)
         if (type === "scene.committed") {
+          emitWorldEvent(CHARACTERS_EVENT); // 감정이 바뀌었을 수 있다 (상단 고정 프로필 표정)
           const scene = (payload as { scene?: SceneItem }).scene;
           if (scene) addScenes([scene], true);
           if (scene?.notes?.some((n) => n.kind === "DEATH")) void refreshCharacters(); // 생존자 수 안내 갱신
@@ -242,12 +252,14 @@ export function ScenePanel({
     es.addEventListener("state.replaced", (e) => {
       track(e);
       playbackRef.current?.flush();
+      emitWorldEvent(CHARACTERS_EVENT);
       router.refresh();
     });
     // 재전송할 수 없으면 상태와 기록을 다시 받는다 (기록은 연출 없이)
     es.addEventListener("sync.required", async (e) => {
       track(e);
       void refreshState();
+      emitWorldEvent(CHARACTERS_EVENT);
       const { ok, json } = await send(`/api/worlds/${worldId}/scenes`, "GET").catch(() => ({ ok: false, json: null }));
       if (ok) addScenes(json.scenes as SceneItem[], false);
     });
@@ -413,25 +425,31 @@ export function ScenePanel({
               <SceneNotes notes={(s.notes ?? []).filter(isStartNote)} />
               {visible.map((m) =>
                 play.typing === m.id ? (
-                  <div key={m.id} className="flex flex-col items-start" aria-label={`${m.speakerName} 입력 중`}>
-                    <span className="text-sm font-semibold text-primary-text">
-                      {m.speakerName} <span className="font-normal text-foreground/60">· 입력 중…</span>
-                    </span>
-                    <p className={`${bubble} flex gap-1`} aria-hidden>
-                      <span className="typing-dot">●</span>
-                      <span className="typing-dot">●</span>
-                      <span className="typing-dot">●</span>
-                    </p>
+                  <div key={m.id} className="flex items-start gap-2" aria-label={`${m.speakerName} 입력 중`}>
+                    <SpeakerAvatar message={m} avatarOf={avatarOf} />
+                    <div className="flex min-w-0 flex-col items-start">
+                      <span className="text-sm font-semibold text-primary-text">
+                        {m.speakerName} <span className="font-normal text-foreground/60">· 입력 중…</span>
+                      </span>
+                      <p className={`${bubble} flex gap-1`} aria-hidden>
+                        <span className="typing-dot">●</span>
+                        <span className="typing-dot">●</span>
+                        <span className="typing-dot">●</span>
+                      </p>
+                    </div>
                   </div>
                 ) : (
-                  <div key={m.id} className="flex flex-col items-start">
-                    <span className="text-sm font-semibold text-primary-text">
-                      <SpeakerName worldId={worldId} message={m} activeIds={activeIds} />
-                      {emotionCueText(m.emotionCue) && <span className="font-normal text-foreground/60"> · {emotionCueText(m.emotionCue)}</span>}
-                    </span>
-                    <p className={`${bubble} break-words whitespace-pre-wrap`}>{m.dialogue}</p>
-                    {m.actionIntent && <span className="text-xs text-foreground/60 italic">({m.actionIntent})</span>}
-                    {at && <span className="text-[11px] text-foreground/40">{at.dateTime}</span>}
+                  <div key={m.id} className="flex items-start gap-2">
+                    <SpeakerAvatar message={m} avatarOf={avatarOf} />
+                    <div className="flex min-w-0 flex-col items-start">
+                      <span className="text-sm font-semibold text-primary-text">
+                        <SpeakerName worldId={worldId} message={m} activeIds={activeIds} />
+                        {emotionCueText(m.emotionCue) && <span className="font-normal text-foreground/60"> · {emotionCueText(m.emotionCue)}</span>}
+                      </span>
+                      <p className={`${bubble} break-words whitespace-pre-wrap`}>{m.dialogue}</p>
+                      {m.actionIntent && <span className="text-xs text-foreground/60 italic">({m.actionIntent})</span>}
+                      {at && <span className="text-[11px] text-foreground/40">{at.dateTime}</span>}
+                    </div>
                   </div>
                 ),
               )}
@@ -577,6 +595,12 @@ export function ScenePanel({
       </dialog>
     </section>
   );
+}
+
+/** 대사 옆 원형 프로필: 항상 neutral (발화 당시·현재 감정을 쓰지 않는다). 삭제된 발화자는 이름 첫 글자 원 */
+function SpeakerAvatar({ message, avatarOf }: { message: Message; avatarOf: ReadonlyMap<string, string | null> }) {
+  const avatarId = message.speakerCharacterId ? (avatarOf.get(message.speakerCharacterId) ?? null) : null;
+  return <Avatar avatarId={avatarId} name={message.speakerName} size={32} className="mt-0.5" />;
 }
 
 /** 발화자 이름: 이 세계관의 활성 캐릭터면 상세 페이지 링크, 삭제된 캐릭터면 안내만 */

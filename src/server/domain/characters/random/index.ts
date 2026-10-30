@@ -1,6 +1,7 @@
 import { ADULTHOOD_MIN_AGE, pickRandomBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
 import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_AGE_RANGE } from "../../../../../config/limits";
 import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
+import { isAvatarForGender, pickAvailableAvatar } from "@/lib/avatars";
 import { GENDER_INPUTS, RANDOM_FIELDS, type CharacterDraft, type GenderInput, type RandomField } from "@/lib/schemas/character";
 import { CONTEXT_TEMPLATES, GOAL_TEMPLATES, NAME_POOL } from "./data";
 
@@ -48,10 +49,12 @@ function randomTags(rng: Rng): string[] {
  * 성별을 먼저 정해 이름 풀에 반영한다.
  * 배경(Phase 7-1): 프리셋에서만 고른다(등급 가중 추첨, 추가 LLM 호출 없음). 성년기는 나이를 정한 뒤 19세 이상일 때만 고른다.
  * 나이 규칙이 잠금보다 우선한다: 결과 나이가 18세 이하면 잠긴 성년기 배경도 비운다(화면이 안내한다). 나이를 비운 초안은 성인(자동)으로 본다.
+ * 일러스트: usedAvatarIds(같은 세계관 활성 캐릭터, 자기 자신 제외)를 뺀 성별 목록에서 고른다. 성별 규칙이 잠금보다 우선한다:
+ * 결과 성별과 맞지 않거나 사용 중인 잠긴 일러스트도 다시 고른다. 남은 일러스트가 없으면 null(중복 허용 안 함, 화면이 안내한다).
  */
 export function randomizeCharacter(
   draft: CharacterDraft,
-  options: { lockedFields?: readonly RandomField[]; fields?: readonly RandomField[] } = {},
+  options: { lockedFields?: readonly RandomField[]; fields?: readonly RandomField[]; usedAvatarIds?: readonly string[] } = {},
   rng: Rng = Math.random,
 ): CharacterDraft {
   const locked = new Set(options.lockedFields ?? []);
@@ -68,5 +71,8 @@ export function randomizeCharacter(
   const adult = next.age === null || requiresAdulthood(next.age);
   if (!adult) next.adulthoodBackgroundId = null;
   else if (targets.has("adulthoodBackgroundId")) next.adulthoodBackgroundId = pickRandomBackground("ADULTHOOD", rng).id;
+  const used = options.usedAvatarIds ?? [];
+  const avatarValid = isAvatarForGender(next.avatarId, next.gender) && !used.includes(next.avatarId!);
+  if (targets.has("avatarId") || !avatarValid) next.avatarId = pickAvailableAvatar(next.gender, used, rng);
   return next;
 }

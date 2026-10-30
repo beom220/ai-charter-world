@@ -15,7 +15,7 @@ import { getWorld, updateWorld } from "@/server/domain/worlds";
 import { claimAttempt, runWorldTick } from "@/server/engine/runner/world-tick";
 import type { GeminiKeyClient } from "@/server/llm/gemini/client";
 import { createMockGeminiClient } from "@/server/llm/mock/gemini-mock";
-import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey } from "./helpers";
+import { characterData, cleanupTestUsers, createTestUser, createTestWorld, fakeGeminiKey, testAvatar } from "./helpers";
 
 // 설정 변경 정책 (Phase 7-2). 실제 DB + Mock Gemini.
 // - 캐릭터 생성·수정·삭제: RUNNING·PAUSING, PAUSED + 진행 중 장면이면 409. IDLE, 진행 중 장면 없는 PAUSED는 허용
@@ -36,6 +36,7 @@ const input = (name: string, over: Partial<CharacterInput> = {}): CharacterInput
   characterContext: "",
   childhoodBackgroundId: "childhood_bookworm",
   adulthoodBackgroundId: "adulthood_scientist",
+  avatarId: testAvatar(over.gender ?? "FEMALE", name),
   ...over,
 });
 

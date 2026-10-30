@@ -107,6 +107,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         worldId={worldId}
         characterId={c.id}
         characterName={c.name}
+        avatarId={c.avatarId}
         eventCursor={eventCursor}
         initial={{
           emotion: c.emotion,
@@ -127,6 +128,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
         <CharacterForm
           worldId={worldId}
           characterId={c.id}
+          usedAvatarIds={characters.flatMap((o) => (o.id !== c.id && o.avatarId ? [o.avatarId] : []))}
           initial={{
             name: c.name,
             gender: c.gender,
@@ -136,6 +138,7 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
             characterContext: c.characterContext,
             childhoodBackgroundId: c.childhoodBackgroundId,
             adulthoodBackgroundId: c.adulthoodBackgroundId,
+            avatarId: c.avatarId,
           }}
         />
       </section>

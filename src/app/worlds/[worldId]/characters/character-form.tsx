@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ADULTHOOD_MIN_AGE, findBackground, requiresAdulthood } from "../../../../../config/character-backgrounds";
 import { CHARACTER_AGE_MAX, CHARACTER_CONTEXT_MAX_LENGTH } from "../../../../../config/limits";
+import { AVATAR_EXHAUSTED_MESSAGE, AVATAR_IN_USE_MESSAGE, AVATAR_REQUIRED_MESSAGE, isAvatarForGender, pickAvailableAvatar } from "@/lib/avatars";
 import { EMPTY_CHARACTER_DRAFT } from "@/lib/character-form";
 import {
   adulthoodBackgroundIssue,
@@ -20,6 +21,7 @@ import {
 import { primaryButton } from "../../ui";
 import { SettingsLockedNotice, useSettingsEditable } from "../../settings-lock";
 import { send } from "../../world-form";
+import { AvatarPicker } from "./avatar-picker";
 import { BackgroundPicker } from "./background-picker";
 import { PersonalitySelect } from "./personality-select";
 
@@ -28,19 +30,40 @@ import { PersonalitySelect } from "./personality-select";
 // 배경(Phase 7-1): 유년기 필수, 성년기는 나이 19세 이상 필수·18세 이하 불가. 나이를 비우면 생성은 성인 자동, 수정은 현재 나이 기준이다.
 // 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비운다. 필수 배경을 고르기 전에는 저장할 수 없다(서버도 같은 규칙으로 거절).
 // 성별은 남자·여자만 고른다. 기존 캐릭터의 다른 값은 표시만 하고 저장하려면 다시 골라야 한다.
+// 프로필 일러스트: 성별에 맞고 같은 세계관의 다른 활성 캐릭터가 쓰지 않는 것만 고른다(목록·미리보기는 neutral).
+//   성별을 고르거나 바꿔 지금 일러스트가 맞지 않으면 남은 것 중 하나를 랜덤으로 미리 고른다(사용자가 바꿀 수 있다).
+//   기존 캐릭터의 일러스트가 비어 있거나 쓸 수 없으면(이전 데이터) 첫 번째 남은 일러스트를 미리 고른다(서버 렌더와 같게 랜덤 아님). 저장 전까지 DB는 바뀌지 않는다.
+//   남은 일러스트가 없으면 중복을 허용하지 않고 안내한다. 최종 중복 검사는 서버가 저장 때 한다(AVATAR_IN_USE).
 // 생성 화면 상태 초기화: cacheComponents에서 Next.js는 떠난 화면을 <Activity>로 숨겨 상태를 남긴다.
 //   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비워, 다시 들어오면 항상 빈 폼으로 시작한다. 수정 폼은 그대로 둔다.
 
 const input = "rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-sm";
 const small = "rounded border border-primary-soft/60 bg-background px-2 py-0.5 text-xs hover:bg-primary/10 disabled:opacity-50";
 
-export function CharacterForm({ worldId, characterId, initial }: { worldId: string; characterId?: string; initial?: CharacterDraft }) {
+export function CharacterForm({
+  worldId,
+  characterId,
+  initial,
+  usedAvatarIds,
+}: {
+  worldId: string;
+  characterId?: string;
+  initial?: CharacterDraft;
+  /** 같은 세계관의 다른 활성 캐릭터(사망자 포함, 자기 자신 제외)가 쓰는 일러스트 */
+  usedAvatarIds: string[];
+}) {
   const router = useRouter();
-  const [draft, setDraft] = useState<CharacterDraft>(initial ?? EMPTY_CHARACTER_DRAFT);
+  const [draft, setDraft] = useState<CharacterDraft>(() => {
+    if (!initial) return EMPTY_CHARACTER_DRAFT;
+    const usable = isAvatarForGender(initial.avatarId, initial.gender) && !usedAvatarIds.includes(initial.avatarId!);
+    return usable || !initial.gender ? initial : { ...initial, avatarId: pickAvailableAvatar(initial.gender, usedAvatarIds, () => 0) };
+  });
   const [locked, setLocked] = useState<Set<RandomField>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const editable = useSettingsEditable(worldId);
+  const usedAvatars = new Set(usedAvatarIds);
+  const avatarUsable = (id: string | null, gender: string | null) => isAvatarForGender(id, gender) && !usedAvatarIds.includes(id!);
 
   useEffect(() => {
     if (characterId) return;
@@ -59,6 +82,9 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
     const a = effectiveAge(age);
     return a === null || requiresAdulthood(a);
   };
+  /** 성별 선택: 지금 일러스트가 새 성별에 맞지 않으면 남은 것 중 하나를 미리 고른다 */
+  const setGender = (gender: GenderInput) =>
+    setDraft((d) => ({ ...d, gender, avatarId: avatarUsable(d.avatarId, gender) ? d.avatarId : pickAvailableAvatar(gender, usedAvatarIds) }));
   const setAge = (age: number | null) => setDraft((d) => ({ ...d, age, adulthoodBackgroundId: isAdult(age) ? d.adulthoodBackgroundId : null }));
   const toggleLock = (f: RandomField) =>
     setLocked((prev) => {
@@ -72,12 +98,16 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
     setBusy(true);
     setNotice(null);
     try {
-      const { ok, json } = await send(`/api/worlds/${worldId}/characters/random`, "POST", { draft, lockedFields: [...locked], fields });
+      const { ok, json } = await send(`/api/worlds/${worldId}/characters/random`, "POST", { draft, lockedFields: [...locked], fields, characterId });
       if (!ok) return setNotice({ kind: "error", text: json?.error?.message ?? "랜덤 생성에 실패했습니다." });
       const next = json.draft as CharacterDraft;
       // 나이 규칙이 잠금보다 우선한다: 잠근 성년기 배경이 비워졌으면 알린다
       if (locked.has("adulthoodBackgroundId") && draft.adulthoodBackgroundId && !next.adulthoodBackgroundId) {
         setNotice({ kind: "error", text: `나이가 ${ADULTHOOD_MIN_AGE - 1}세 이하가 되어 잠근 성년기 배경을 비웠습니다.` });
+      } else if (next.gender && !next.avatarId) {
+        setNotice({ kind: "error", text: AVATAR_EXHAUSTED_MESSAGE });
+      } else if (locked.has("avatarId") && draft.avatarId && next.avatarId !== draft.avatarId) {
+        setNotice({ kind: "error", text: "성별에 맞지 않거나 사용 중이 된 잠긴 일러스트를 다시 골랐습니다." });
       }
       setDraft(next);
     } catch {
@@ -141,7 +171,8 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
     ? GENDER_REQUIRED_MESSAGE
     : !findBackground(draft.childhoodBackgroundId, "CHILDHOOD")
       ? CHILDHOOD_REQUIRED_MESSAGE
-      : adulthoodBackgroundIssue(effectiveAge(draft.age) ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId);
+      : (adulthoodBackgroundIssue(effectiveAge(draft.age) ?? ADULTHOOD_MIN_AGE, draft.adulthoodBackgroundId) ??
+        (!draft.avatarId ? AVATAR_REQUIRED_MESSAGE : !avatarUsable(draft.avatarId, draft.gender) ? AVATAR_IN_USE_MESSAGE : null));
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4 rounded-lg border border-foreground/15 p-4">
@@ -165,7 +196,7 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
                 aria-checked={checked}
                 aria-label={GENDER_LABEL[g]}
                 title={GENDER_LABEL[g]}
-                onClick={() => set("gender", g)}
+                onClick={() => setGender(g)}
                 className={`flex h-8 w-10 items-center justify-center rounded-md border ${checked ? GENDER_ICON[g].checked : "border-foreground/20 bg-background opacity-60 hover:bg-hover hover:opacity-100"}`}
               >
                 <GenderIcon gender={g} />
@@ -177,6 +208,15 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
           <span className="text-xs text-foreground/60">{draft.gender ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}</span>
         )}
       </div>
+
+      <AvatarPicker
+        gender={genderChosen ? draft.gender : null}
+        value={draft.avatarId}
+        used={usedAvatars}
+        name={draft.name}
+        onChange={(id) => set("avatarId", id)}
+        controls={controls("avatarId")}
+      />
 
       <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
         <label className="flex flex-col gap-1 text-sm">

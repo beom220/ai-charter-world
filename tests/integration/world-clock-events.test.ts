@@ -186,7 +186,7 @@ describe("신체 상태와 사망", () => {
 
     // 사망자는 참가자 후보에서 빠지고, 수정할 수 없다. 슬롯은 그대로 차지한다
     for (let i = 0; i < 5; i++) expect((await prepareScene(uid, world.id, deps())).characterIds).not.toContain(a!.id);
-    await expect(updateCharacter(uid, world.id, a!.id, { name: "x", gender: "MALE", age: 30, personalityTags: ["calm", "honest", "diligent"], goal: "", characterContext: "", childhoodBackgroundId: "childhood_farm", adulthoodBackgroundId: "adulthood_farmer" } satisfies CharacterInput)).rejects.toMatchObject({ code: "CHARACTER_DEAD" });
+    await expect(updateCharacter(uid, world.id, a!.id, { name: "x", gender: "MALE", age: 30, personalityTags: ["calm", "honest", "diligent"], goal: "", characterContext: "", childhoodBackgroundId: "childhood_farm", adulthoodBackgroundId: "adulthood_farmer", avatarId: "male-01" } satisfies CharacterInput)).rejects.toMatchObject({ code: "CHARACTER_DEAD" });
     expect(await prisma.character.count({ where: { worldId: world.id, deletedAt: null } })).toBe(3);
     expect(b).toBeDefined();
   });

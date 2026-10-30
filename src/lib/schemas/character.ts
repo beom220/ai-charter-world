@@ -7,7 +7,9 @@ import {
   PERSONALITY_TAGS_MIN,
 } from "../../../config/limits";
 import { ADULTHOOD_BACKGROUND_IDS, ADULTHOOD_MIN_AGE, CHILDHOOD_BACKGROUND_IDS, requiresAdulthood } from "../../../config/character-backgrounds";
+import { AVATAR_ID_MAX_LENGTH } from "../../../config/avatars";
 import { PERSONALITY_TAG_CODES } from "../../../config/personality-map";
+import { AVATAR_REQUIRED_MESSAGE, isAvatarForGender, isAvatarId } from "@/lib/avatars";
 
 // 캐릭터 생성·수정·랜덤 요청 스키마 (클라이언트·서버 공용, PRD FR-04, architecture.md §13).
 // 글자 수는 코드 포인트(Array.from(s).length)로 센다. PostgreSQL VARCHAR와 같은 기준이다.
@@ -73,9 +75,12 @@ export const characterInputSchema = z
     // 고정 프리셋 ID만 받는다(직접 입력 없음). 유년기는 항상 필수, 성년기는 나이 규칙을 따른다
     childhoodBackgroundId: childhoodId,
     adulthoodBackgroundId: adulthoodId.nullable().default(null),
+    // 프로필 일러스트(config/avatars): 고정 목록의 ID만, 성별과 맞아야 한다. 같은 세계관 중복은 서버가 World 잠금 안에서 거절한다
+    avatarId: z.string({ error: AVATAR_REQUIRED_MESSAGE }).refine(isAvatarId, { error: "알 수 없는 일러스트입니다." }),
   })
   .strip() // worldId·deletedAt·Big Five 수치 등은 받지 않는다 (수치는 태그에서 계산)
   .superRefine((v, ctx) => {
+    if (!isAvatarForGender(v.avatarId, v.gender)) ctx.addIssue({ code: "custom", path: ["avatarId"], message: "선택한 성별에 맞는 일러스트를 고르세요." });
     if (v.age !== null) {
       const issue = adulthoodBackgroundIssue(v.age, v.adulthoodBackgroundId);
       if (issue) ctx.addIssue({ code: "custom", path: ["adulthoodBackgroundId"], message: issue });
@@ -85,7 +90,7 @@ export const characterInputSchema = z
 export type CharacterInput = z.infer<typeof characterInputSchema>;
 
 /** 랜덤 생성 대상 필드 */
-export const RANDOM_FIELDS = ["name", "gender", "age", "personalityTags", "goal", "characterContext", "childhoodBackgroundId", "adulthoodBackgroundId"] as const;
+export const RANDOM_FIELDS = ["name", "gender", "age", "personalityTags", "goal", "characterContext", "childhoodBackgroundId", "adulthoodBackgroundId", "avatarId"] as const;
 export type RandomField = (typeof RANDOM_FIELDS)[number];
 
 /** 랜덤 초안. 아직 검증 전인 편집 중 값이므로 느슨하게 받는다 */
@@ -99,6 +104,7 @@ export const characterDraftSchema = z.object({
   characterContext: z.string().max(CHARACTER_CONTEXT_MAX_LENGTH * 4).default(""),
   childhoodBackgroundId: z.string().max(64).nullable().default(null),
   adulthoodBackgroundId: z.string().max(64).nullable().default(null),
+  avatarId: z.string().max(AVATAR_ID_MAX_LENGTH).nullable().default(null),
 });
 
 export type CharacterDraft = z.infer<typeof characterDraftSchema>;
@@ -112,5 +118,7 @@ export const characterRandomRequestSchema = z
     draft: characterDraftSchema.default(characterDraftSchema.parse({})),
     lockedFields: z.array(z.enum(RANDOM_FIELDS)).default([]),
     fields: z.array(z.enum(RANDOM_FIELDS)).optional(),
+    /** 수정 중인 캐릭터 (자기 자신의 일러스트는 사용 중으로 보지 않는다) */
+    characterId: z.string().min(1).max(64).optional(),
   })
   .strip();

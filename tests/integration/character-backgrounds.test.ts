@@ -9,7 +9,7 @@ import { POST } from "@/app/api/worlds/[worldId]/characters/route";
 import { AUTH_ENV_KEYS, readAuthEnv } from "@/server/auth/env";
 import { authOptions } from "@/server/auth/options";
 import { prisma } from "@/server/db/client";
-import { characterData, cleanupTestUsers, createTestUser, createTestWorld } from "./helpers";
+import { characterData, cleanupTestUsers, createTestUser, createTestWorld, testAvatar } from "./helpers";
 
 // 캐릭터 배경 (Phase 7-1): API 필수·경계·잘못된 ID·나이 변경, 구버전 NULL 캐릭터 호환, 세이브(v2·v1) 복원. 실제 Better Auth 쿠키 + DB.
 
@@ -63,6 +63,7 @@ const body = (patch: Record<string, unknown> = {}) => ({
   characterContext: "",
   childhoodBackgroundId: "childhood_fishing",
   adulthoodBackgroundId: "adulthood_chef",
+  avatarId: testAvatar("FEMALE", typeof patch.name === "string" ? patch.name : "하윤"),
   ...patch,
 });
 
