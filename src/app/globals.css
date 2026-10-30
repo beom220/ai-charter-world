@@ -133,3 +133,20 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .typing-dot { animation: none; opacity: 0.6; }
 }
+
+/* 잠깐 나타났다 사라지는 완료 알림 (캐릭터 저장 등). 끝나면 animationend로 지운다 */
+@keyframes toast-flash {
+  0% { opacity: 0; transform: translateY(8px); }
+  10%, 80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(8px); }
+}
+.toast-flash {
+  animation: toast-flash 2.6s ease-in-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  @keyframes toast-flash-fade {
+    0%, 100% { opacity: 0; }
+    10%, 80% { opacity: 1; }
+  }
+  .toast-flash { animation-name: toast-flash-fade; }
+}

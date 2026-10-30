@@ -29,6 +29,7 @@ import { PersonalitySelect } from "./personality-select";
 // 잠금은 클라이언트 상태이며 랜덤 요청에 lockedFields로 보낸다(architecture.md §13).
 // 배경(Phase 7-1): 유년기 필수, 성년기는 나이 19세 이상 필수·18세 이하 불가. 나이를 비우면 생성은 성인 자동, 수정은 현재 나이 기준이다.
 // 나이를 18세 이하로 바꾸면 성년기 선택을 즉시 비운다. 필수 배경을 고르기 전에는 저장할 수 없다(서버도 같은 규칙으로 거절).
+// 완료 알림(만들기·저장)은 화면 아래에 잠깐 나타났다 사라지는 토스트, 오류는 저장 버튼 옆에 남는다.
 // 성별은 남자·여자만 고른다. 기존 캐릭터의 다른 값은 표시만 하고 저장하려면 다시 골라야 한다.
 // 프로필 일러스트: 성별에 맞고 같은 세계관의 다른 활성 캐릭터가 쓰지 않는 것만 고른다(목록·미리보기는 neutral).
 //   성별을 고르거나 바꿔 지금 일러스트가 맞지 않으면 남은 것 중 하나를 랜덤으로 미리 고른다(사용자가 바꿀 수 있다).
@@ -60,7 +61,9 @@ export function CharacterForm({
   });
   const [locked, setLocked] = useState<Set<RandomField>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  // 오류는 폼 안에 남기고, 완료(ok) 알림은 화면 아래에 잠깐 나타났다 사라진다(id가 바뀌면 같은 문구도 다시 보인다)
+  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string; id?: number } | null>(null);
+  const flash = (text: string) => setNotice({ kind: "ok", text, id: Date.now() });
   const editable = useSettingsEditable(worldId);
   const usedAvatars = new Set(usedAvatarIds);
   const avatarUsable = (id: string | null, gender: string | null) => isAvatarForGender(id, gender) && !usedAvatarIds.includes(id!);
@@ -142,10 +145,10 @@ export function CharacterForm({
         // 생성 후에는 화면을 옮기지 않고 빈 폼으로 돌려, 아래 캐릭터 목록만 새로 읽는다
         setDraft(EMPTY_CHARACTER_DRAFT);
         setLocked(new Set());
-        setNotice({ kind: "ok", text: `${parsed.data.name} 캐릭터를 만들었습니다.` });
+        flash(`${parsed.data.name} 캐릭터를 만들었습니다.`);
         return router.refresh();
       }
-      setNotice({ kind: "ok", text: json.changed ? "저장했습니다. 다음 장면부터 반영됩니다." : "변경된 내용이 없습니다." });
+      flash(json.changed ? "저장했습니다. 다음 장면부터 반영됩니다." : "변경된 내용이 없습니다.");
       router.refresh();
     } catch {
       setNotice({ kind: "error", text: "요청을 처리하지 못했습니다." });
@@ -279,12 +282,24 @@ export function CharacterForm({
           {characterId ? "저장" : "만들기"}
         </button>
         {problem && <span className="text-xs text-foreground/60">{problem}</span>}
-        {notice && (
-          <p role={notice.kind === "error" ? "alert" : "status"} className={notice.kind === "error" ? "text-sm text-red-600" : "text-sm"}>
+        {notice?.kind === "error" && (
+          <p role="alert" className="text-sm text-red-600">
             {notice.text}
           </p>
         )}
       </div>
+      {notice?.kind === "ok" && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <p
+            key={notice.id}
+            role="status"
+            className="toast-flash rounded-full border border-primary-soft bg-background px-4 py-2 text-sm shadow-md"
+            onAnimationEnd={() => setNotice((n) => (n?.id === notice.id ? null : n))}
+          >
+            {notice.text}
+          </p>
+        </div>
+      )}
     </form>
   );
 }
