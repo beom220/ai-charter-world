@@ -47,7 +47,7 @@ export function BackgroundPicker({
             type="button"
             aria-haspopup="dialog"
             onClick={() => dialog.current?.showModal()}
-            className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-2 text-left hover:border-primary-soft hover:bg-primary/5"
+            className="flex w-full items-center justify-between gap-2 rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-left hover:border-primary-soft hover:bg-primary/5"
           >
             <span className={selected ? "" : "text-foreground/50"}>{selected ? selected.name : `${label} 배경을 선택하세요`}</span>
             <span aria-hidden className="text-primary-text text-xs text-foreground/60">

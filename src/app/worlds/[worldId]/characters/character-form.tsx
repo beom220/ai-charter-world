@@ -31,7 +31,7 @@ import { PersonalitySelect } from "./personality-select";
 // 생성 화면 상태 초기화: cacheComponents에서 Next.js는 떠난 화면을 <Activity>로 숨겨 상태를 남긴다.
 //   생성 폼은 숨겨질 때(effect cleanup) 입력·잠금·안내를 비워, 다시 들어오면 항상 빈 폼으로 시작한다. 수정 폼은 그대로 둔다.
 
-const input = "rounded-md border border-foreground/20 bg-background px-3 py-2";
+const input = "rounded-md border border-foreground/20 bg-background px-3 py-1.5 text-sm";
 const small = "rounded border border-primary-soft/60 bg-background px-2 py-0.5 text-xs hover:bg-primary/10 disabled:opacity-50";
 
 export function CharacterForm({ worldId, characterId, initial }: { worldId: string; characterId?: string; initial?: CharacterDraft }) {
@@ -149,37 +149,37 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
         <span className="text-xs text-foreground/60">잠근 항목은 유지됩니다.</span>
       </div>
 
-      <label className="flex flex-col gap-1 text-sm">
-        {header("이름", "name")}
-        <input className={input} value={draft.name} onChange={(e) => set("name", e.target.value)} />
-      </label>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1 text-sm">
-          {header("성별", "gender")}
-          <div role="radiogroup" aria-label="성별" className="flex gap-2">
-            {GENDER_INPUTS.map((g) => {
-              const checked = draft.gender === g;
-              return (
-                <button
-                  key={g}
-                  type="button"
-                  role="radio"
-                  aria-checked={checked}
-                  aria-label={GENDER_LABEL[g]}
-                  title={GENDER_LABEL[g]}
-                  onClick={() => set("gender", g)}
-                  className={`flex h-10 w-14 items-center justify-center rounded-md border ${checked ? GENDER_ICON[g].checked : "border-foreground/20 bg-background opacity-60 hover:bg-hover hover:opacity-100"}`}
-                >
-                  <GenderIcon gender={g} />
-                </button>
-              );
-            })}
-          </div>
-          {!genderChosen && (
-            <span className="text-xs text-foreground/60">{draft.gender ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}</span>
-          )}
+      <div className="flex flex-col gap-1 text-sm">
+        {header("성별", "gender")}
+        <div role="radiogroup" aria-label="성별" className="flex gap-1.5">
+          {GENDER_INPUTS.map((g) => {
+            const checked = draft.gender === g;
+            return (
+              <button
+                key={g}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                aria-label={GENDER_LABEL[g]}
+                title={GENDER_LABEL[g]}
+                onClick={() => set("gender", g)}
+                className={`flex h-8 w-10 items-center justify-center rounded-md border ${checked ? GENDER_ICON[g].checked : "border-foreground/20 bg-background opacity-60 hover:bg-hover hover:opacity-100"}`}
+              >
+                <GenderIcon gender={g} />
+              </button>
+            );
+          })}
         </div>
+        {!genderChosen && (
+          <span className="text-xs text-foreground/60">{draft.gender ? `기존 값: ${GENDER_LABEL[draft.gender]} — 다시 선택하세요` : "선택하세요"}</span>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
+        <label className="flex flex-col gap-1 text-sm">
+          {header("이름", "name")}
+          <input className={input} value={draft.name} onChange={(e) => set("name", e.target.value)} />
+        </label>
         <label className="flex flex-col gap-1 text-sm">
           {header("나이", "age")}
           <input
@@ -196,14 +196,16 @@ export function CharacterForm({ worldId, characterId, initial }: { worldId: stri
 
       <PersonalitySelect value={draft.personalityTags} onChange={(tags) => set("personalityTags", tags)} controls={controls("personalityTags")} />
 
-      <BackgroundPicker stage="CHILDHOOD" value={draft.childhoodBackgroundId} onChange={(id) => set("childhoodBackgroundId", id)} controls={controls("childhoodBackgroundId")} />
-      <BackgroundPicker
-        stage="ADULTHOOD"
-        value={draft.adulthoodBackgroundId}
-        onChange={(id) => set("adulthoodBackgroundId", id)}
-        disabledReason={adult ? null : `${ADULTHOOD_MIN_AGE - 1}세 이하는 성년기 배경을 설정할 수 없습니다. 나이를 ${ADULTHOOD_MIN_AGE}세 이상으로 하면 선택할 수 있습니다.`}
-        controls={controls("adulthoodBackgroundId")}
-      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <BackgroundPicker stage="CHILDHOOD" value={draft.childhoodBackgroundId} onChange={(id) => set("childhoodBackgroundId", id)} controls={controls("childhoodBackgroundId")} />
+        <BackgroundPicker
+          stage="ADULTHOOD"
+          value={draft.adulthoodBackgroundId}
+          onChange={(id) => set("adulthoodBackgroundId", id)}
+          disabledReason={adult ? null : `${ADULTHOOD_MIN_AGE - 1}세 이하는 성년기 배경을 설정할 수 없습니다. 나이를 ${ADULTHOOD_MIN_AGE}세 이상으로 하면 선택할 수 있습니다.`}
+          controls={controls("adulthoodBackgroundId")}
+        />
+      </div>
 
       <label className="flex flex-col gap-1 text-sm">
         {header("목표 (선택)", "goal")}
@@ -244,7 +246,7 @@ const GENDER_ICON: Record<GenderInput, { color: string; checked: string }> = {
 /** ♂·♀ 기호 (이모지 대체를 피하려고 인라인 SVG) */
 function GenderIcon({ gender }: { gender: GenderInput }) {
   return (
-    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className={GENDER_ICON[gender].color}>
+    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className={GENDER_ICON[gender].color}>
       {gender === "MALE" ? (
         <>
           <circle cx="10" cy="14" r="5" />
