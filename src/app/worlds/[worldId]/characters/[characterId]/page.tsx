@@ -138,7 +138,6 @@ async function CharacterDetail({ params }: { params: Promise<{ worldId: string; 
             gender: c.gender,
             age: c.age,
             personalityTags: c.personalityTags,
-            goal: c.goal,
             characterContext: c.characterContext,
             childhoodBackgroundId: c.childhoodBackgroundId,
             adulthoodBackgroundId: c.adulthoodBackgroundId,

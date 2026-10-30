@@ -63,7 +63,6 @@ const valid = (name = "도윤") => ({
   gender: "MALE",
   age: 27,
   personalityTags: ["sociable", "calm", "diligent"],
-  goal: "동료를 찾는다",
   characterContext: "차분한 말투",
   childhoodBackgroundId: "childhood_city",
   adulthoodBackgroundId: "adulthood_doctor",
@@ -226,7 +225,7 @@ describe("캐릭터 CRUD", () => {
 
   it("랜덤: 전체 랜덤·항목별 랜덤 모두 잠긴 필드를 유지하고 DB에는 쓰지 않는다", async () => {
     const { world, cookie } = await setup("char-random");
-    const draft = { name: "고정", gender: "FEMALE", age: 300, personalityTags: ["kind"], goal: "", characterContext: "유지" };
+    const draft = { name: "고정", gender: "FEMALE", age: 300, personalityTags: ["kind"], characterContext: "유지" };
 
     const all = await json(
       await RANDOM(req("POST", { cookie, body: { draft, lockedFields: ["name", "gender", "characterContext"] } }), worldCtx(world.id)),
@@ -234,10 +233,10 @@ describe("캐릭터 CRUD", () => {
     expect(all.status).toBe(200);
     expect(all.body.draft).toMatchObject({ name: "고정", gender: "FEMALE", characterContext: "유지" });
     expect(all.body.draft.personalityTags.length).toBeGreaterThanOrEqual(3);
-    expect(all.body.draft.goal).not.toBe("");
+    expect(all.body.draft).not.toHaveProperty("goal"); // 목표는 폐기 (PRD v2.9)
 
     const one = await json(await RANDOM(req("POST", { cookie, body: { draft, fields: ["age", "name"], lockedFields: ["name"] } }), worldCtx(world.id)));
-    expect(one.body.draft).toMatchObject({ name: "고정", personalityTags: ["kind"], characterContext: "유지", goal: "" });
+    expect(one.body.draft).toMatchObject({ name: "고정", personalityTags: ["kind"], characterContext: "유지" });
     expect(one.body.draft.age).toBeGreaterThanOrEqual(1);
     expect(one.body.draft.age).toBeLessThanOrEqual(80);
 

@@ -59,7 +59,6 @@ const body = (patch: Record<string, unknown> = {}) => ({
   gender: "FEMALE",
   age: 27,
   personalityTags: ["sociable", "calm", "diligent"],
-  goal: "",
   characterContext: "",
   childhoodBackgroundId: "childhood_fishing",
   adulthoodBackgroundId: "adulthood_chef",

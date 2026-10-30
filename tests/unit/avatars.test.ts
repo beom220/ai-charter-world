@@ -50,7 +50,6 @@ describe("성별 목록과 선택", () => {
       gender: "MALE",
       age: 30,
       personalityTags: ["calm", "honest", "diligent"],
-      goal: "",
       characterContext: "",
       childhoodBackgroundId: "childhood_city",
       adulthoodBackgroundId: "adulthood_doctor",
@@ -61,7 +60,7 @@ describe("성별 목록과 선택", () => {
 });
 
 describe("랜덤·잠금", () => {
-  const draft = { name: "", gender: null, age: null, personalityTags: [], goal: "", characterContext: "", childhoodBackgroundId: null, adulthoodBackgroundId: null, avatarId: null };
+  const draft = { name: "", gender: null, age: null, personalityTags: [], characterContext: "", childhoodBackgroundId: null, adulthoodBackgroundId: null, avatarId: null };
 
   it("전체 랜덤은 성별에 맞고 사용 중이 아닌 일러스트를 고른다. 잠근 일러스트는 유지한다", () => {
     for (let i = 0; i < 20; i++) {

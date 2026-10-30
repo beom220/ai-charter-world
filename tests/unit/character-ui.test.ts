@@ -20,7 +20,6 @@ describe("캐릭터 화면", () => {
       gender: null,
       age: null,
       personalityTags: [],
-      goal: "",
       characterContext: "",
       childhoodBackgroundId: null,
       adulthoodBackgroundId: null,

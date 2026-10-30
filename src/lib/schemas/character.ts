@@ -68,7 +68,6 @@ export const characterInputSchema = z
       .min(PERSONALITY_TAGS_MIN, { error: TAGS_MESSAGE })
       .max(PERSONALITY_TAGS_MAX, { error: TAGS_MESSAGE })
       .refine((tags) => new Set(tags).size === tags.length, { error: "같은 성격 태그를 두 번 선택할 수 없습니다." }),
-    goal: z.string().trim().default(""),
     characterContext: z
       .string({ error: CHARACTER_CONTEXT_MESSAGE })
       .refine((v) => codePointLength(v) <= CHARACTER_CONTEXT_MAX_LENGTH, { error: CHARACTER_CONTEXT_MESSAGE }),
@@ -78,7 +77,7 @@ export const characterInputSchema = z
     // 프로필 일러스트(config/avatars): 고정 목록의 ID만, 성별과 맞아야 한다. 같은 세계관 중복은 서버가 World 잠금 안에서 거절한다
     avatarId: z.string({ error: AVATAR_REQUIRED_MESSAGE }).refine(isAvatarId, { error: "알 수 없는 일러스트입니다." }),
   })
-  .strip() // worldId·deletedAt·Big Five 수치 등은 받지 않는다 (수치는 태그에서 계산)
+  .strip() // worldId·deletedAt·Big Five 수치·목표(폐기, PRD v2.9) 등은 받지 않는다 (수치는 태그에서 계산)
   .superRefine((v, ctx) => {
     if (!isAvatarForGender(v.avatarId, v.gender)) ctx.addIssue({ code: "custom", path: ["avatarId"], message: "선택한 성별에 맞는 일러스트를 고르세요." });
     if (v.age !== null) {
@@ -90,7 +89,7 @@ export const characterInputSchema = z
 export type CharacterInput = z.infer<typeof characterInputSchema>;
 
 /** 랜덤 생성 대상 필드 */
-export const RANDOM_FIELDS = ["name", "gender", "age", "personalityTags", "goal", "characterContext", "childhoodBackgroundId", "adulthoodBackgroundId", "avatarId"] as const;
+export const RANDOM_FIELDS = ["name", "gender", "age", "personalityTags", "characterContext", "childhoodBackgroundId", "adulthoodBackgroundId", "avatarId"] as const;
 export type RandomField = (typeof RANDOM_FIELDS)[number];
 
 /** 랜덤 초안. 아직 검증 전인 편집 중 값이므로 느슨하게 받는다 */
@@ -100,7 +99,6 @@ export const characterDraftSchema = z.object({
   gender: z.enum(GENDERS).nullable().default(null),
   age: z.number().int().min(0).max(CHARACTER_AGE_MAX).nullable().default(null),
   personalityTags: z.array(z.string().max(64)).max(PERSONALITY_TAG_CODES.length).default([]),
-  goal: z.string().max(10_000).default(""),
   characterContext: z.string().max(CHARACTER_CONTEXT_MAX_LENGTH * 4).default(""),
   childhoodBackgroundId: z.string().max(64).nullable().default(null),
   adulthoodBackgroundId: z.string().max(64).nullable().default(null),

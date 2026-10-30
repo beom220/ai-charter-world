@@ -15,6 +15,7 @@ import { autoAge } from "./random";
 // - 삭제는 소프트 삭제(deletedAt). 메시지·관계·기억·감정 행은 그대로 둔다.
 // - 배경(Phase 7-1): 유년기는 필수, 성년기는 확정 나이 19세 이상이면 필수·18세 이하면 불가. 나이를 비운 입력은
 //   나이를 정한 뒤(생성: 성인 자동, 수정: 현재 나이 유지) 다시 검사해 400으로 거절한다. 기존 NULL 캐릭터는 그대로 조회된다.
+// - 목표(goal)는 폐기했다(PRD v2.9): 입력·조회·프롬프트에서 쓰지 않는다. DB 컬럼과 세이브 스냅샷의 값은 기존 데이터 보존을 위해 그대로 둔다.
 // - 프로필 일러스트: 같은 세계관의 활성 캐릭터(사망자 포함, 소프트 삭제 제외)끼리 avatarId를 공유할 수 없다. World 행 잠금 아래에서
 //   확인하므로 동시 생성·수정도 직렬화되어 중복이 생기지 않는다(활성 6명 상한과 같은 방식). 기존 NULL은 그대로 두고 화면이 대체 표시한다.
 
@@ -26,7 +27,6 @@ export type CharacterView = {
   age: number | null;
   personalityTags: string[];
   bigFive: BigFive;
-  goal: string;
   characterContext: string;
   /** 배경 프리셋 ID (구버전 데이터는 NULL일 수 있다) */
   childhoodBackgroundId: string | null;
@@ -52,7 +52,6 @@ const viewSelect = {
   conscientiousness: true,
   emotionalStability: true,
   openness: true,
-  goal: true,
   characterContext: true,
   childhoodBackgroundId: true,
   adulthoodBackgroundId: true,
@@ -75,7 +74,6 @@ type Row = {
   conscientiousness: number;
   emotionalStability: number;
   openness: number;
-  goal: string | null;
   characterContext: string;
   childhoodBackgroundId: string | null;
   adulthoodBackgroundId: string | null;
@@ -87,10 +85,9 @@ type Row = {
 };
 
 function toView(r: Row): CharacterView {
-  const { extraversion, agreeableness, conscientiousness, emotionalStability, openness, emotionState, goal, condition, ...rest } = r;
+  const { extraversion, agreeableness, conscientiousness, emotionalStability, openness, emotionState, condition, ...rest } = r;
   return {
     ...rest,
-    goal: goal ?? "",
     bigFive: { extraversion, agreeableness, conscientiousness, emotionalStability, openness },
     emotion: emotionState,
     condition: toConditionView(condition),
@@ -112,7 +109,6 @@ function toData(input: CharacterInput) {
     age,
     personalityTags: input.personalityTags,
     ...bigFiveFromTags(input.personalityTags),
-    goal: input.goal === "" ? null : input.goal,
     characterContext: input.characterContext,
     childhoodBackgroundId: input.childhoodBackgroundId,
     adulthoodBackgroundId: input.adulthoodBackgroundId,
@@ -218,7 +214,6 @@ export async function updateCharacter(
       current.genderCustom === data.genderCustom &&
       current.age === data.age &&
       current.personalityTags.join(",") === data.personalityTags.join(",") &&
-      (current.goal ?? null) === data.goal &&
       current.characterContext === data.characterContext &&
       current.childhoodBackgroundId === data.childhoodBackgroundId &&
       current.adulthoodBackgroundId === data.adulthoodBackgroundId &&

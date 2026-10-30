@@ -14,7 +14,6 @@ const input = (name: string, avatarId: string, gender: "FEMALE" | "MALE" = "FEMA
   gender,
   age: 30,
   personalityTags: ["calm", "honest", "diligent"],
-  goal: "",
   characterContext: "",
   childhoodBackgroundId: "childhood_city",
   adulthoodBackgroundId: "adulthood_doctor",

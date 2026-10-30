@@ -55,7 +55,6 @@ describe("사용자 사건 프롬프트", () => {
     age: 30,
     personalityTags: ["calm"],
     bigFive: { extraversion: 50, agreeableness: 50, conscientiousness: 50, emotionalStability: 70, openness: 50 },
-    goal: null,
     characterContext: "",
     mood: null,
     moodIntensity: null,

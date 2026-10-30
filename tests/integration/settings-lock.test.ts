@@ -32,7 +32,6 @@ const input = (name: string, over: Partial<CharacterInput> = {}): CharacterInput
   gender: "FEMALE",
   age: 30,
   personalityTags: ["reserved", "cautious", "sensitive"],
-  goal: "",
   characterContext: "",
   childhoodBackgroundId: "childhood_bookworm",
   adulthoodBackgroundId: "adulthood_scientist",

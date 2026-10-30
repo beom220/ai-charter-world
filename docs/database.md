@@ -242,7 +242,7 @@ model Character {
   conscientiousness    Int
   emotionalStability   Int
   openness             Int
-  goal                 String?   @db.Text
+  goal                 String?   @db.Text   // 폐기(PRD v2.9): 입력·조회·프롬프트에서 쓰지 않음. 기존 데이터 보존용으로 컬럼·스냅샷 값만 유지
   characterContext     String    @default("") @db.VarChar(300)   // 코드 포인트 300자
   childhoodBackgroundId String?  @db.VarChar(64)  // 유년기 배경 프리셋 ID (Phase 7-1, 신규·수정 시 필수, 구버전 NULL 허용)
   adulthoodBackgroundId String?  @db.VarChar(64)  // 성년기 배경 프리셋 ID (19세 이상 필수, 18세 이하 NULL — CHECK character_adulthood_age)

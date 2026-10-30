@@ -52,7 +52,6 @@ describe("프롬프트", () => {
       age: 20,
       personalityTags: [],
       bigFive: { extraversion: 50, agreeableness: 50, conscientiousness: 50, emotionalStability: 50, openness: 50 },
-      goal: null,
       characterContext: "",
       mood: "HAPPY",
       moodIntensity: 70,

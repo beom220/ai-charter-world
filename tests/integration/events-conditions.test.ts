@@ -15,7 +15,6 @@ const input = (name: string): CharacterInput => ({
   gender: "MALE",
   age: 40,
   personalityTags: ["calm", "honest", "diligent"],
-  goal: "",
   characterContext: "",
   childhoodBackgroundId: "childhood_farm",
   adulthoodBackgroundId: "adulthood_farmer",

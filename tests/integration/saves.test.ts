@@ -22,7 +22,6 @@ const renamed = (name: string) => ({
   gender: "FEMALE" as const,
   age: 30,
   personalityTags: ["reserved", "cautious", "sensitive"],
-  goal: "",
   characterContext: "",
   childhoodBackgroundId: "childhood_bookworm",
   adulthoodBackgroundId: "adulthood_scientist",

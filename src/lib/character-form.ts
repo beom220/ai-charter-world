@@ -9,7 +9,6 @@ export const EMPTY_CHARACTER_DRAFT: CharacterDraft = {
   gender: null,
   age: null,
   personalityTags: [],
-  goal: "",
   characterContext: "",
   childhoodBackgroundId: null,
   adulthoodBackgroundId: null,

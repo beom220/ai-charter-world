@@ -48,7 +48,6 @@ export type PromptCharacter = {
   age: number | null;
   personalityTags: string[];
   bigFive: { extraversion: number; agreeableness: number; conscientiousness: number; emotionalStability: number; openness: number };
-  goal: string | null;
   characterContext: string;
   mood: string | null;
   moodIntensity: number | null;
@@ -189,7 +188,6 @@ function describeCharacter(c: PromptCharacter): string {
     `성별: ${escape(gender)} / 나이: ${c.age ?? "미상"}`,
     `성격: ${tags} (외향성 ${b.extraversion}, 친화성 ${b.agreeableness}, 성실성 ${b.conscientiousness}, 정서 안정성 ${b.emotionalStability}, 개방성 ${b.openness} / 0~100)`,
     c.backgrounds?.length ? `과거 배경: ${c.backgrounds.map((b) => `${b.stage} — ${b.name}(${b.description})`).join(" / ")}` : null,
-    c.goal ? `목표: ${escape(c.goal)}` : null,
     c.mood ? `현재 감정: ${c.mood} (강도 ${c.moodIntensity}/100)` : null,
     c.condition?.length ? `신체 상태: ${c.condition.map(escape).join(" / ")}` : null,
     c.characterContext ? `설정: ${escape(c.characterContext)}` : null,

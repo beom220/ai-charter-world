@@ -3,7 +3,7 @@ import { PERSONALITY_TAGS_MAX, PERSONALITY_TAGS_MIN, RANDOM_AGE_RANGE } from "..
 import { PERSONALITY_CATEGORIES, PERSONALITY_TAGS } from "../../../../../config/personality-map";
 import { isAvatarForGender, pickAvailableAvatar } from "@/lib/avatars";
 import { GENDER_INPUTS, RANDOM_FIELDS, type CharacterDraft, type GenderInput, type RandomField } from "@/lib/schemas/character";
-import { CONTEXT_TEMPLATES, GOAL_TEMPLATES, NAME_POOL } from "./data";
+import { CONTEXT_TEMPLATES, NAME_POOL } from "./data";
 
 // 규칙 기반 캐릭터 랜덤 생성 (PRD FR-04, architecture.md §13). 런타임 독립 순수 함수.
 
@@ -65,7 +65,6 @@ export function randomizeCharacter(
   if (targets.has("name")) next.name = randomName(next.gender, rng);
   if (targets.has("age")) next.age = randomAge(rng);
   if (targets.has("personalityTags")) next.personalityTags = randomTags(rng);
-  if (targets.has("goal")) next.goal = pick(GOAL_TEMPLATES, rng);
   if (targets.has("characterContext")) next.characterContext = pick(CONTEXT_TEMPLATES, rng);
   if (targets.has("childhoodBackgroundId")) next.childhoodBackgroundId = pickRandomBackground("CHILDHOOD", rng).id;
   const adult = next.age === null || requiresAdulthood(next.age);

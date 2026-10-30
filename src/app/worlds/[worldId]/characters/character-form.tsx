@@ -279,11 +279,6 @@ export function CharacterForm({
       </div>
 
       <label className="flex flex-col gap-1 text-sm">
-        {header("목표 (선택)", "goal")}
-        <input className={input} value={draft.goal} onChange={(e) => set("goal", e.target.value)} />
-      </label>
-
-      <label className="flex flex-col gap-1 text-sm">
         {header("캐릭터 컨텍스트", "characterContext")}
         <span className="text-foreground/60">배경·말투·가치관 등을 적으세요.</span>
         <textarea className={`${input} min-h-28`} value={draft.characterContext} onChange={(e) => set("characterContext", e.target.value)} />
