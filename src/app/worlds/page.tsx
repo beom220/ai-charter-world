@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { getCurrentSession } from "@/server/auth/session";
 import { asAuthenticatedUserId } from "@/server/domain/identity";
 import { listWorlds } from "@/server/domain/worlds";
-import { LoginRequired, primaryButton, STATUS_LABEL } from "./ui";
+import { LoginRequired, primaryButton } from "./ui";
 
 // 세계관 목록 (PRD §6 /worlds). 본인 소유 세계관만 보인다.
 
@@ -36,7 +36,7 @@ async function WorldList() {
           <Link href={`/worlds/${w.id}`} className="flex flex-wrap items-center justify-between gap-2 p-4 hover:bg-hover">
             <span className="font-medium break-all">{w.name}</span>
             <span className="text-xs text-foreground/60">
-              {STATUS_LABEL[w.runtimeStatus]} · 수정 {w.updatedAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
+              수정 {w.updatedAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
             </span>
           </Link>
         </li>
